@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# Local video/file storage. Files must be served through authenticated backend APIs.
+storage/videos/*
+!storage/videos/.gitkeep
+storage/covers/*
+!storage/covers/.gitkeep
+
+# Prisma local artifacts
+prisma/*.db
+prisma/*.db-journal
