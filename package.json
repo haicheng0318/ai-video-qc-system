@@ -1,0 +1,33 @@
+{
+  "name": "ai-video-qc-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI short video quality control and effective output evaluation system.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:api & npm run dev:web",
+    "dev:api": "npm --workspace @ai-video-qc/api run start:dev",
+    "dev:web": "npm --workspace @ai-video-qc/web run dev",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

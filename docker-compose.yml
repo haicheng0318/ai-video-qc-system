@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-video-qc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_video_qc
+      POSTGRES_USER: video_qc
+      POSTGRES_PASSWORD: video_qc_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video_qc -d ai_video_qc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
