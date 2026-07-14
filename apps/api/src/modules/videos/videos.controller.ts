@@ -23,6 +23,7 @@ import { CurrentUser } from '../../common/current-user.decorator';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateVideoDto } from './dto/create-video.dto';
+import { VideoListQueryDto } from './dto/video-list-query.dto';
 import { VideosService } from './videos.service';
 
 const allowedMimeTypes = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
@@ -84,7 +85,7 @@ export class VideosController {
   }
 
   @Get()
-  list(@CurrentUser() user: AuthenticatedUser, @Query() query: Record<string, string | undefined>) {
+  list(@CurrentUser() user: AuthenticatedUser, @Query() query: VideoListQueryDto) {
     return this.videosService.list(user, query);
   }
 

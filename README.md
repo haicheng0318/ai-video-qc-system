@@ -46,7 +46,8 @@ cp .env.example .env
 
 ```bash
 DATABASE_URL="postgresql://DB_USER:DB_PASSWORD@localhost:5432/DB_NAME?schema=public"
-JWT_SECRET="replace-with-a-long-random-secret"
+JWT_SECRET="replace-with-a-random-secret-at-least-32-characters"
+JWT_EXPIRES_IN="2h"
 DEFAULT_ADMIN_USERNAME="admin"
 DEFAULT_ADMIN_PASSWORD="change-me-before-seeding"
 MAX_VIDEO_SIZE_MB="500"
@@ -85,6 +86,19 @@ npm run dev:web
 
 - 前端：http://localhost:3000
 - 后端健康检查：http://localhost:3001/api/health
+
+## 角色映射与第一阶段视频权限
+
+| Prisma UserRole | 业务角色 | 第一阶段视频查看权限 |
+| --- | --- | --- |
+| `admin` | 管理员 | 查看全部视频 |
+| `content_owner` | 内容负责人 | 查看全部视频 |
+| `supervisor` | 编导主管 | 查看本人及直属团队视频 |
+| `director` | 编导 | 只能查看自己提交的视频 |
+| `operator` | 运营 | 查看全部视频；第一阶段暂不补充运营数据 |
+| `advertiser` | 投放 | 查看全部视频；第一阶段暂不补充投放数据 |
+
+角色权限由后端校验，前端隐藏按钮不构成安全边界。
 
 ## 默认管理员
 
