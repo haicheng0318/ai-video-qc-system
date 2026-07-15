@@ -25,6 +25,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { VideoListQueryDto } from './dto/video-list-query.dto';
 import { VideosService } from './videos.service';
+import { GeminiService } from '../ai/gemini/gemini.service';
 
 const allowedMimeTypes = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
 
@@ -65,7 +66,10 @@ const uploadInterceptor = FileInterceptor('file', {
 @Controller('videos')
 @UseGuards(JwtAuthGuard)
 export class VideosController {
-  constructor(private readonly videosService: VideosService) {}
+  constructor(
+    private readonly videosService: VideosService,
+    private readonly geminiService: GeminiService,
+  ) {}
 
   @Post()
   @UseInterceptors(uploadInterceptor)
@@ -87,6 +91,30 @@ export class VideosController {
   @Get()
   list(@CurrentUser() user: AuthenticatedUser, @Query() query: VideoListQueryDto) {
     return this.videosService.list(user, query);
+  }
+
+  @Post(':id/content-review')
+  contentReview(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.geminiService.reviewVideo(id, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+  }
+
+  @Get(':id/content-review/latest')
+  latestContentReview(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.geminiService.latest(id, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
   }
 
   @Get(':id')
