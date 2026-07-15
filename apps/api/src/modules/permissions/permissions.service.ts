@@ -54,7 +54,10 @@ export class PermissionsService {
       await this.operationLogsService.create({
         userId: user.id,
         videoId: video.id,
+        targetType: 'video',
+        targetId: video.id,
         actionType: OperationLogAction.PermissionDenied,
+        result: 'denied',
         comment: requestMeta?.action || 'Video access denied.',
         ipAddress: requestMeta?.ipAddress,
         userAgent: requestMeta?.userAgent,

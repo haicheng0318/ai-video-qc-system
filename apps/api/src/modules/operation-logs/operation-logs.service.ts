@@ -5,6 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 type CreateOperationLogInput = {
   userId?: string | null;
   videoId?: string | null;
+  targetType?: string | null;
+  targetId?: string | null;
+  result?: string | null;
   actionType: string;
   beforeValue?: Prisma.InputJsonValue | null;
   afterValue?: Prisma.InputJsonValue | null;
@@ -17,11 +20,14 @@ type CreateOperationLogInput = {
 export class OperationLogsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(input: CreateOperationLogInput) {
-    return this.prisma.operationLog.create({
+  async create(input: CreateOperationLogInput, client: Prisma.TransactionClient = this.prisma) {
+    return client.operationLog.create({
       data: {
         userId: input.userId ?? null,
         videoId: input.videoId ?? null,
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+        result: input.result ?? null,
         actionType: input.actionType,
         beforeValue: input.beforeValue ?? undefined,
         afterValue: input.afterValue ?? undefined,

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, UserRole, Video, VideoType } from '@prisma/client';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma, UserRole, Video, VideoStatus } from '@prisma/client';
 import { createReadStream, statSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { Request, Response } from 'express';
 import { AuthenticatedUser } from '../../types/authenticated-user';
@@ -9,6 +10,7 @@ import { OperationLogsService } from '../operation-logs/operation-logs.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVideoDto } from './dto/create-video.dto';
+import { VideoListQueryDto } from './dto/video-list-query.dto';
 
 const adminListFilterRoles: UserRole[] = [UserRole.admin, UserRole.content_owner];
 
@@ -26,6 +28,8 @@ function relativeToRoot(path: string) {
 
 @Injectable()
 export class VideosService {
+  private readonly logger = new Logger(VideosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissionsService: PermissionsService,
@@ -38,58 +42,73 @@ export class VideosService {
     user: AuthenticatedUser,
     requestMeta: { ipAddress?: string; userAgent?: string },
   ) {
-    const video = await this.prisma.video.create({
-      data: {
-        title: dto.title,
-        originalFileName: file.originalname,
-        filePath: relativeToRoot(file.path),
-        fileUrl: null,
-        mimeType: file.mimetype,
-        fileSizeBytes: BigInt(file.size),
-        brand: dto.brand || null,
-        product: dto.product || null,
-        platform: dto.platform || null,
-        videoType: dto.videoType,
-        scriptDescription: dto.scriptDescription || null,
-        isForAds: dto.isForAds ?? false,
-        isEventVideo: dto.isEventVideo ?? false,
-        eventName: dto.eventName || null,
-        relatedRequirement: dto.relatedRequirement || null,
-        creatorId: user.id,
-        status: 'submitted',
-      },
-      include: {
-        creator: {
-          select: { id: true, name: true, account: true, role: true },
-        },
-      },
-    });
+    try {
+      const video = await this.prisma.$transaction(async (transaction) => {
+        const createdVideo = await transaction.video.create({
+          data: {
+            title: dto.title,
+            originalFileName: file.originalname,
+            filePath: relativeToRoot(file.path),
+            fileUrl: null,
+            mimeType: file.mimetype,
+            fileSizeBytes: BigInt(file.size),
+            brand: dto.brand || null,
+            product: dto.product || null,
+            platform: dto.platform || null,
+            videoType: dto.videoType,
+            scriptDescription: dto.scriptDescription || null,
+            isForAds: dto.isForAds ?? false,
+            isEventVideo: dto.isEventVideo ?? false,
+            eventName: dto.eventName || null,
+            relatedRequirement: dto.relatedRequirement || null,
+            creatorId: user.id,
+            status: VideoStatus.submitted,
+          },
+          include: {
+            creator: {
+              select: { id: true, name: true, account: true, role: true },
+            },
+          },
+        });
 
-    await this.operationLogsService.create({
-      userId: user.id,
-      videoId: video.id,
-      actionType: OperationLogAction.VideoUploaded,
-      afterValue: {
-        title: video.title,
-        videoType: video.videoType,
-        status: video.status,
-        fileName: video.originalFileName,
-      },
-      comment: 'Video uploaded in phase 1. AI review is reserved for later phases.',
-      ipAddress: requestMeta.ipAddress,
-      userAgent: requestMeta.userAgent,
-    });
+        await this.operationLogsService.create(
+          {
+            userId: user.id,
+            videoId: createdVideo.id,
+            targetType: 'video',
+            targetId: createdVideo.id,
+            actionType: OperationLogAction.VideoUploaded,
+            result: 'success',
+            afterValue: {
+              title: createdVideo.title,
+              videoType: createdVideo.videoType,
+              status: createdVideo.status,
+              fileName: createdVideo.originalFileName,
+            },
+            comment: 'Video uploaded in phase 1. AI review is reserved for later phases.',
+            ipAddress: requestMeta.ipAddress,
+            userAgent: requestMeta.userAgent,
+          },
+          transaction,
+        );
 
-    return this.serializeVideo(video);
+        return createdVideo;
+      });
+
+      return this.serializeVideo(video);
+    } catch (error) {
+      await this.removeUploadedFile(file.path);
+      throw error;
+    }
   }
 
-  async list(user: AuthenticatedUser, query: Record<string, string | undefined>) {
+  async list(user: AuthenticatedUser, query: VideoListQueryDto) {
     const where: Prisma.VideoWhereInput = {
       ...this.permissionsService.buildVideoVisibilityWhere(user),
     };
 
-    if (query.status) where.status = query.status as never;
-    if (query.videoType) where.videoType = query.videoType as VideoType;
+    if (query.status) where.status = query.status;
+    if (query.videoType) where.videoType = query.videoType;
     if (query.brand) where.brand = { contains: query.brand, mode: 'insensitive' };
     if (query.product) where.product = { contains: query.product, mode: 'insensitive' };
     if (query.platform) where.platform = { contains: query.platform, mode: 'insensitive' };
@@ -143,7 +162,10 @@ export class VideosService {
     await this.operationLogsService.create({
       userId: user.id,
       videoId: id,
+      targetType: 'video',
+      targetId: id,
       actionType: OperationLogAction.VideoDetailViewed,
+      result: 'success',
       comment: 'Video detail viewed.',
       ipAddress: requestMeta.ipAddress,
       userAgent: requestMeta.userAgent,
@@ -217,7 +239,10 @@ export class VideosService {
     await this.operationLogsService.create({
       userId: user.id,
       videoId: id,
+      targetType: 'video',
+      targetId: id,
       actionType: OperationLogAction.VideoFileAccessed,
+      result: 'success',
       comment: 'Video file accessed through authenticated endpoint.',
       ipAddress: requestMeta.ipAddress,
       userAgent: requestMeta.userAgent,
@@ -261,6 +286,17 @@ export class VideosService {
     });
 
     createReadStream(absolutePath, { start, end }).pipe(response);
+  }
+
+  private async removeUploadedFile(filePath: string) {
+    try {
+      await unlink(filePath);
+    } catch (cleanupError) {
+      const errorCode = cleanupError instanceof Error && 'code' in cleanupError
+        ? String((cleanupError as NodeJS.ErrnoException).code)
+        : 'unknown';
+      this.logger.error(`Failed to clean up uploaded video file after transaction failure (${errorCode}).`);
+    }
   }
 
   private serializeVideo<T extends Record<string, any>>(video: T) {

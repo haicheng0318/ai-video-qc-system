@@ -30,6 +30,7 @@ export class RolesGuard implements CanActivate {
       await this.operationLogsService.create({
         userId: user?.id ?? null,
         actionType: OperationLogAction.PermissionDenied,
+        result: 'denied',
         comment: `Required role: ${requiredRoles.join(', ')}`,
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],

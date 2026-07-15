@@ -327,6 +327,9 @@ model OperationLog {
   id          String   @id @default(uuid()) @db.Uuid
   userId      String?  @map("user_id") @db.Uuid
   videoId     String?  @map("video_id") @db.Uuid
+  targetType  String?  @map("target_type") @db.VarChar(50)
+  targetId    String?  @map("target_id") @db.VarChar(100)
+  result      String?  @db.VarChar(50)
   actionType  String   @map("action_type") @db.VarChar(100)
   beforeValue Json?    @map("before_value")
   afterValue  Json?    @map("after_value")
@@ -339,6 +342,7 @@ model OperationLog {
 
   @@index([userId])
   @@index([videoId])
+  @@index([targetType, targetId])
   @@index([actionType])
   @@map("operation_logs")
 }

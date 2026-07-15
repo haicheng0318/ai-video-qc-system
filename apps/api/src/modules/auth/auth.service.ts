@@ -21,6 +21,7 @@ export class AuthService {
     if (!user || !passwordMatches) {
       await this.operationLogsService.create({
         actionType: OperationLogAction.LoginFailed,
+        result: 'failure',
         comment: `Login failed for account: ${dto.account}`,
         ipAddress: requestMeta.ipAddress,
         userAgent: requestMeta.userAgent,
@@ -31,6 +32,7 @@ export class AuthService {
     await this.operationLogsService.create({
       userId: user.id,
       actionType: OperationLogAction.LoginSuccess,
+      result: 'success',
       comment: 'User logged in successfully.',
       ipAddress: requestMeta.ipAddress,
       userAgent: requestMeta.userAgent,
