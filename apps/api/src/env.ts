@@ -9,14 +9,16 @@ export type RuntimeConfig = {
   jwtExpiresIn: string;
 };
 
-function parseJwtExpiresIn(value: string) {
-  const match = /^(\d+)\s*(s|m|h)?$/i.exec(value);
-  if (!match) {
-    throw new Error('JWT_EXPIRES_IN must be a duration such as 7200, 120m, or 2h.');
-  }
+export function parseJwtExpiresIn(value: string) {
+	const match = /^(\d+)\s*(s|m|h)$/i.exec(value);
+	if (!match) {
+		throw new Error(
+			'JWT_EXPIRES_IN must include a unit suffix: use s, m, or h (for example 7200s, 120m, or 2h).',
+		);
+	}
 
-  const amount = Number(match[1]);
-  const unit = (match[2] || 's').toLowerCase();
+	const amount = Number(match[1]);
+	const unit = match[2].toLowerCase();
   const multiplier = unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
   return amount * multiplier;
 }
