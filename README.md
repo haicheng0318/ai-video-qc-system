@@ -13,7 +13,9 @@
 - 鉴权：JWT
 - 本地数据库：Docker Compose PostgreSQL
 
-## 第一阶段已覆盖
+## 已实现功能
+
+### 第一阶段：基础系统
 
 - 初始化前后端项目结构
 - 配置 PostgreSQL 与 Prisma
@@ -24,8 +26,15 @@
 - 视频上传、视频列表、视频详情
 - 通过后端鉴权接口访问视频文件
 - `operation_logs` 记录登录成功/失败、视频上传、查看详情、访问文件、权限拒绝
-- Gemini 视频内容质量评估：Files API 上传与状态轮询、结构化 JSON 校验、内容等级和评分落库
-- Gemini 评估失败状态、重复触发保护、事务落库和操作日志
+
+### 第二阶段：Gemini 内容质量评估
+
+- Gemini Files API 上传与有界状态轮询
+- 结构化 JSON Schema 与后端 Zod 双重校验
+- 内容总分、内容等级、维度评分和审计原文落库
+- HTTP 202 异步触发与 latest 状态查询
+- running 任务重复触发保护与超时任务回收
+- 评估成功、失败和回收操作日志
 - GPT、规则引擎和后续业务模块仍只保留边界，不在本阶段执行
 
 本阶段不接入 OpenAI GPT API，不开发主管初审、运营/投放数据、规则引擎、最终评定、看板或案例库。
@@ -62,6 +71,7 @@ GEMINI_MODEL="gemini-2.5-flash"
 GEMINI_FILE_POLL_INTERVAL_MS="5000"
 GEMINI_FILE_POLL_MAX_ATTEMPTS="24"
 GEMINI_REQUEST_TIMEOUT_MS="120000"
+GEMINI_RUNNING_STALE_MINUTES="10"
 ```
 
 3. 启动 PostgreSQL
@@ -155,7 +165,7 @@ curl -X POST http://localhost:3001/api/videos \
   -F "videoType=product_card"
 ```
 
-触发 Gemini 内容评估（仅限有权限的管理员、内容负责人或视频提交编导）：
+触发 Gemini 内容评估（仅限有权限的管理员、内容负责人或视频提交编导，返回 HTTP 202）：
 
 ```bash
 curl -X POST http://localhost:3001/api/videos/<video-id>/content-review \
@@ -180,8 +190,8 @@ curl http://localhost:3001/api/videos/<video-id>/content-review/latest \
 
 ## 后续阶段
 
-- 第三阶段：主管初审与返修流程。
-- 第四阶段：运营/投放数据补充。
+- 第三阶段：仅开发主管初审与返修流程。
+- 第四阶段：开发运营/投放数据补充。
 - 第五阶段：GPT 数据复盘。
 - 第六阶段：后端规则引擎。
 - 第七阶段：GPT 最终评定。

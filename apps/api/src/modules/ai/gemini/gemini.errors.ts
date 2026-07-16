@@ -16,4 +16,11 @@ export class GeminiOutputValidationError extends Error {
 
 export class GeminiRequestError extends Error {
   readonly code = 'GEMINI_REQUEST_FAILED';
+  readonly cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'GeminiRequestError';
+    this.cause = cause;
+  }
 }

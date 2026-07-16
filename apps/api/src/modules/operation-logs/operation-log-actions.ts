@@ -6,6 +6,7 @@ export const OperationLogAction = {
   VideoDetailViewed: 'video_detail_viewed',
   VideoFileAccessed: 'video_file_accessed',
   AiContentReviewStarted: 'ai_content_review_started',
+  AiContentReviewRecovered: 'ai_content_review_recovered',
   AiContentReviewCompleted: 'ai_content_review_completed',
   AiContentReviewFailed: 'ai_content_review_failed',
   AiContentReviewViewed: 'ai_content_review_viewed',

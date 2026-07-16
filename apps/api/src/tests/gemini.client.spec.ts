@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GeminiClient } from '../modules/ai/gemini/gemini.client';
-import { GeminiFileProcessingError, GeminiFileProcessingTimeoutError } from '../modules/ai/gemini/gemini.errors';
+import { GeminiFileProcessingError, GeminiFileProcessingTimeoutError, GeminiRequestError } from '../modules/ai/gemini/gemini.errors';
 
 const rawResponse = JSON.stringify({
   contentSummary: '内容清晰',
@@ -65,5 +65,23 @@ test('Gemini client stops polling after the configured maximum', async () => {
   await assert.rejects(
     client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content'),
     GeminiFileProcessingTimeoutError,
+  );
+});
+
+test('Gemini request error preserves the SDK error as internal cause', async () => {
+  const sdkError = new Error('SDK request failed with sensitive details');
+  const client = new GeminiClient(() => ({
+    files: {
+      upload: async () => {
+        throw sdkError;
+      },
+      get: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'ACTIVE' }),
+    },
+    models: { generateContent: async () => ({ text: rawResponse }) },
+  }));
+
+  await assert.rejects(
+    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content'),
+    (error: unknown) => error instanceof GeminiRequestError && error.cause === sdkError,
   );
 });

@@ -63,11 +63,10 @@ export class GeminiClient {
   }
 
   async analyzeVideo(filePath: string, mimeType: string, modelName: string, prompt: string): Promise<GeminiAnalysisResult> {
-    const sdk = this.sdkFactory();
-    const uploaded = await sdk.files.upload({ file: filePath, config: { mimeType } });
-    const file = await this.waitForActive(sdk, uploaded, mimeType);
-
     try {
+      const sdk = this.sdkFactory();
+      const uploaded = await sdk.files.upload({ file: filePath, config: { mimeType } });
+      const file = await this.waitForActive(sdk, uploaded, mimeType);
       const response = await sdk.models.generateContent({
         model: modelName,
         contents: [prompt, createPartFromUri(file.uri, file.mimeType)],
@@ -76,12 +75,19 @@ export class GeminiClient {
           responseJsonSchema: geminiResponseJsonSchema,
         },
       });
-      const rawResponse = response.text?.trim();
-      if (!rawResponse) throw new GeminiRequestError('Gemini returned an empty response.');
+      const rawResponse = response.text;
+      if (!rawResponse?.trim()) throw new GeminiRequestError('Gemini returned an empty response.');
       return { rawResponse };
     } catch (error) {
-      if (error instanceof GeminiRequestError) throw error;
-      throw new GeminiRequestError('Gemini content review request failed.');
+      if (
+        error instanceof GeminiConfigurationError ||
+        error instanceof GeminiFileProcessingError ||
+        error instanceof GeminiFileProcessingTimeoutError ||
+        error instanceof GeminiRequestError
+      ) {
+        throw error;
+      }
+      throw new GeminiRequestError('Gemini content review request failed.', error);
     }
   }
 

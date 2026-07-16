@@ -11,6 +11,8 @@ import {
   UseGuards,
   UseInterceptors,
   Body,
+  HttpCode,
+  HttpStatus,
   Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -94,12 +96,13 @@ export class VideosController {
   }
 
   @Post(':id/content-review')
+  @HttpCode(HttpStatus.ACCEPTED)
   contentReview(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.geminiService.reviewVideo(id, user, {
+    return this.geminiService.triggerContentReview(id, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });

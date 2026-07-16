@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { apiBaseUrl, apiFetch, getToken } from '@/lib/api';
+import { loadVideoDetailRequests } from '@/lib/video-detail-loader';
 
 type ContentReviewScore = {
   id: string;
@@ -77,14 +78,17 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
   const [error, setError] = useState('');
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState('');
+  const [latestError, setLatestError] = useState('');
 
   const loadVideo = useCallback(async () => {
-    const [detail, latest] = await Promise.all([
-      apiFetch<VideoDetail>(`/api/videos/${params.id}`),
-      apiFetch<{ review: ContentReview | null }>(`/api/videos/${params.id}/content-review/latest`),
-    ]);
-    setVideo(detail);
-    setContentReview(latest.review);
+    setLatestError('');
+    await loadVideoDetailRequests({
+      loadDetail: () => apiFetch<VideoDetail>(`/api/videos/${params.id}`),
+      loadLatest: () => apiFetch<{ review: ContentReview | null }>(`/api/videos/${params.id}/content-review/latest`),
+      onDetail: setVideo,
+      onLatest: (latest) => setContentReview(latest.review),
+      onLatestError: () => setLatestError('评估结果暂时不可用，请稍后重试。'),
+    });
   }, [params.id]);
 
   useEffect(() => {
@@ -187,6 +191,7 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
           ) : null}
         </div>
         {reviewError ? <p className="error">{reviewError}</p> : null}
+        {latestError ? <p className="error">{latestError}</p> : null}
         {contentReview?.status === 'failed' ? <p className="error">{contentReview.errorMessage || '内容评估失败，请稍后重试。'}</p> : null}
         {contentReview?.status === 'succeeded' ? (
           <div>
