@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { JwtService } from '@nestjs/jwt';
-import { getJwtConfig, validateEnvironment } from '../env';
+import { getJwtConfig, parseJwtExpiresIn, validateEnvironment } from '../env';
 
 const validSecret = 'a'.repeat(32);
 
@@ -40,4 +40,24 @@ test('JWT_EXPIRES_IN values above two hours are rejected', () => {
     () => validateEnvironment({ ...process.env, JWT_SECRET: validSecret, JWT_EXPIRES_IN: '3h' }),
     /must not exceed 7200 seconds/,
   );
+});
+
+test('JWT_EXPIRES_IN rejects ambiguous bare numbers', () => {
+	assert.throws(
+		() => validateEnvironment({ ...process.env, JWT_SECRET: validSecret, JWT_EXPIRES_IN: '7200' }),
+		/must include a unit suffix.*s, m, or h/,
+	);
+});
+
+test('JWT_EXPIRES_IN accepts explicit seconds, minutes, and hours', () => {
+	assert.equal(parseJwtExpiresIn('7200s'), 7200);
+	assert.equal(parseJwtExpiresIn('120m'), 7200);
+	assert.equal(parseJwtExpiresIn('2h'), 7200);
+});
+
+test('JWT_EXPIRES_IN rejects values above two hours after normalization', () => {
+	assert.throws(
+		() => validateEnvironment({ ...process.env, JWT_SECRET: validSecret, JWT_EXPIRES_IN: '121m' }),
+		/must not exceed 7200 seconds/,
+	);
 });

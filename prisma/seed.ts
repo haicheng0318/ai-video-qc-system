@@ -31,24 +31,43 @@ async function main() {
     },
   });
 
+  await prisma.aiModelConfig.deleteMany({
+    where: {
+      agentType: 'video_content_review',
+      provider: 'gemini',
+      enabled: false,
+      jsonSchema: {
+        path: ['phase'],
+        equals: 'reserved',
+      },
+    },
+  });
+
   await prisma.aiModelConfig.upsert({
     where: {
       agentType_provider_modelName: {
         agentType: 'video_content_review',
         provider: 'gemini',
-        modelName: 'reserved-gemini-video-model',
+        modelName: 'gemini-2.5-flash',
       },
     },
-    update: {},
-    create: {
-      agentType: 'video_content_review',
-      provider: 'gemini',
-      modelName: 'reserved-gemini-video-model',
+    update: {
       enabled: false,
       temperature: 0.2,
       jsonSchema: {
-        phase: 'reserved',
-        note: 'Gemini content review schema will be added in phase 2.',
+        version: 'phase-2-content-review-v1',
+        output: 'structured_json',
+      },
+    },
+    create: {
+      agentType: 'video_content_review',
+      provider: 'gemini',
+      modelName: 'gemini-2.5-flash',
+      enabled: false,
+      temperature: 0.2,
+      jsonSchema: {
+        version: 'phase-2-content-review-v1',
+        output: 'structured_json',
       },
     },
   });

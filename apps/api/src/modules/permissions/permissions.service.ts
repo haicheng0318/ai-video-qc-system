@@ -66,6 +66,32 @@ export class PermissionsService {
     }
   }
 
+  async assertCanTriggerContentReview(
+    user: AuthenticatedUser,
+    video: Video,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const allowed =
+      user.role === UserRole.admin ||
+      user.role === UserRole.content_owner ||
+      (user.role === UserRole.director && video.creatorId === user.id);
+
+    if (!allowed) {
+      await this.operationLogsService.create({
+        userId: user.id,
+        videoId: video.id,
+        targetType: 'video',
+        targetId: video.id,
+        actionType: OperationLogAction.PermissionDenied,
+        result: 'denied',
+        comment: 'Content review trigger denied.',
+        ipAddress: requestMeta?.ipAddress,
+        userAgent: requestMeta?.userAgent,
+      });
+      throw new ForbiddenException('You do not have permission to trigger content review.');
+    }
+  }
+
   async findVideoVisibleToUser(videoId: string, user: AuthenticatedUser) {
     const video = await this.prisma.video.findFirst({
       where: {
