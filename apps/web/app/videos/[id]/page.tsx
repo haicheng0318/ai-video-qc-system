@@ -3,7 +3,12 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { apiBaseUrl, apiFetch, getToken } from '@/lib/api';
+import { ApiUser } from '@/lib/api';
 import { loadVideoDetailRequests } from '@/lib/video-detail-loader';
+import { SupervisorReviewPanel, SupervisorReviewView } from '@/components/supervisor-review-panel';
+import { VideoRevisionPanel } from '@/components/video-revision-panel';
+import { VideoVersionChain } from '@/components/video-version-chain';
+import { canSubmitSupervisorReview } from '@/lib/supervisor-review-ui';
 
 type ContentReviewScore = {
   id: string;
@@ -45,17 +50,23 @@ type VideoDetail = {
   eventName?: string;
   createdAt: string;
   creator?: {
+    id: string;
     name: string;
     account: string;
   };
   aiContentReviews?: unknown[];
-  supervisorReviews?: unknown[];
+  supervisorReview?: SupervisorReviewView | null;
   resultMetrics?: unknown[];
   aiResultReviews?: unknown[];
   ruleEngineResults?: unknown[];
   finalVideoEvaluations?: unknown[];
   operationLogs?: Array<{ id: string; actionType: string; createdAt: string; comment?: string }>;
+  parentVideo?: VersionLink | null;
+  revisions?: VersionLink[];
+  versionChain?: VersionLink[];
 };
+
+type VersionLink = { id: string; title: string; status: string; version: number };
 
 const reviewStatusLabels: Record<string, string> = {
   pending: '未评估',
@@ -69,6 +80,9 @@ const videoStatusLabels: Record<string, string> = {
   ai_content_reviewing: '内容评估中',
   ai_content_failed: '内容评估失败',
   pending_supervisor_review: '等待主管初审',
+  approved_for_publish: '通过发布',
+  revision_required: '要求返修',
+  invalid_content: '内容无效',
 };
 
 export default function VideoDetailPage({ params }: { params: { id: string } }) {
@@ -79,6 +93,8 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState('');
   const [latestError, setLatestError] = useState('');
+  const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
+  const [supervisorReview, setSupervisorReview] = useState<SupervisorReviewView | null>(null);
 
   const loadVideo = useCallback(async () => {
     setLatestError('');
@@ -89,6 +105,12 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
       onLatest: (latest) => setContentReview(latest.review),
       onLatestError: () => setLatestError('评估结果暂时不可用，请稍后重试。'),
     });
+    const [userResult, supervisorResult] = await Promise.allSettled([
+      apiFetch<{ user: ApiUser }>('/api/auth/me'),
+      apiFetch<SupervisorReviewView | null>(`/api/videos/${params.id}/supervisor-review/latest`),
+    ]);
+    if (userResult.status === 'fulfilled') setCurrentUser(userResult.value.user);
+    if (supervisorResult.status === 'fulfilled') setSupervisorReview(supervisorResult.value);
   }, [params.id]);
 
   useEffect(() => {
@@ -145,7 +167,23 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
     );
   }
 
-  const canTriggerReview = video.status === 'submitted' || video.status === 'ai_content_failed';
+  const canTriggerReview =
+    (video.status === 'submitted' || video.status === 'ai_content_failed') &&
+    Boolean(
+      currentUser &&
+        (currentUser.role === 'admin' ||
+          currentUser.role === 'content_owner' ||
+          (currentUser.role === 'director' && currentUser.id === video.creator?.id)),
+    );
+  const canReview = canSubmitSupervisorReview(currentUser, video.status);
+  const canUploadRevision =
+    video.status === 'revision_required' &&
+    Boolean(
+      currentUser &&
+        (currentUser.id === video.creator?.id ||
+          currentUser.role === 'admin' ||
+          currentUser.role === 'content_owner'),
+    );
 
   return (
     <main className="page">
@@ -228,11 +266,30 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
           </div>
         ) : null}
       </section>
-      <section className="panel" style={{ marginTop: 20 }}>
-        <h2>后续模块</h2>
-        <p className="muted">主管初审、运营/投放数据、GPT 数据复盘、规则引擎和最终评定将在后续阶段接入。</p>
+      <SupervisorReviewPanel
+        videoId={video.id}
+        canReview={canReview}
+        review={supervisorReview || video.supervisorReview || null}
+        onCompleted={loadVideo}
+      />
+      {canUploadRevision && (supervisorReview || video.supervisorReview) ? (
+        <VideoRevisionPanel
+          parentVideoId={video.id}
+          comment={(supervisorReview || video.supervisorReview)?.comment || null}
+          requirements={(supervisorReview || video.supervisorReview)?.revisionRequirements || []}
+        />
+      ) : null}
+      <VideoVersionChain
+        currentId={video.id}
+        chain={video.versionChain || []}
+        parent={video.parentVideo || null}
+        revisions={video.revisions || []}
+      />
+      <section className="panel section-gap">
+        <h2>后续阶段</h2>
+        <p className="muted">运营/投放数据、GPT 数据复盘、规则引擎和最终评定将在后续阶段接入。</p>
       </section>
-      <section className="panel" style={{ marginTop: 20 }}>
+      <section className="panel section-gap">
         <h2>操作日志</h2>
         <table className="table">
           <thead>

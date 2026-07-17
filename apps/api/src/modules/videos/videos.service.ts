@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, UserRole, Video, VideoStatus } from '@prisma/client';
 import { createReadStream, statSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
@@ -11,8 +11,15 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { VideoListQueryDto } from './dto/video-list-query.dto';
+import { CreateVideoRevisionDto } from './dto/create-video-revision.dto';
 
 const adminListFilterRoles: UserRole[] = [UserRole.admin, UserRole.content_owner];
+const activeRevisionStatuses: VideoStatus[] = [
+  VideoStatus.submitted,
+  VideoStatus.ai_content_reviewing,
+  VideoStatus.ai_content_failed,
+  VideoStatus.pending_supervisor_review,
+];
 
 function rootDir() {
   return resolve(process.cwd(), '../../');
@@ -24,6 +31,10 @@ function storageDir() {
 
 function relativeToRoot(path: string) {
   return relative(rootDir(), path);
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 @Injectable()
@@ -143,6 +154,100 @@ export class VideosService {
     };
   }
 
+  async createRevision(
+    parentVideoId: string,
+    dto: CreateVideoRevisionDto,
+    file: Express.Multer.File,
+    user: AuthenticatedUser,
+    requestMeta: { ipAddress?: string; userAgent?: string },
+  ) {
+    try {
+      if (!isUuid(parentVideoId)) throw new NotFoundException('Video not found.');
+      const parent = await this.prisma.video.findUnique({ where: { id: parentVideoId } });
+      if (!parent) throw new NotFoundException('Video not found.');
+      await this.permissionsService.assertCanUploadRevision(user, parent, requestMeta);
+
+      const revision = await this.prisma.$transaction(async (transaction) => {
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT id FROM videos WHERE id = ${parentVideoId}::uuid FOR UPDATE`,
+        );
+        const lockedParent = await transaction.video.findUnique({ where: { id: parentVideoId } });
+        if (!lockedParent) throw new NotFoundException('Video not found.');
+        if (lockedParent.status !== VideoStatus.revision_required) {
+          throw new ConflictException('Only videos requiring revision can accept a revision upload.');
+        }
+
+        const review = await transaction.supervisorReview.findUnique({ where: { videoId: parentVideoId } });
+        if (!review || review.decision !== VideoStatus.revision_required) {
+          throw new ConflictException('A revision-required supervisor review is required.');
+        }
+        const activeRevision = await transaction.video.findFirst({
+          where: {
+            parentVideoId,
+            status: { in: activeRevisionStatuses },
+          },
+          select: { id: true },
+        });
+        if (activeRevision) {
+          throw new ConflictException('An active revision already exists for this video.');
+        }
+
+        const created = await transaction.video.create({
+          data: {
+            title: dto.title?.trim() || lockedParent.title,
+            originalFileName: file.originalname,
+            filePath: relativeToRoot(file.path),
+            fileUrl: null,
+            coverUrl: null,
+            mimeType: file.mimetype,
+            fileSizeBytes: BigInt(file.size),
+            duration: null,
+            brand: dto.brand ?? lockedParent.brand,
+            product: dto.product ?? lockedParent.product,
+            platform: dto.platform ?? lockedParent.platform,
+            videoType: dto.videoType ?? lockedParent.videoType,
+            scriptDescription: dto.scriptDescription ?? lockedParent.scriptDescription,
+            isForAds: dto.isForAds ?? lockedParent.isForAds,
+            isEventVideo: dto.isEventVideo ?? lockedParent.isEventVideo,
+            eventName: dto.eventName ?? lockedParent.eventName,
+            relatedRequirement: dto.relatedRequirement ?? lockedParent.relatedRequirement,
+            creatorId: lockedParent.creatorId,
+            status: VideoStatus.submitted,
+            parentVideoId: lockedParent.id,
+            version: lockedParent.version + 1,
+          },
+          include: {
+            creator: { select: { id: true, name: true, account: true, role: true } },
+          },
+        });
+        await this.operationLogsService.create({
+          userId: user.id,
+          videoId: created.id,
+          targetType: 'video',
+          targetId: created.id,
+          actionType: OperationLogAction.VideoRevisionUploaded,
+          result: 'success',
+          afterValue: {
+            parentVideoId: lockedParent.id,
+            newVideoId: created.id,
+            creatorId: created.creatorId,
+            uploadedBy: user.id,
+            version: created.version,
+            status: created.status,
+          },
+          comment: 'Video revision uploaded.',
+          ipAddress: requestMeta.ipAddress,
+          userAgent: requestMeta.userAgent,
+        }, transaction);
+        return created;
+      });
+      return this.serializeVideo(revision);
+    } catch (error) {
+      await this.removeUploadedFile(file.path);
+      throw error;
+    }
+  }
+
   async detail(id: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
     const video = await this.prisma.video.findUnique({
       where: { id },
@@ -181,8 +286,10 @@ export class VideosService {
           include: { scores: true },
           orderBy: { createdAt: 'desc' },
         },
-        supervisorReviews: {
-          orderBy: { createdAt: 'desc' },
+        supervisorReview: {
+          include: {
+            reviewer: { select: { id: true, name: true, account: true, role: true } },
+          },
         },
         resultMetrics: {
           orderBy: { createdAt: 'desc' },
@@ -206,6 +313,15 @@ export class VideosService {
             createdAt: true,
           },
         },
+        parentVideo: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            version: true,
+            createdAt: true,
+          },
+        },
         operationLogs: {
           orderBy: { createdAt: 'desc' },
           take: 50,
@@ -214,7 +330,8 @@ export class VideosService {
     });
 
     if (!detail) return null;
-    return this.serializeVideo(detail);
+    const versionChain = await this.buildVersionChain(detail);
+    return this.serializeVideo({ ...detail, versionChain });
   }
 
   async prepareVideoFile(id: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
@@ -297,6 +414,43 @@ export class VideosService {
         : 'unknown';
       this.logger.error(`Failed to clean up uploaded video file after transaction failure (${errorCode}).`);
     }
+  }
+
+  private async buildVersionChain(video: { id: string; title: string; status: VideoStatus; version: number; parentVideoId: string | null; createdAt: Date }) {
+    const chain = [{
+      id: video.id,
+      title: video.title,
+      status: video.status,
+      version: video.version,
+      createdAt: video.createdAt,
+    }];
+    const visited = new Set([video.id]);
+    let parentVideoId = video.parentVideoId;
+    while (parentVideoId) {
+      if (visited.has(parentVideoId)) break;
+      visited.add(parentVideoId);
+      const parent = await this.prisma.video.findUnique({
+        where: { id: parentVideoId },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          version: true,
+          parentVideoId: true,
+          createdAt: true,
+        },
+      });
+      if (!parent) break;
+      chain.unshift({
+        id: parent.id,
+        title: parent.title,
+        status: parent.status,
+        version: parent.version,
+        createdAt: parent.createdAt,
+      });
+      parentVideoId = parent.parentVideoId;
+    }
+    return chain;
   }
 
   private serializeVideo<T extends Record<string, any>>(video: T) {
