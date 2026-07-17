@@ -2,7 +2,7 @@
 
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
-当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估。
+当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程。
 
 ## 技术栈
 
@@ -37,7 +37,17 @@
 - 评估成功、失败和回收操作日志
 - GPT、规则引擎和后续业务模块仍只保留边界，不在本阶段执行
 
-本阶段不接入 OpenAI GPT API，不开发主管初审、运营/投放数据、规则引擎、最终评定、看板或案例库。
+### 第三阶段：主管初审与返修
+
+- 管理员、内容负责人和编导主管按对象级权限提交主管初审
+- 支持通过发布、要求返修、内容无效三种决定
+- 审核记录、视频状态和操作日志在同一事务中写入
+- 每个视频版本仅允许一个主管初审结果，并通过视频行锁保护并发提交
+- 返修文件生成新的 `Video`，通过直接 `parentVideoId` 形成 V1 → V2 → V3 版本链
+- 新返修版本保持原创建者归属，状态重新进入 `submitted`
+- 返修上传事务失败时清理孤儿文件，不覆盖历史视频、Gemini 结果或主管审核
+
+当前不接入 OpenAI GPT API，不开发运营/投放数据、规则引擎、最终评定、看板或案例库。
 
 ## 本地启动
 
@@ -179,6 +189,31 @@ curl http://localhost:3001/api/videos/<video-id>/content-review/latest \
   -H "Authorization: Bearer <accessToken>"
 ```
 
+提交主管初审：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/supervisor-review \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"decision":"revision_required","comment":"请提前产品露出","revisionRequirements":["产品在前2秒出现"]}'
+```
+
+查询主管初审：
+
+```bash
+curl http://localhost:3001/api/videos/<video-id>/supervisor-review/latest \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+上传返修版本：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/revisions \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "file=@/path/to/revision.mp4" \
+  -F "title=返修版本"
+```
+
 ## 安全边界
 
 - 视频文件保存在 `storage/videos/`，该目录已加入 `.gitignore`。
@@ -190,7 +225,6 @@ curl http://localhost:3001/api/videos/<video-id>/content-review/latest \
 
 ## 后续阶段
 
-- 第三阶段：仅开发主管初审与返修流程。
 - 第四阶段：开发运营/投放数据补充。
 - 第五阶段：GPT 数据复盘。
 - 第六阶段：后端规则引擎。

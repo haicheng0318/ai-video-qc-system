@@ -10,6 +10,11 @@ export const OperationLogAction = {
   AiContentReviewCompleted: 'ai_content_review_completed',
   AiContentReviewFailed: 'ai_content_review_failed',
   AiContentReviewViewed: 'ai_content_review_viewed',
+  SupervisorReviewApproved: 'supervisor_review_approved',
+  SupervisorReviewRevisionRequired: 'supervisor_review_revision_required',
+  SupervisorReviewInvalidContent: 'supervisor_review_invalid_content',
+  SupervisorReviewViewed: 'supervisor_review_viewed',
+  VideoRevisionUploaded: 'video_revision_uploaded',
 } as const;
 
 export type OperationLogAction = (typeof OperationLogAction)[keyof typeof OperationLogAction];

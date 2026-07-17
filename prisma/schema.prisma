@@ -117,7 +117,7 @@ model Video {
   parentVideo           Video?                 @relation("VideoRevision", fields: [parentVideoId], references: [id])
   revisions             Video[]                @relation("VideoRevision")
   aiContentReviews      AiContentReview[]
-  supervisorReviews     SupervisorReview[]
+  supervisorReview      SupervisorReview?
   resultMetrics         VideoResultMetric[]
   aiResultReviews       AiResultReview[]
   ruleEngineResults     RuleEngineResult[]
@@ -171,14 +171,16 @@ model ContentReviewScore {
 
 model SupervisorReview {
   id                   String   @id @default(uuid()) @db.Uuid
-  videoId              String   @map("video_id") @db.Uuid
+  videoId              String   @unique @map("video_id") @db.Uuid
   reviewerId           String   @map("reviewer_id") @db.Uuid
-  reviewResult         String   @map("review_result") @db.VarChar(50)
+  decision             String   @map("review_result") @db.VarChar(50)
   adjustedContentGrade String?  @map("adjusted_content_grade") @db.VarChar(20)
   isAllowedToPublish   Boolean? @map("is_allowed_to_publish")
   comment              String?  @db.Text
-  revisionFocus        Json?    @map("revision_focus")
+  revisionRequirements Json?    @map("revision_focus")
+  reviewedAt           DateTime @default(now()) @map("reviewed_at")
   createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
   video                Video    @relation(fields: [videoId], references: [id])
   reviewer             User     @relation(fields: [reviewerId], references: [id])
 

@@ -10,6 +10,7 @@ import { GeminiModule } from './modules/ai/gemini/gemini.module';
 import { GptModule } from './modules/ai/gpt/gpt.module';
 import { RuleEngineModule } from './modules/rule-engine/rule-engine.module';
 import { HealthController } from './health.controller';
+import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor-reviews.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { HealthController } from './health.controller';
     GeminiModule,
     GptModule,
     RuleEngineModule,
+    SupervisorReviewsModule,
   ],
   controllers: [HealthController],
 })

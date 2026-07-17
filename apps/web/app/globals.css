@@ -148,6 +148,78 @@ textarea {
   color: #253247;
 }
 
+.section-gap {
+  margin-top: 20px;
+}
+
+.segmented-control {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.segmented-control button {
+  background: #fff;
+  border: 0;
+  border-right: 1px solid var(--line);
+  color: #344054;
+  cursor: pointer;
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.segmented-control button:last-child {
+  border-right: 0;
+}
+
+.segmented-control button.active {
+  background: #e8f0ff;
+  color: #0f45b7;
+  font-weight: 700;
+}
+
+.review-result,
+.version-summary {
+  line-height: 1.7;
+}
+
+.version-summary a {
+  color: var(--primary);
+  display: inline-block;
+  margin-right: 14px;
+}
+
+.version-chain {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.version-chain a {
+  background: #eef2f8;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 100px;
+  padding: 10px 12px;
+}
+
+.version-chain a.current {
+  background: #e8f0ff;
+  border-color: #84adff;
+}
+
+.version-chain span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .table {
   border-collapse: collapse;
   width: 100%;
@@ -198,6 +270,19 @@ video {
     flex-direction: column;
     gap: 8px;
     padding: 14px 20px;
+  }
+
+  .segmented-control {
+    grid-template-columns: 1fr;
+  }
+
+  .segmented-control button {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
+  }
+
+  .segmented-control button:last-child {
+    border-bottom: 0;
   }
 
   .page {
