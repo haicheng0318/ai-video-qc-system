@@ -2,7 +2,7 @@
 
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
-当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程。
+当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充。
 
 ## 技术栈
 
@@ -47,7 +47,18 @@
 - 新返修版本保持原创建者归属，状态重新进入 `submitted`
 - 返修上传事务失败时清理孤儿文件，不覆盖历史视频、Gemini 结果或主管审核
 
-当前不接入 OpenAI GPT API，不开发运营/投放数据、规则引擎、最终评定、看板或案例库。
+### 第四阶段：运营/投放结果数据补充
+
+- 按视频类型动态配置运营或投放指标字段
+- 管理员和内容负责人可补充全部适用视频，运营与投放按视频类型分工
+- 每次提交创建新的完整 `VideoResultMetric`，旧快照不可修改或删除
+- 使用 Video 行锁和 `baseMetricId` 乐观并发校验防止覆盖他人数据
+- 首次提交将视频推进至 `pending_result_data`，后续可继续追加快照
+- 支持最新快照、历史快照和游标分页查询
+- Decimal 统一序列化为字符串，比率按百分数数值保存，ROI 按倍数保存
+- 快照、视频状态和 `operation_logs` 在同一数据库事务中写入
+
+当前不接入 OpenAI GPT API，不生成数据表现等级或数据充分性，不执行规则引擎、最终评定、看板或案例库。第五阶段才执行 GPT 数据复盘。
 
 ## 本地启动
 
@@ -114,18 +125,30 @@ npm run dev:web
 - 前端：http://localhost:3000
 - 后端健康检查：http://localhost:3001/api/health
 
-## 角色映射与第一阶段视频权限
+## 角色映射与权限
 
-| Prisma UserRole | 业务角色 | 第一阶段视频查看权限 |
-| --- | --- | --- |
-| `admin` | 管理员 | 查看全部视频 |
-| `content_owner` | 内容负责人 | 查看全部视频 |
-| `supervisor` | 编导主管 | 查看本人及直属团队视频 |
-| `director` | 编导 | 只能查看自己提交的视频 |
-| `operator` | 运营 | 查看全部视频；第一阶段暂不补充运营数据 |
-| `advertiser` | 投放 | 查看全部视频；第一阶段暂不补充投放数据 |
+| Prisma UserRole | 业务角色 | 视频查看权限 | 第四阶段数据写入权限 |
+| --- | --- | --- | --- |
+| `admin` | 管理员 | 查看全部视频 | 全部适用视频类型 |
+| `content_owner` | 内容负责人 | 查看全部视频 | 全部适用视频类型 |
+| `supervisor` | 编导主管 | 查看本人及直属团队视频 | 只读 |
+| `director` | 编导 | 只能查看自己提交的视频 | 只读 |
+| `operator` | 运营 | 查看全部视频 | `product_card`、`organic`、`brand_seeding`、非投放 `other` |
+| `advertiser` | 投放 | 查看全部视频 | `qianchuan_ad`、`live_room_traffic`、投放 `other` |
 
 角色权限由后端校验，前端隐藏按钮不构成安全边界。
+
+## 结果数据快照
+
+`VideoResultMetric` 按不可变快照使用：
+
+- 每次提交都创建新记录，不更新或删除历史记录。
+- 未提交字段继承最新快照；具体值覆盖；明确传入 `null` 清空可选字段。
+- `videoType`、`videoId`、`submittedBy` 和时间字段由后端管理。
+- 已有快照时必须携带当前最新 `baseMetricId`，过期提交返回 `409`。
+- 比率字段直接保存百分数数值，例如 `CTR 2.35%` 保存为 `2.35`。
+- ROI 保存为倍数，例如 `ROI 2.5` 保存为 `2.5`。
+- 金额、比率与 ROI 在 API 响应中统一返回字符串，避免 Decimal 精度丢失。
 
 ## 默认管理员
 
@@ -214,6 +237,25 @@ curl -X POST http://localhost:3001/api/videos/<video-id>/revisions \
   -F "title=返修版本"
 ```
 
+创建运营/投放结果数据快照：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/result-metrics \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"baseMetricId":null,"dataStartDate":"2026-07-31","dataEndDate":"2026-08-02","views":1000}'
+```
+
+查询最新和历史快照：
+
+```bash
+curl http://localhost:3001/api/videos/<video-id>/result-metrics/latest \
+  -H "Authorization: Bearer <accessToken>"
+
+curl "http://localhost:3001/api/videos/<video-id>/result-metrics/history?limit=20" \
+  -H "Authorization: Bearer <accessToken>"
+```
+
 ## 安全边界
 
 - 视频文件保存在 `storage/videos/`，该目录已加入 `.gitignore`。
@@ -225,7 +267,6 @@ curl -X POST http://localhost:3001/api/videos/<video-id>/revisions \
 
 ## 后续阶段
 
-- 第四阶段：开发运营/投放数据补充。
 - 第五阶段：GPT 数据复盘。
 - 第六阶段：后端规则引擎。
 - 第七阶段：GPT 最终评定。

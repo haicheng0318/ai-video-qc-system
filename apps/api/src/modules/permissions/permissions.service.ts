@@ -125,6 +125,38 @@ export class PermissionsService {
     }
   }
 
+  async assertCanSubmitResultMetrics(
+    user: AuthenticatedUser,
+    video: Video,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const adminOverride =
+      user.role === UserRole.admin || user.role === UserRole.content_owner;
+    const operatorType =
+      video.videoType === 'product_card' ||
+      video.videoType === 'organic' ||
+      video.videoType === 'brand_seeding' ||
+      (video.videoType === 'other' && !video.isForAds);
+    const advertiserType =
+      video.videoType === 'qianchuan_ad' ||
+      video.videoType === 'live_room_traffic' ||
+      (video.videoType === 'other' && video.isForAds);
+    const allowed =
+      adminOverride ||
+      (user.role === UserRole.operator && operatorType) ||
+      (user.role === UserRole.advertiser && advertiserType);
+
+    if (!allowed) {
+      await this.logVideoPermissionDenied(
+        user,
+        video.id,
+        'Result metric submission denied.',
+        requestMeta,
+      );
+      throw new ForbiddenException('You do not have permission to submit result metrics.');
+    }
+  }
+
   async findVideoVisibleToUser(videoId: string, user: AuthenticatedUser) {
     const video = await this.prisma.video.findFirst({
       where: {

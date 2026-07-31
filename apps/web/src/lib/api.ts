@@ -8,6 +8,16 @@ export type ApiUser = {
   managerId?: string | null;
 };
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 export function getToken() {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem('accessToken');
@@ -50,7 +60,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       const payload = JSON.parse(text) as { message?: string | string[] };
       message = Array.isArray(payload.message) ? payload.message.join('；') : payload.message;
     } catch {}
-    throw new Error(message || text || `请求失败（${response.status}）`);
+    throw new ApiRequestError(
+      message || text || `请求失败（${response.status}）`,
+      response.status,
+    );
   }
 
   return response.json() as Promise<T>;

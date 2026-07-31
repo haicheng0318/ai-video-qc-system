@@ -68,6 +68,8 @@ textarea {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
+  min-width: 0;
+  overflow-x: auto;
   padding: 24px;
 }
 
@@ -245,6 +247,53 @@ textarea {
 .error {
   color: var(--danger);
   font-size: 14px;
+}
+
+.result-metrics h3 {
+  font-size: 16px;
+  margin-top: 24px;
+}
+
+.metric-summary {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+}
+
+.metric-group {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 20px 0 0;
+  min-width: 0;
+  padding: 18px 0 0;
+}
+
+.metric-group legend {
+  color: #253247;
+  font-size: 15px;
+  font-weight: 700;
+  padding-right: 12px;
+}
+
+.change-preview {
+  background: #f4f7fb;
+  border-left: 3px solid var(--primary);
+  font-size: 14px;
+  margin: 20px 0 14px;
+  padding: 12px;
+}
+
+.warning-list {
+  color: #8a4b08;
+  font-size: 14px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.result-metrics .status {
+  margin-left: 8px;
 }
 
 .detail-grid {

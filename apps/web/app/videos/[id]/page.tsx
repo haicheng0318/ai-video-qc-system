@@ -9,6 +9,8 @@ import { SupervisorReviewPanel, SupervisorReviewView } from '@/components/superv
 import { VideoRevisionPanel } from '@/components/video-revision-panel';
 import { VideoVersionChain } from '@/components/video-version-chain';
 import { canSubmitSupervisorReview } from '@/lib/supervisor-review-ui';
+import { ResultMetricsPanel } from '@/components/result-metrics-panel';
+import { VideoType } from '@ai-video-qc/shared';
 
 type ContentReviewScore = {
   id: string;
@@ -42,7 +44,7 @@ type VideoDetail = {
   brand?: string;
   product?: string;
   platform?: string;
-  videoType: string;
+  videoType: VideoType;
   status: string;
   scriptDescription?: string;
   isForAds: boolean;
@@ -83,6 +85,9 @@ const videoStatusLabels: Record<string, string> = {
   approved_for_publish: '通过发布',
   revision_required: '要求返修',
   invalid_content: '内容无效',
+  pending_result_data: '等待数据复盘',
+  ai_result_failed: '数据复盘失败',
+  pending_data: '等待补充数据',
 };
 
 export default function VideoDetailPage({ params }: { params: { id: string } }) {
@@ -285,10 +290,14 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
         parent={video.parentVideo || null}
         revisions={video.revisions || []}
       />
-      <section className="panel section-gap">
-        <h2>后续阶段</h2>
-        <p className="muted">运营/投放数据、GPT 数据复盘、规则引擎和最终评定将在后续阶段接入。</p>
-      </section>
+      <ResultMetricsPanel
+        videoId={video.id}
+        videoType={video.videoType}
+        isForAds={video.isForAds}
+        videoStatus={video.status}
+        currentUser={currentUser}
+        onVideoRefresh={loadVideo}
+      />
       <section className="panel section-gap">
         <h2>操作日志</h2>
         <table className="table">
