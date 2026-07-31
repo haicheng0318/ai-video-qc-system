@@ -174,6 +174,7 @@ model SupervisorReview {
   videoId              String   @unique @map("video_id") @db.Uuid
   reviewerId           String   @map("reviewer_id") @db.Uuid
   decision             String   @map("review_result") @db.VarChar(50)
+  /// Reserved for V1.1 final confirmation; not used in phase 3.
   adjustedContentGrade String?  @map("adjusted_content_grade") @db.VarChar(20)
   isAllowedToPublish   Boolean? @map("is_allowed_to_publish")
   comment              String?  @db.Text

@@ -117,6 +117,39 @@ test('revision required without comment returns 400', async () => {
   );
 });
 
+test('revision required rejects an empty requirements array', async () => {
+  await assert.rejects(
+    createHarness().service.create(videoId, {
+      decision: SupervisorReviewDecision.RevisionRequired,
+      comment: 'Please revise.',
+      revisionRequirements: [],
+    }, reviewer, {}),
+    /Revision comment and at least one requirement are required/,
+  );
+});
+
+test('revision required rejects requirements containing only whitespace', async () => {
+  await assert.rejects(
+    createHarness().service.create(videoId, {
+      decision: SupervisorReviewDecision.RevisionRequired,
+      comment: 'Please revise.',
+      revisionRequirements: ['   '],
+    }, reviewer, {}),
+    /Revision comment and at least one requirement are required/,
+  );
+});
+
+test('revision requirements are trimmed and empty items are not persisted', async () => {
+  const harness = createHarness();
+  const result = await harness.service.create(videoId, {
+    decision: SupervisorReviewDecision.RevisionRequired,
+    comment: ' Please revise. ',
+    revisionRequirements: ['  提前产品露出  ', '   '],
+  }, reviewer, {});
+  assert.equal(result.comment, 'Please revise.');
+  assert.deepEqual(result.revisionRequirements, ['提前产品露出']);
+});
+
 test('invalid content without reason returns 400', async () => {
   await assert.rejects(
     createHarness().service.create(videoId, { decision: SupervisorReviewDecision.InvalidContent }, reviewer, {}),

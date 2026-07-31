@@ -13,7 +13,18 @@ import { submitVideoRevision } from '../lib/video-revision-ui';
 test('supervisor form permission and required reason validation follow phase 3 rules', () => {
   assert.equal(canSubmitSupervisorReview({ id: 's', name: 'S', account: 's', role: 'supervisor' }, 'pending_supervisor_review'), true);
   assert.equal(canSubmitSupervisorReview({ id: 'd', name: 'D', account: 'd', role: 'director' }, 'pending_supervisor_review'), false);
-  assert.equal(validateSupervisorReview('revision_required', ''), '请填写返修意见。');
+  assert.equal(
+    validateSupervisorReview('revision_required', '', []),
+    '请填写返修意见和至少一条具体返修要求。',
+  );
+  assert.equal(
+    validateSupervisorReview('revision_required', '请返修', ['   ']),
+    '请填写返修意见和至少一条具体返修要求。',
+  );
+  assert.equal(
+    validateSupervisorReview('revision_required', '请返修', ['提前产品露出']),
+    null,
+  );
   assert.equal(validateSupervisorReview('invalid_content', '  '), '请填写内容无效原因。');
   assert.equal(validateSupervisorReview('approved_for_publish', ''), null);
 });
@@ -26,9 +37,9 @@ test('supervisor submission validates before request and respects confirmation',
   };
   await assert.rejects(
     submitSupervisorReview(request, 'video', {
-      decision: 'revision_required', comment: '', revisionRequirements: [],
+      decision: 'revision_required', comment: '请返修', revisionRequirements: [],
     }, () => true),
-    /请填写返修意见/,
+    /请填写返修意见和至少一条具体返修要求/,
   );
   const cancelled = await submitSupervisorReview(request, 'video', {
     decision: 'approved_for_publish', comment: '', revisionRequirements: [],

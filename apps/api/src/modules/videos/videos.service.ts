@@ -19,6 +19,7 @@ const activeRevisionStatuses: VideoStatus[] = [
   VideoStatus.ai_content_reviewing,
   VideoStatus.ai_content_failed,
   VideoStatus.pending_supervisor_review,
+  VideoStatus.revision_required,
 ];
 
 function rootDir() {

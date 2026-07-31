@@ -44,7 +44,15 @@ export function SupervisorReviewPanel({
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const validationError = validateSupervisorReview(decision, comment);
+    const revisionRequirements = requirements
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const validationError = validateSupervisorReview(
+      decision,
+      comment,
+      revisionRequirements,
+    );
     if (validationError) {
       setError(validationError);
       return;
@@ -58,7 +66,7 @@ export function SupervisorReviewPanel({
         {
           decision,
           comment,
-          revisionRequirements: requirements.split('\n').map((item) => item.trim()).filter(Boolean),
+          revisionRequirements,
         },
         () => window.confirm(`确认提交“${decisionLabels[decision]}”决定？提交后不可重复审核。`),
       );
@@ -120,6 +128,7 @@ export function SupervisorReviewPanel({
                 id="revision-requirements"
                 value={requirements}
                 onChange={(event) => setRequirements(event.target.value)}
+                required
               />
             </div>
           ) : null}

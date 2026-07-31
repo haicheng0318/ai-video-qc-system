@@ -45,7 +45,7 @@ function createRevisionHarness(options: {
   creatorId?: string;
   deny?: boolean;
   hasReview?: boolean;
-  activeRevision?: boolean;
+  activeRevisionStatus?: VideoStatus;
   failCreate?: boolean;
 } = {}) {
   const parent = {
@@ -69,7 +69,7 @@ function createRevisionHarness(options: {
     relatedRequirement: null,
     creatorId: options.creatorId || testUser.id,
     status: options.status || VideoStatus.revision_required,
-    parentVideoId: null,
+    parentVideoId: null as string | null,
     version: 1,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -80,7 +80,11 @@ function createRevisionHarness(options: {
     $queryRaw: async () => [],
     video: {
       findUnique: async () => parent,
-      findFirst: async () => options.activeRevision ? { id: 'active-revision' } : null,
+      findFirst: async ({ where }: {
+        where: { status: { in: VideoStatus[] } };
+      }) => options.activeRevisionStatus && where.status.in.includes(options.activeRevisionStatus)
+        ? { id: 'active-revision' }
+        : null,
       create: async ({ data }: { data: Record<string, unknown> }) => {
         if (options.failCreate) throw new Error('revision database create failed');
         const created = {
@@ -294,12 +298,55 @@ test('revision upload requires a matching supervisor review', async () => {
 
 test('parallel active direct revision is rejected', async () => {
   const fixture = await createFixtureFile();
-  const harness = createRevisionHarness({ activeRevision: true });
+  const harness = createRevisionHarness({ activeRevisionStatus: VideoStatus.submitted });
   try {
     await assert.rejects(
       harness.service.createRevision(parentVideoId, {}, uploadFile(fixture.filePath), testUser, {}),
       ConflictException,
     );
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('revision-required direct child blocks a sibling revision from V1', async () => {
+  const fixture = await createFixtureFile();
+  const harness = createRevisionHarness({
+    activeRevisionStatus: VideoStatus.revision_required,
+  });
+  try {
+    await assert.rejects(
+      harness.service.createRevision(parentVideoId, {}, uploadFile(fixture.filePath), testUser, {}),
+      ConflictException,
+    );
+    assert.equal(harness.createdVideos.length, 0);
+    assert.equal(harness.parent.status, VideoStatus.revision_required);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('V2 requiring revision can create V3 as its direct submitted child', async () => {
+  const fixture = await createFixtureFile();
+  const harness = createRevisionHarness();
+  harness.parent.id = '00000000-0000-4000-8000-000000000031';
+  harness.parent.parentVideoId = parentVideoId;
+  harness.parent.version = 2;
+  try {
+    const result = await harness.service.createRevision(
+      harness.parent.id,
+      { title: 'V3' },
+      uploadFile(fixture.filePath),
+      testUser,
+      {},
+    );
+    assert.equal(result.parentVideoId, harness.parent.id);
+    assert.equal(result.creatorId, testUser.id);
+    assert.equal(result.status, VideoStatus.submitted);
+    assert.equal(result.version, 3);
+    assert.equal(harness.parent.parentVideoId, parentVideoId);
+    assert.equal(harness.parent.status, VideoStatus.revision_required);
+    assert.equal(harness.createdVideos.length, 1);
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }

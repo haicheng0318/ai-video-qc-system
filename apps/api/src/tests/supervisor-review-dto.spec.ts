@@ -20,3 +20,13 @@ test('supervisor review DTO accepts the three phase 3 decisions', async () => {
     assert.equal((await validate(dto)).length, 0);
   }
 });
+
+test('supervisor review DTO rejects revision requirements that are not an array', async () => {
+  const dto = plainToInstance(CreateSupervisorReviewDto, {
+    decision: SupervisorReviewDecision.RevisionRequired,
+    comment: 'Please revise.',
+    revisionRequirements: 'Show the product earlier.',
+  });
+  const errors = await validate(dto);
+  assert.ok(errors.some((error) => error.property === 'revisionRequirements'));
+});

@@ -47,7 +47,7 @@ export class SupervisorReviewsService {
     user: AuthenticatedUser,
     requestMeta: RequestMeta,
   ) {
-    this.validateRequiredReason(dto);
+    const revisionRequirements = this.validateRequiredReason(dto);
     const video = await this.findVideo(videoId);
     await this.permissionsService.assertCanSubmitSupervisorReview(user, video, requestMeta);
 
@@ -82,7 +82,8 @@ export class SupervisorReviewsService {
             decision: dto.decision,
             isAllowedToPublish: dto.decision === SupervisorReviewDecision.ApprovedForPublish,
             comment: dto.comment?.trim() || null,
-            revisionRequirements: this.cleanRequirements(dto.revisionRequirements),
+            revisionRequirements:
+              revisionRequirements.length > 0 ? revisionRequirements : Prisma.JsonNull,
             reviewedAt: new Date(),
           },
           include: {
@@ -161,22 +162,26 @@ export class SupervisorReviewsService {
   }
 
   private validateRequiredReason(dto: CreateSupervisorReviewDto) {
-    if (
-      (dto.decision === SupervisorReviewDecision.RevisionRequired ||
-        dto.decision === SupervisorReviewDecision.InvalidContent) &&
+    const revisionRequirements = this.cleanRequirements(dto.revisionRequirements);
+    if (dto.decision === SupervisorReviewDecision.RevisionRequired) {
+      if (!dto.comment?.trim() || revisionRequirements.length === 0) {
+        throw new BadRequestException(
+          'Revision comment and at least one requirement are required.',
+        );
+      }
+    } else if (
+      dto.decision === SupervisorReviewDecision.InvalidContent &&
       !dto.comment?.trim()
     ) {
       throw new BadRequestException(
-        dto.decision === SupervisorReviewDecision.RevisionRequired
-          ? 'Revision comment is required.'
-          : 'Invalid content reason is required.',
+        'Invalid content reason is required.',
       );
     }
+    return revisionRequirements;
   }
 
   private cleanRequirements(requirements?: string[]) {
-    const cleaned = requirements?.map((item) => item.trim()).filter(Boolean) || [];
-    return cleaned.length > 0 ? cleaned : Prisma.JsonNull;
+    return requirements?.map((item) => item.trim()).filter(Boolean) || [];
   }
 
   private toResponse(review: {
