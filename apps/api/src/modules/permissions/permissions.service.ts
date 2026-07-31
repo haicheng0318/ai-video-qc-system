@@ -92,6 +92,39 @@ export class PermissionsService {
     }
   }
 
+  async assertCanSubmitSupervisorReview(
+    user: AuthenticatedUser,
+    video: Video & { creator?: { managerId: string | null } },
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const allowed =
+      user.role === UserRole.admin ||
+      user.role === UserRole.content_owner ||
+      (user.role === UserRole.supervisor &&
+        (video.creatorId === user.id || video.creator?.managerId === user.id));
+
+    if (!allowed) {
+      await this.logVideoPermissionDenied(user, video.id, 'Supervisor review submission denied.', requestMeta);
+      throw new ForbiddenException('You do not have permission to review this video.');
+    }
+  }
+
+  async assertCanUploadRevision(
+    user: AuthenticatedUser,
+    video: Video,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const allowed =
+      video.creatorId === user.id ||
+      user.role === UserRole.admin ||
+      user.role === UserRole.content_owner;
+
+    if (!allowed) {
+      await this.logVideoPermissionDenied(user, video.id, 'Video revision upload denied.', requestMeta);
+      throw new ForbiddenException('You do not have permission to upload a revision for this video.');
+    }
+  }
+
   async findVideoVisibleToUser(videoId: string, user: AuthenticatedUser) {
     const video = await this.prisma.video.findFirst({
       where: {
@@ -112,5 +145,24 @@ export class PermissionsService {
     });
 
     return video;
+  }
+
+  private async logVideoPermissionDenied(
+    user: AuthenticatedUser,
+    videoId: string,
+    comment: string,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    await this.operationLogsService.create({
+      userId: user.id,
+      videoId,
+      targetType: 'video',
+      targetId: videoId,
+      actionType: OperationLogAction.PermissionDenied,
+      result: 'denied',
+      comment,
+      ipAddress: requestMeta?.ipAddress,
+      userAgent: requestMeta?.userAgent,
+    });
   }
 }

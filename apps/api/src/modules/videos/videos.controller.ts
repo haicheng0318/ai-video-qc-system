@@ -15,12 +15,7 @@ import {
   HttpStatus,
   Query,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
-import { diskStorage } from 'multer';
-import { extname, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
 import { CurrentUser } from '../../common/current-user.decorator';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -28,42 +23,8 @@ import { CreateVideoDto } from './dto/create-video.dto';
 import { VideoListQueryDto } from './dto/video-list-query.dto';
 import { VideosService } from './videos.service';
 import { GeminiService } from '../ai/gemini/gemini.service';
-
-const allowedMimeTypes = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
-
-function getStorageDir() {
-  return resolve(process.cwd(), '../../', process.env.VIDEO_STORAGE_DIR || './storage/videos');
-}
-
-function getMaxVideoSizeBytes() {
-  const maxMb = Number(process.env.MAX_VIDEO_SIZE_MB || 500);
-  return maxMb * 1024 * 1024;
-}
-
-const uploadInterceptor = FileInterceptor('file', {
-  storage: diskStorage({
-    destination: (_req, _file, callback) => {
-      const storageDir = getStorageDir();
-      if (!existsSync(storageDir)) {
-        mkdirSync(storageDir, { recursive: true });
-      }
-      callback(null, storageDir);
-    },
-    filename: (_req, file, callback) => {
-      callback(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`);
-    },
-  }),
-  limits: {
-    fileSize: getMaxVideoSizeBytes(),
-  },
-  fileFilter: (_req, file, callback) => {
-    if (!allowedMimeTypes.has(file.mimetype)) {
-      callback(new BadRequestException('Only MP4, MOV, and WEBM videos are supported.'), false);
-      return;
-    }
-    callback(null, true);
-  },
-});
+import { CreateVideoRevisionDto } from './dto/create-video-revision.dto';
+import { videoUploadInterceptor } from './video-upload.config';
 
 @Controller('videos')
 @UseGuards(JwtAuthGuard)
@@ -74,7 +35,7 @@ export class VideosController {
   ) {}
 
   @Post()
-  @UseInterceptors(uploadInterceptor)
+  @UseInterceptors(videoUploadInterceptor)
   create(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: CreateVideoDto,
@@ -85,6 +46,22 @@ export class VideosController {
       throw new BadRequestException('Video file is required.');
     }
     return this.videosService.create(body, file, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+  }
+
+  @Post(':id/revisions')
+  @UseInterceptors(videoUploadInterceptor)
+  createRevision(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: CreateVideoRevisionDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    if (!file) throw new BadRequestException('Video file is required.');
+    return this.videosService.createRevision(id, body, file, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });

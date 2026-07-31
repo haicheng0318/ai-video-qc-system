@@ -5,6 +5,7 @@ export type ApiUser = {
   name: string;
   account: string;
   role: string;
+  managerId?: string | null;
 };
 
 export function getToken() {
@@ -44,7 +45,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    let message: string | undefined;
+    try {
+      const payload = JSON.parse(text) as { message?: string | string[] };
+      message = Array.isArray(payload.message) ? payload.message.join('；') : payload.message;
+    } catch {}
+    throw new Error(message || text || `请求失败（${response.status}）`);
   }
 
   return response.json() as Promise<T>;
