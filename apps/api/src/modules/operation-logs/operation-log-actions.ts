@@ -15,6 +15,7 @@ export const OperationLogAction = {
   SupervisorReviewInvalidContent: 'supervisor_review_invalid_content',
   SupervisorReviewViewed: 'supervisor_review_viewed',
   VideoRevisionUploaded: 'video_revision_uploaded',
+  ResultMetricSnapshotCreated: 'result_metric_snapshot_created',
 } as const;
 
 export type OperationLogAction = (typeof OperationLogAction)[keyof typeof OperationLogAction];

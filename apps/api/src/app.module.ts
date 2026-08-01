@@ -11,6 +11,7 @@ import { GptModule } from './modules/ai/gpt/gpt.module';
 import { RuleEngineModule } from './modules/rule-engine/rule-engine.module';
 import { HealthController } from './health.controller';
 import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor-reviews.module';
+import { ResultMetricsModule } from './modules/result-metrics/result-metrics.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor
     GptModule,
     RuleEngineModule,
     SupervisorReviewsModule,
+    ResultMetricsModule,
   ],
   controllers: [HealthController],
 })

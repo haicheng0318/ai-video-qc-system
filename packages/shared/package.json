@@ -2,11 +2,11 @@
   "name": "@ai-video-qc/shared",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "main": "src/index.ts",
+  "type": "commonjs",
+  "main": "dist/index.js",
   "types": "src/index.ts",
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },
