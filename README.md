@@ -2,7 +2,7 @@
 
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
-当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充 + 第五阶段 GPT 数据复盘。
+当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充 + 第五阶段 GPT 数据复盘 + 第六阶段后端规则引擎。
 
 ## 技术栈
 
@@ -69,7 +69,35 @@
 - `PlatformBenchmark` 只使用已启用且匹配平台、视频类型和品牌的真实业务基准；无基准时不虚构等级
 - 触发、回收、成功和失败都写入 `operation_logs`
 
-当前不执行规则引擎、最终评定、负责人确认、绩效判断、看板或案例库。第六阶段才执行后端规则引擎，当前没有最终有效等级。
+### 第六阶段：后端规则引擎
+
+- 规则引擎是同步、确定性的纯后端 TypeScript 代码，不调用 OpenAI、Gemini 或其他 AI
+- `rule-engine-v1` 只读取 `contentGrade`、`dataGrade`、`dataSufficiency`，不读取原始运营指标、AI 原文、归因文本或用户备注
+- `RuleEngineResult` 强制绑定主管审核时可用的 `contentReviewId` 和最新成功复盘的 `resultReviewId`
+- 每次成功只创建不可变结果；同一 `resultReviewId + ruleVersion` 不允许重复执行
+- 执行事务使用 Video 行锁，并原子写入规则结果、视频状态和 `operation_logs`
+- 数据不足命中 R00 并进入 `pending_data`；数据充分命中 R11-R33 并进入 `pending_final_evaluation`
+- 只有 `admin` 和 `content_owner` 可以执行；其他拥有视频对象读取权限的角色只读
+- 支持 latest 和 history 游标分页查询，接口不返回 Gemini/GPT `rawResponse`
+
+规则候选不是最终有效等级。当前不执行 GPT 最终评定、负责人确认、绩效判断、看板或案例库；第七阶段才执行 GPT 最终评定，第八阶段才由负责人确认。
+
+#### rule-engine-v1 规则矩阵
+
+| 规则 | 内容等级 | 数据等级/充分性 | 候选结果 | 硬边界 |
+| --- | --- | --- | --- | --- |
+| R00 | S/A/B/C/D | 数据不足，等级为空 | `pending_data` | `pending_data` |
+| R11 | S/A | S/A | `excellent_effective_candidate` | `allow_final_effective` |
+| R12 | S/A | B | `effective_candidate` | `allow_final_effective` |
+| R13 | S/A | C/D | `content_good_result_poor` | `allow_final_low_effective_or_invalid` |
+| R21 | B | S/A | `potential_effective_candidate` | `allow_final_effective_or_low_effective` |
+| R22 | B | B | `basic_effective_candidate` | `allow_final_effective_or_low_effective` |
+| R23 | B | C/D | `content_good_result_poor` | `allow_final_low_effective_or_invalid` |
+| R31 | C/D | S/A | `abnormal_need_confirmation` | `require_manual_confirmation` |
+| R32 | C/D | B | `abnormal_need_confirmation` | `require_manual_confirmation` |
+| R33 | C/D | C/D | `invalid_candidate` | `require_final_invalid` |
+
+R23 和 R32 是对原始规则矩阵缺口的显式保守补全。规则结果只限定第七阶段的候选边界，不直接生成最终有效结论。
 
 ## 本地启动
 
@@ -143,14 +171,14 @@ npm run dev:web
 
 ## 角色映射与权限
 
-| Prisma UserRole | 业务角色 | 视频查看权限 | 结果数据写入与 GPT 复盘触发 |
-| --- | --- | --- | --- |
-| `admin` | 管理员 | 查看全部视频 | 全部适用视频类型 |
-| `content_owner` | 内容负责人 | 查看全部视频 | 全部适用视频类型 |
-| `supervisor` | 编导主管 | 查看本人及直属团队视频 | 只读 |
-| `director` | 编导 | 只能查看自己提交的视频 | 只读 |
-| `operator` | 运营 | 查看全部视频 | `product_card`、`organic`、`brand_seeding`、非投放 `other` |
-| `advertiser` | 投放 | 查看全部视频 | `qianchuan_ad`、`live_room_traffic`、投放 `other` |
+| Prisma UserRole | 业务角色 | 视频查看权限 | 结果数据写入与 GPT 复盘触发 | 规则引擎 |
+| --- | --- | --- | --- | --- |
+| `admin` | 管理员 | 查看全部视频 | 全部适用视频类型 | 执行与查看 |
+| `content_owner` | 内容负责人 | 查看全部视频 | 全部适用视频类型 | 执行与查看 |
+| `supervisor` | 编导主管 | 查看本人及直属团队视频 | 只读 | 只读可访问视频 |
+| `director` | 编导 | 只能查看自己提交的视频 | 只读 | 只读本人视频 |
+| `operator` | 运营 | 查看全部视频 | `product_card`、`organic`、`brand_seeding`、非投放 `other` | 只读 |
+| `advertiser` | 投放 | 查看全部视频 | `qianchuan_ad`、`live_room_traffic`、投放 `other` | 只读 |
 
 角色权限由后端校验，前端隐藏按钮不构成安全边界。
 
@@ -291,7 +319,33 @@ curl "http://localhost:3001/api/videos/<video-id>/result-reviews/history?limit=2
   -H "Authorization: Bearer <accessToken>"
 ```
 
-`pending_data` 需先通过第四阶段接口补充新快照并回到 `pending_result_data`，不能直接触发 GPT 复盘。
+执行后端规则引擎（仅管理员和内容负责人，返回 HTTP 201）：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/rule-engine \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"resultReviewId":"<latest-succeeded-result-review-id>"}'
+```
+
+查询最新和历史规则结果：
+
+```bash
+curl http://localhost:3001/api/videos/<video-id>/rule-engine/latest \
+  -H "Authorization: Bearer <accessToken>"
+
+curl "http://localhost:3001/api/videos/<video-id>/rule-engine/history?limit=20" \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+HTTP 验收：
+
+```bash
+npm run test:http:result-review
+npm run test:http:rule-engine
+```
+
+`pending_data` 回流路径：通过第四阶段接口创建新的数据快照并回到 `pending_result_data`，重新执行第五阶段 GPT 数据复盘；成功后再次进入 `pending_rule_engine`，由新的 `resultReviewId` 创建新的不可变规则结果。
 
 ## 安全边界
 
@@ -305,6 +359,5 @@ curl "http://localhost:3001/api/videos/<video-id>/result-reviews/history?limit=2
 
 ## 后续阶段
 
-- 第六阶段：后端规则引擎。
 - 第七阶段：GPT 最终评定。
 - 第八阶段：负责人确认、看板和案例库。

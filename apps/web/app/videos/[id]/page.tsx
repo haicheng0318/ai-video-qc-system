@@ -12,6 +12,7 @@ import { canSubmitSupervisorReview } from '@/lib/supervisor-review-ui';
 import { ResultMetricsPanel } from '@/components/result-metrics-panel';
 import { VideoType } from '@ai-video-qc/shared';
 import { ResultReviewPanel } from '@/components/result-review-panel';
+import { RuleEnginePanel } from '@/components/rule-engine-panel';
 
 type ContentReviewScore = {
   id: string;
@@ -90,6 +91,7 @@ const videoStatusLabels: Record<string, string> = {
   ai_result_reviewing: '数据复盘中',
   ai_result_failed: '数据复盘失败',
   pending_rule_engine: '等待规则判断',
+  pending_final_evaluation: '等待最终评定',
   pending_data: '等待补充数据',
 };
 
@@ -305,6 +307,12 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
         videoId={video.id}
         videoType={video.videoType}
         isForAds={video.isForAds}
+        videoStatus={video.status}
+        currentUser={currentUser}
+        onVideoRefresh={loadVideo}
+      />
+      <RuleEnginePanel
+        videoId={video.id}
         videoStatus={video.status}
         currentUser={currentUser}
         onVideoRefresh={loadVideo}
