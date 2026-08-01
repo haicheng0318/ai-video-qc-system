@@ -20,6 +20,7 @@ export const OperationLogAction = {
   AiResultReviewRecovered: 'ai_result_review_recovered',
   AiResultReviewCompleted: 'ai_result_review_completed',
   AiResultReviewFailed: 'ai_result_review_failed',
+  RuleEngineExecuted: 'rule_engine_executed',
 } as const;
 
 export type OperationLogAction = (typeof OperationLogAction)[keyof typeof OperationLogAction];

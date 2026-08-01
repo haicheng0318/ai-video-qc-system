@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/tests/*.spec.ts",
     "test:http:result-review": "npm run build && node dist/scripts/result-review-http-acceptance.js",
+    "test:http:rule-engine": "npm run build && node dist/scripts/rule-engine-http-acceptance.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

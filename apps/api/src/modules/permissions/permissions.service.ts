@@ -168,6 +168,18 @@ export class PermissionsService {
     }
   }
 
+  async assertCanExecuteRuleEngine(
+    user: AuthenticatedUser,
+    video: Video,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
+    if (!allowed) {
+      await this.logVideoPermissionDenied(user, video.id, 'Rule engine execution denied.', requestMeta);
+      throw new ForbiddenException('You do not have permission to execute the rule engine.');
+    }
+  }
+
   async findVideoVisibleToUser(videoId: string, user: AuthenticatedUser) {
     const video = await this.prisma.video.findFirst({
       where: {
