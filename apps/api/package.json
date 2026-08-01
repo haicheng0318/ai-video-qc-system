@@ -8,6 +8,7 @@
     "build": "nest build",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/tests/*.spec.ts",
+    "test:http:result-review": "npm run build && node dist/scripts/result-review-http-acceptance.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.7",
     "multer": "^1.4.5-lts.1",
+    "openai": "^7.3.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
