@@ -2,7 +2,7 @@
 
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
-当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充。
+当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充 + 第五阶段 GPT 数据复盘。
 
 ## 技术栈
 
@@ -58,7 +58,18 @@
 - Decimal 统一序列化为字符串，比率按百分数数值保存，ROI 按倍数保存
 - 快照、视频状态和 `operation_logs` 在同一数据库事务中写入
 
-当前不接入 OpenAI GPT API，不生成数据表现等级或数据充分性，不执行规则引擎、最终评定、看板或案例库。第五阶段才执行 GPT 数据复盘。
+### 第五阶段：GPT 数据复盘
+
+- 使用 OpenAI 官方 Node SDK 和 Responses API，请求启用 `store: false`
+- GPT 只分析指定的结构化 `VideoResultMetric` 快照，不读取视频或本地文件
+- Structured Outputs strict JSON Schema 与 Zod 二次校验共同约束输出
+- 每条 `AiResultReview` 强制绑定 `resultMetricId`，且只允许复盘视频的最新快照
+- 异步触发立即返回 HTTP 202，支持 running 防重和超时任务回收
+- 数据充分时生成数据分数与 S/A/B/C/D 等级；数据不足时分数、等级和业务效果建议必须为 `null`
+- `PlatformBenchmark` 只使用已启用且匹配平台、视频类型和品牌的真实业务基准；无基准时不虚构等级
+- 触发、回收、成功和失败都写入 `operation_logs`
+
+当前不执行规则引擎、最终评定、负责人确认、绩效判断、看板或案例库。第六阶段才执行后端规则引擎，当前没有最终有效等级。
 
 ## 本地启动
 
@@ -93,6 +104,11 @@ GEMINI_FILE_POLL_INTERVAL_MS="5000"
 GEMINI_FILE_POLL_MAX_ATTEMPTS="24"
 GEMINI_REQUEST_TIMEOUT_MS="120000"
 GEMINI_RUNNING_STALE_MINUTES="10"
+OPENAI_API_KEY=""
+OPENAI_RESULT_REVIEW_MODEL="gpt-5-mini"
+OPENAI_RESULT_REVIEW_MAX_OUTPUT_TOKENS="4000"
+OPENAI_REQUEST_TIMEOUT_MS="120000"
+OPENAI_RESULT_REVIEW_RUNNING_STALE_MINUTES="10"
 ```
 
 3. 启动 PostgreSQL
@@ -127,7 +143,7 @@ npm run dev:web
 
 ## 角色映射与权限
 
-| Prisma UserRole | 业务角色 | 视频查看权限 | 第四阶段数据写入权限 |
+| Prisma UserRole | 业务角色 | 视频查看权限 | 结果数据写入与 GPT 复盘触发 |
 | --- | --- | --- | --- |
 | `admin` | 管理员 | 查看全部视频 | 全部适用视频类型 |
 | `content_owner` | 内容负责人 | 查看全部视频 | 全部适用视频类型 |
@@ -256,18 +272,39 @@ curl "http://localhost:3001/api/videos/<video-id>/result-metrics/history?limit=2
   -H "Authorization: Bearer <accessToken>"
 ```
 
+触发 GPT 数据复盘（只允许最新快照，返回 HTTP 202）：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/result-review \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"resultMetricId":"<latest-result-metric-id>"}'
+```
+
+查询最新复盘和历史复盘（均不返回 `rawResponse`）：
+
+```bash
+curl http://localhost:3001/api/videos/<video-id>/result-review/latest \
+  -H "Authorization: Bearer <accessToken>"
+
+curl "http://localhost:3001/api/videos/<video-id>/result-reviews/history?limit=20" \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+`pending_data` 需先通过第四阶段接口补充新快照并回到 `pending_result_data`，不能直接触发 GPT 复盘。
+
 ## 安全边界
 
 - 视频文件保存在 `storage/videos/`，该目录已加入 `.gitignore`。
 - 视频文件不通过静态目录公开。
 - 访问视频文件必须调用 `GET /api/videos/:id/file` 并携带 JWT。
-- Gemini / GPT API Key 只允许放在后端环境变量；前端和数据库不保存 API Key。
+- Gemini / OpenAI API Key 只允许放在后端环境变量；前端、seed 和数据库不保存 API Key。
 - Gemini 只负责视频内容理解和内容质量等级，不负责运营/投放数据、最终有效等级或绩效判断。
+- GPT 只读取结构化结果数据和经过筛选的上下文，不读取视频、URL、本地路径、用户账号、AI 原始响应或操作日志。
 - `JWT_EXPIRES_IN` 必须带 `s`、`m` 或 `h` 后缀，例如 `7200s`、`120m` 或 `2h`；裸数字会被拒绝。
 
 ## 后续阶段
 
-- 第五阶段：GPT 数据复盘。
 - 第六阶段：后端规则引擎。
 - 第七阶段：GPT 最终评定。
 - 第八阶段：负责人确认、看板和案例库。

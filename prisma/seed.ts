@@ -72,24 +72,42 @@ async function main() {
     },
   });
 
-  await prisma.aiModelConfig.upsert({
+  await prisma.aiModelConfig.deleteMany({
     where: {
-      agentType_provider_modelName: {
-        agentType: 'result_data_review',
-        provider: 'openai_gpt',
-        modelName: 'reserved-gpt-result-review-model',
-      },
-    },
-    update: {},
-    create: {
       agentType: 'result_data_review',
       provider: 'openai_gpt',
       modelName: 'reserved-gpt-result-review-model',
       enabled: false,
-      temperature: 0.2,
+    },
+  });
+
+  await prisma.aiModelConfig.upsert({
+    where: {
+      agentType_provider_modelName: {
+        agentType: 'result_review',
+        provider: 'openai',
+        modelName: 'gpt-5-mini',
+      },
+    },
+    update: {
+      enabled: false,
+      temperature: null,
+      maxTokens: 4000,
       jsonSchema: {
-        phase: 'reserved',
-        note: 'GPT result review schema will be added in phase 5.',
+        version: 'result-review-v1',
+        output: 'structured_json',
+      },
+    },
+    create: {
+      agentType: 'result_review',
+      provider: 'openai',
+      modelName: 'gpt-5-mini',
+      enabled: false,
+      temperature: null,
+      maxTokens: 4000,
+      jsonSchema: {
+        version: 'result-review-v1',
+        output: 'structured_json',
       },
     },
   });

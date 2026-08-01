@@ -12,6 +12,7 @@ import { RuleEngineModule } from './modules/rule-engine/rule-engine.module';
 import { HealthController } from './health.controller';
 import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor-reviews.module';
 import { ResultMetricsModule } from './modules/result-metrics/result-metrics.module';
+import { ResultReviewsModule } from './modules/result-reviews/result-reviews.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ResultMetricsModule } from './modules/result-metrics/result-metrics.mod
     RuleEngineModule,
     SupervisorReviewsModule,
     ResultMetricsModule,
+    ResultReviewsModule,
   ],
   controllers: [HealthController],
 })

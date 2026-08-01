@@ -15,6 +15,7 @@ async function upsertModelConfig(input) {
     update: {
       enabled: input.enabled,
       temperature: input.temperature,
+      maxTokens: input.maxTokens,
       jsonSchema: input.jsonSchema,
     },
     create: input,
@@ -73,15 +74,25 @@ async function main() {
     },
   });
 
+  await prisma.aiModelConfig.deleteMany({
+    where: {
+      agentType: 'result_data_review',
+      provider: 'openai_gpt',
+      modelName: 'reserved-gpt-result-review-model',
+      enabled: false,
+    },
+  });
+
   await upsertModelConfig({
-    agentType: 'result_data_review',
-    provider: 'openai_gpt',
-    modelName: 'reserved-gpt-result-review-model',
+    agentType: 'result_review',
+    provider: 'openai',
+    modelName: 'gpt-5-mini',
     enabled: false,
-    temperature: 0.2,
+    temperature: null,
+    maxTokens: 4000,
     jsonSchema: {
-      phase: 'reserved',
-      note: 'GPT result review schema will be added in phase 5.',
+      version: 'result-review-v1',
+      output: 'structured_json',
     },
   });
 

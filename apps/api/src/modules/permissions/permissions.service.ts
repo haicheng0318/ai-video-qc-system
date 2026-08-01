@@ -12,6 +12,17 @@ const fullDataAccessRoles: UserRole[] = [
   UserRole.advertiser,
 ];
 
+export function canManageResultData(user: AuthenticatedUser, video: Video) {
+  if (user.role === UserRole.admin || user.role === UserRole.content_owner) return true;
+  const responsibleRole =
+    video.videoType === 'qianchuan_ad' ||
+    video.videoType === 'live_room_traffic' ||
+    (video.videoType === 'other' && video.isForAds)
+      ? UserRole.advertiser
+      : UserRole.operator;
+  return user.role === responsibleRole;
+}
+
 @Injectable()
 export class PermissionsService {
   constructor(
@@ -130,23 +141,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
-    const adminOverride =
-      user.role === UserRole.admin || user.role === UserRole.content_owner;
-    const operatorType =
-      video.videoType === 'product_card' ||
-      video.videoType === 'organic' ||
-      video.videoType === 'brand_seeding' ||
-      (video.videoType === 'other' && !video.isForAds);
-    const advertiserType =
-      video.videoType === 'qianchuan_ad' ||
-      video.videoType === 'live_room_traffic' ||
-      (video.videoType === 'other' && video.isForAds);
-    const allowed =
-      adminOverride ||
-      (user.role === UserRole.operator && operatorType) ||
-      (user.role === UserRole.advertiser && advertiserType);
-
-    if (!allowed) {
+    if (!canManageResultData(user, video)) {
       await this.logVideoPermissionDenied(
         user,
         video.id,
@@ -154,6 +149,22 @@ export class PermissionsService {
         requestMeta,
       );
       throw new ForbiddenException('You do not have permission to submit result metrics.');
+    }
+  }
+
+  async assertCanTriggerResultReview(
+    user: AuthenticatedUser,
+    video: Video,
+    requestMeta?: { ipAddress?: string; userAgent?: string },
+  ) {
+    if (!canManageResultData(user, video)) {
+      await this.logVideoPermissionDenied(
+        user,
+        video.id,
+        'GPT result review trigger denied.',
+        requestMeta,
+      );
+      throw new ForbiddenException('You do not have permission to trigger result review.');
     }
   }
 
