@@ -150,6 +150,7 @@ model AiContentReview {
   video                         Video                @relation(fields: [videoId], references: [id])
   scores                        ContentReviewScore[]
   finalVideoEvaluations         FinalVideoEvaluation[]
+  ruleEngineResults             RuleEngineResult[]
 
   @@index([videoId])
   @@map("ai_content_reviews")
@@ -268,6 +269,7 @@ model AiResultReview {
   video                                 Video              @relation(fields: [videoId], references: [id])
   resultMetric                          VideoResultMetric? @relation(fields: [resultMetricId], references: [id])
   finalVideoEvaluations                 FinalVideoEvaluation[]
+  ruleEngineResults                     RuleEngineResult[]
 
   @@index([videoId])
   @@index([resultMetricId])
@@ -277,6 +279,9 @@ model AiResultReview {
 model RuleEngineResult {
   id                    String                 @id @default(uuid()) @db.Uuid
   videoId               String                 @map("video_id") @db.Uuid
+  contentReviewId       String                 @map("content_review_id") @db.Uuid
+  resultReviewId        String                 @map("result_review_id") @db.Uuid
+  ruleVersion           String                 @default("rule-engine-v1") @map("rule_version") @db.VarChar(50)
   contentGrade          String?                @map("content_grade") @db.VarChar(20)
   dataGrade             String?                @map("data_grade") @db.VarChar(20)
   dataSufficiency       DataSufficiency        @default(pending) @map("data_sufficiency")
@@ -286,9 +291,15 @@ model RuleEngineResult {
   recommendedBoundary   String                 @map("recommended_boundary") @db.VarChar(150)
   createdAt             DateTime               @default(now()) @map("created_at")
   video                 Video                  @relation(fields: [videoId], references: [id])
+  contentReview         AiContentReview        @relation(fields: [contentReviewId], references: [id])
+  resultReview          AiResultReview         @relation(fields: [resultReviewId], references: [id])
   finalVideoEvaluations FinalVideoEvaluation[]
 
+  @@unique([resultReviewId, ruleVersion])
   @@index([videoId])
+  @@index([contentReviewId])
+  @@index([resultReviewId])
+  @@index([videoId, createdAt, id])
   @@map("rule_engine_results")
 }
 
