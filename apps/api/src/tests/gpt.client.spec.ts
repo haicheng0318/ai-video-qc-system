@@ -100,6 +100,10 @@ function gptHarness(response: Partial<Awaited<ReturnType<OpenAiClient['createRes
       rawText: JSON.stringify(output), usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
       ...response,
     }),
+    createFinalEvaluation: async () => ({
+      responseId: 'final-resp', responseStatus: 'completed', model: 'gpt-5-mini',
+      rawText: '{}', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }),
   };
   return new GptService(client);
 }

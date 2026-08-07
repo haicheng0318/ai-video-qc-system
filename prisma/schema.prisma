@@ -67,23 +67,24 @@ enum DataSufficiency {
 }
 
 model User {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  name               String                 @db.VarChar(100)
-  account            String                 @unique @db.VarChar(100)
-  passwordHash       String                 @map("password_hash") @db.VarChar(255)
-  role               UserRole
-  department         String?                @db.VarChar(100)
-  managerId          String?                @map("manager_id") @db.Uuid
-  status             UserStatus             @default(active)
-  createdAt          DateTime               @default(now()) @map("created_at")
-  updatedAt          DateTime               @updatedAt @map("updated_at")
-  manager            User?                  @relation("UserManager", fields: [managerId], references: [id])
-  reports            User[]                 @relation("UserManager")
-  videos             Video[]                @relation("VideoCreator")
-  supervisorReviews  SupervisorReview[]
-  resultMetrics      VideoResultMetric[]
-  finalConfirmations FinalVideoEvaluation[] @relation("FinalConfirmedBy")
-  operationLogs      OperationLog[]
+  id                      String                 @id @default(uuid()) @db.Uuid
+  name                    String                 @db.VarChar(100)
+  account                 String                 @unique @db.VarChar(100)
+  passwordHash            String                 @map("password_hash") @db.VarChar(255)
+  role                    UserRole
+  department              String?                @db.VarChar(100)
+  managerId               String?                @map("manager_id") @db.Uuid
+  status                  UserStatus             @default(active)
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  manager                 User?                  @relation("UserManager", fields: [managerId], references: [id])
+  reports                 User[]                 @relation("UserManager")
+  videos                  Video[]                @relation("VideoCreator")
+  supervisorReviews       SupervisorReview[]
+  resultMetrics           VideoResultMetric[]
+  finalConfirmations      FinalVideoEvaluation[] @relation("FinalConfirmedBy")
+  finalEvaluationTriggers FinalVideoEvaluation[] @relation("FinalEvaluationTriggeredBy")
+  operationLogs           OperationLog[]
 
   @@map("users")
 }
@@ -131,26 +132,26 @@ model Video {
 }
 
 model AiContentReview {
-  id                            String               @id @default(uuid()) @db.Uuid
-  videoId                       String               @map("video_id") @db.Uuid
-  modelProvider                 String               @map("model_provider") @db.VarChar(50)
-  modelName                     String               @map("model_name") @db.VarChar(100)
-  contentSummary                String?              @map("content_summary") @db.Text
-  totalScore                    Int?                 @map("total_score")
-  contentGrade                  String?              @map("content_grade") @db.VarChar(20)
-  isPublishableRecommendation   Boolean?             @map("is_publishable_recommendation")
-  mainProblems                  Json?                @map("main_problems")
-  revisionSuggestions           Json?                @map("revision_suggestions")
-  complianceRisks               Json?                @map("compliance_risks")
-  usableScenarios               Json?                @map("usable_scenarios")
-  rawResponse                   Json?                @map("raw_response")
-  status                        AiReviewStatus       @default(pending)
-  errorMessage                  String?              @map("error_message") @db.Text
-  createdAt                     DateTime             @default(now()) @map("created_at")
-  video                         Video                @relation(fields: [videoId], references: [id])
-  scores                        ContentReviewScore[]
-  finalVideoEvaluations         FinalVideoEvaluation[]
-  ruleEngineResults             RuleEngineResult[]
+  id                          String                 @id @default(uuid()) @db.Uuid
+  videoId                     String                 @map("video_id") @db.Uuid
+  modelProvider               String                 @map("model_provider") @db.VarChar(50)
+  modelName                   String                 @map("model_name") @db.VarChar(100)
+  contentSummary              String?                @map("content_summary") @db.Text
+  totalScore                  Int?                   @map("total_score")
+  contentGrade                String?                @map("content_grade") @db.VarChar(20)
+  isPublishableRecommendation Boolean?               @map("is_publishable_recommendation")
+  mainProblems                Json?                  @map("main_problems")
+  revisionSuggestions         Json?                  @map("revision_suggestions")
+  complianceRisks             Json?                  @map("compliance_risks")
+  usableScenarios             Json?                  @map("usable_scenarios")
+  rawResponse                 Json?                  @map("raw_response")
+  status                      AiReviewStatus         @default(pending)
+  errorMessage                String?                @map("error_message") @db.Text
+  createdAt                   DateTime               @default(now()) @map("created_at")
+  video                       Video                  @relation(fields: [videoId], references: [id])
+  scores                      ContentReviewScore[]
+  finalVideoEvaluations       FinalVideoEvaluation[]
+  ruleEngineResults           RuleEngineResult[]
 
   @@index([videoId])
   @@map("ai_content_reviews")
@@ -192,55 +193,55 @@ model SupervisorReview {
 }
 
 model VideoResultMetric {
-  id                    String   @id @default(uuid()) @db.Uuid
-  videoId               String   @map("video_id") @db.Uuid
-  videoType             VideoType @map("video_type")
-  publishUrl            String?  @map("publish_url") @db.Text
-  publishDate           DateTime? @map("publish_date")
-  dataStartDate         DateTime? @map("data_start_date")
-  dataEndDate           DateTime? @map("data_end_date")
-  campaignName          String?  @map("campaign_name") @db.VarChar(255)
+  id                    String           @id @default(uuid()) @db.Uuid
+  videoId               String           @map("video_id") @db.Uuid
+  videoType             VideoType        @map("video_type")
+  publishUrl            String?          @map("publish_url") @db.Text
+  publishDate           DateTime?        @map("publish_date")
+  dataStartDate         DateTime?        @map("data_start_date")
+  dataEndDate           DateTime?        @map("data_end_date")
+  campaignName          String?          @map("campaign_name") @db.VarChar(255)
   impressions           Int?
   views                 Int?
   clicks                Int?
-  ctr                   Decimal? @db.Decimal(12, 4)
-  productClicks         Int?     @map("product_clicks")
-  productCtr            Decimal? @map("product_ctr") @db.Decimal(12, 4)
-  spend                 Decimal? @db.Decimal(14, 2)
-  cpc                   Decimal? @db.Decimal(14, 4)
-  cpm                   Decimal? @db.Decimal(14, 4)
+  ctr                   Decimal?         @db.Decimal(12, 4)
+  productClicks         Int?             @map("product_clicks")
+  productCtr            Decimal?         @map("product_ctr") @db.Decimal(12, 4)
+  spend                 Decimal?         @db.Decimal(14, 2)
+  cpc                   Decimal?         @db.Decimal(14, 4)
+  cpm                   Decimal?         @db.Decimal(14, 4)
   orders                Int?
-  gmv                   Decimal? @db.Decimal(14, 2)
-  conversionRate        Decimal? @map("conversion_rate") @db.Decimal(12, 4)
-  cvr                   Decimal? @db.Decimal(12, 4)
-  roi                   Decimal? @db.Decimal(12, 4)
-  liveRoomEntries       Int?     @map("live_room_entries")
-  entryRate             Decimal? @map("entry_rate") @db.Decimal(12, 4)
-  entryCost             Decimal? @map("entry_cost") @db.Decimal(14, 4)
-  avgStaySeconds        Int?     @map("avg_stay_seconds")
+  gmv                   Decimal?         @db.Decimal(14, 2)
+  conversionRate        Decimal?         @map("conversion_rate") @db.Decimal(12, 4)
+  cvr                   Decimal?         @db.Decimal(12, 4)
+  roi                   Decimal?         @db.Decimal(12, 4)
+  liveRoomEntries       Int?             @map("live_room_entries")
+  entryRate             Decimal?         @map("entry_rate") @db.Decimal(12, 4)
+  entryCost             Decimal?         @map("entry_cost") @db.Decimal(14, 4)
+  avgStaySeconds        Int?             @map("avg_stay_seconds")
   interactions          Int?
-  liveOrders            Int?     @map("live_orders")
-  liveGmv               Decimal? @map("live_gmv") @db.Decimal(14, 2)
-  threeSecondViewRate   Decimal? @map("three_second_view_rate") @db.Decimal(12, 4)
-  completionRate        Decimal? @map("completion_rate") @db.Decimal(12, 4)
-  avgWatchSeconds       Int?     @map("avg_watch_seconds")
+  liveOrders            Int?             @map("live_orders")
+  liveGmv               Decimal?         @map("live_gmv") @db.Decimal(14, 2)
+  threeSecondViewRate   Decimal?         @map("three_second_view_rate") @db.Decimal(12, 4)
+  completionRate        Decimal?         @map("completion_rate") @db.Decimal(12, 4)
+  avgWatchSeconds       Int?             @map("avg_watch_seconds")
   likes                 Int?
   comments              Int?
   shares                Int?
   saves                 Int?
-  followersGain         Int?     @map("followers_gain")
-  brandSearchGrowth     Int?     @map("brand_search_growth")
-  positiveCommentsCount Int?     @map("positive_comments_count")
-  commentKeywords       String?  @map("comment_keywords") @db.Text
-  operatorNote          String?  @map("operator_note") @db.Text
-  deliveryNote          String?  @map("delivery_note") @db.Text
-  planStatus            String?  @map("plan_status") @db.VarChar(100)
-  dataScreenshotUrl     String?  @map("data_screenshot_url") @db.Text
-  submittedBy           String?  @map("submitted_by") @db.Uuid
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
-  video                 Video    @relation(fields: [videoId], references: [id])
-  submitter             User?    @relation(fields: [submittedBy], references: [id])
+  followersGain         Int?             @map("followers_gain")
+  brandSearchGrowth     Int?             @map("brand_search_growth")
+  positiveCommentsCount Int?             @map("positive_comments_count")
+  commentKeywords       String?          @map("comment_keywords") @db.Text
+  operatorNote          String?          @map("operator_note") @db.Text
+  deliveryNote          String?          @map("delivery_note") @db.Text
+  planStatus            String?          @map("plan_status") @db.VarChar(100)
+  dataScreenshotUrl     String?          @map("data_screenshot_url") @db.Text
+  submittedBy           String?          @map("submitted_by") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+  video                 Video            @relation(fields: [videoId], references: [id])
+  submitter             User?            @relation(fields: [submittedBy], references: [id])
   aiResultReviews       AiResultReview[]
 
   @@index([videoId])
@@ -249,27 +250,27 @@ model VideoResultMetric {
 }
 
 model AiResultReview {
-  id                                    String             @id @default(uuid()) @db.Uuid
-  videoId                               String             @map("video_id") @db.Uuid
-  resultMetricId                        String?            @map("result_metric_id") @db.Uuid
-  modelProvider                         String             @map("model_provider") @db.VarChar(50)
-  modelName                             String             @map("model_name") @db.VarChar(100)
-  dataScore                             Int?               @map("data_score")
-  dataGrade                             String?            @map("data_grade") @db.VarChar(20)
-  dataSufficiency                       DataSufficiency    @default(pending) @map("data_sufficiency")
-  isBusinessEffectiveRecommendation     Boolean?           @map("is_business_effective_recommendation")
-  resultSummary                         String?            @map("result_summary") @db.Text
-  performanceProblems                   Json?              @map("performance_problems")
-  attributionAnalysis                   Json?              @map("attribution_analysis")
-  optimizationSuggestions               Json?              @map("optimization_suggestions")
-  rawResponse                           Json?              @map("raw_response")
-  status                                AiReviewStatus     @default(pending)
-  errorMessage                          String?            @map("error_message") @db.Text
-  createdAt                             DateTime           @default(now()) @map("created_at")
-  video                                 Video              @relation(fields: [videoId], references: [id])
-  resultMetric                          VideoResultMetric? @relation(fields: [resultMetricId], references: [id])
-  finalVideoEvaluations                 FinalVideoEvaluation[]
-  ruleEngineResults                     RuleEngineResult[]
+  id                                String                 @id @default(uuid()) @db.Uuid
+  videoId                           String                 @map("video_id") @db.Uuid
+  resultMetricId                    String?                @map("result_metric_id") @db.Uuid
+  modelProvider                     String                 @map("model_provider") @db.VarChar(50)
+  modelName                         String                 @map("model_name") @db.VarChar(100)
+  dataScore                         Int?                   @map("data_score")
+  dataGrade                         String?                @map("data_grade") @db.VarChar(20)
+  dataSufficiency                   DataSufficiency        @default(pending) @map("data_sufficiency")
+  isBusinessEffectiveRecommendation Boolean?               @map("is_business_effective_recommendation")
+  resultSummary                     String?                @map("result_summary") @db.Text
+  performanceProblems               Json?                  @map("performance_problems")
+  attributionAnalysis               Json?                  @map("attribution_analysis")
+  optimizationSuggestions           Json?                  @map("optimization_suggestions")
+  rawResponse                       Json?                  @map("raw_response")
+  status                            AiReviewStatus         @default(pending)
+  errorMessage                      String?                @map("error_message") @db.Text
+  createdAt                         DateTime               @default(now()) @map("created_at")
+  video                             Video                  @relation(fields: [videoId], references: [id])
+  resultMetric                      VideoResultMetric?     @relation(fields: [resultMetricId], references: [id])
+  finalVideoEvaluations             FinalVideoEvaluation[]
+  ruleEngineResults                 RuleEngineResult[]
 
   @@index([videoId])
   @@index([resultMetricId])
@@ -304,36 +305,57 @@ model RuleEngineResult {
 }
 
 model FinalVideoEvaluation {
-  id                       String            @id @default(uuid()) @db.Uuid
-  videoId                  String            @map("video_id") @db.Uuid
-  contentReviewId          String?           @map("content_review_id") @db.Uuid
-  resultReviewId           String?           @map("result_review_id") @db.Uuid
-  ruleEngineResultId       String?           @map("rule_engine_result_id") @db.Uuid
-  modelProvider            String?           @map("model_provider") @db.VarChar(50)
-  modelName                String?           @map("model_name") @db.VarChar(100)
-  contentGrade             String?           @map("content_grade") @db.VarChar(20)
-  dataGrade                String?           @map("data_grade") @db.VarChar(20)
-  finalGrade               String?           @map("final_grade") @db.VarChar(20)
-  finalStatus              String?           @map("final_status") @db.VarChar(50)
-  isEffectiveFinal         Boolean?          @map("is_effective_final")
-  isExcellentCase          Boolean           @default(false) @map("is_excellent_case")
-  isNegativeCase           Boolean           @default(false) @map("is_negative_case")
-  canBeUsedForPerformance  Boolean           @default(false) @map("can_be_used_for_performance")
-  finalAttribution         Json?             @map("final_attribution")
-  finalSuggestion          String?           @map("final_suggestion") @db.Text
-  rawResponse              Json?             @map("raw_response")
-  confirmedBy              String?           @map("confirmed_by") @db.Uuid
-  confirmedAt              DateTime?         @map("confirmed_at")
-  manualAdjustReason       String?           @map("manual_adjust_reason") @db.Text
-  createdAt                DateTime          @default(now()) @map("created_at")
-  updatedAt                DateTime          @updatedAt @map("updated_at")
-  video                    Video             @relation(fields: [videoId], references: [id])
-  contentReview            AiContentReview?  @relation(fields: [contentReviewId], references: [id])
-  resultReview             AiResultReview?   @relation(fields: [resultReviewId], references: [id])
-  ruleEngineResult         RuleEngineResult? @relation(fields: [ruleEngineResultId], references: [id])
-  confirmer                User?             @relation("FinalConfirmedBy", fields: [confirmedBy], references: [id])
+  id                       String           @id @default(uuid()) @db.Uuid
+  videoId                  String           @map("video_id") @db.Uuid
+  contentReviewId          String           @map("content_review_id") @db.Uuid
+  resultReviewId           String           @map("result_review_id") @db.Uuid
+  ruleEngineResultId       String           @map("rule_engine_result_id") @db.Uuid
+  evaluationVersion        String           @default("final-evaluation-v1") @map("evaluation_version") @db.VarChar(50)
+  status                   AiReviewStatus   @default(pending)
+  errorMessage             String?          @map("error_message") @db.Text
+  triggeredById            String           @map("triggered_by_id") @db.Uuid
+  modelProvider            String           @map("model_provider") @db.VarChar(50)
+  modelName                String           @map("model_name") @db.VarChar(100)
+  contentGrade             String           @map("content_grade") @db.VarChar(20)
+  dataGrade                String           @map("data_grade") @db.VarChar(20)
+  recommendedFinalGrade    String?          @map("recommended_final_grade") @db.VarChar(30)
+  recommendedFinalStatus   String?          @map("recommended_final_status") @db.VarChar(50)
+  recommendedIsEffective   Boolean?         @map("recommended_is_effective")
+  recommendationConfidence Int?             @map("recommendation_confidence")
+  decisionSummary          String?          @map("decision_summary") @db.Text
+  evidenceAssessment       Json?            @map("evidence_assessment")
+  confirmationFocus        Json?            @map("confirmation_focus")
+  riskFlags                Json?            @map("risk_flags")
+  completedAt              DateTime?        @map("completed_at")
+  successKey               String?          @unique @map("success_key") @db.VarChar(150)
+  finalGrade               String?          @map("final_grade") @db.VarChar(20)
+  finalStatus              String?          @map("final_status") @db.VarChar(50)
+  isEffectiveFinal         Boolean?         @map("is_effective_final")
+  isExcellentCase          Boolean          @default(false) @map("is_excellent_case")
+  isNegativeCase           Boolean          @default(false) @map("is_negative_case")
+  canBeUsedForPerformance  Boolean          @default(false) @map("can_be_used_for_performance")
+  finalAttribution         Json?            @map("final_attribution")
+  finalSuggestion          String?          @map("final_suggestion") @db.Text
+  rawResponse              Json?            @map("raw_response")
+  confirmedBy              String?          @map("confirmed_by") @db.Uuid
+  confirmedAt              DateTime?        @map("confirmed_at")
+  manualAdjustReason       String?          @map("manual_adjust_reason") @db.Text
+  createdAt                DateTime         @default(now()) @map("created_at")
+  updatedAt                DateTime         @updatedAt @map("updated_at")
+  video                    Video            @relation(fields: [videoId], references: [id])
+  contentReview            AiContentReview  @relation(fields: [contentReviewId], references: [id])
+  resultReview             AiResultReview   @relation(fields: [resultReviewId], references: [id])
+  ruleEngineResult         RuleEngineResult @relation(fields: [ruleEngineResultId], references: [id])
+  triggeredBy              User             @relation("FinalEvaluationTriggeredBy", fields: [triggeredById], references: [id])
+  confirmer                User?            @relation("FinalConfirmedBy", fields: [confirmedBy], references: [id])
 
   @@index([videoId])
+  @@index([contentReviewId])
+  @@index([resultReviewId])
+  @@index([ruleEngineResultId])
+  @@index([triggeredById])
+  @@index([status])
+  @@index([videoId, createdAt, id])
   @@map("final_video_evaluations")
 }
 
@@ -378,19 +400,19 @@ model AiModelConfig {
 }
 
 model PlatformBenchmark {
-  id          String   @id @default(uuid()) @db.Uuid
-  platform    String   @db.VarChar(100)
-  brand       String?  @db.VarChar(100)
-  videoType   VideoType @map("video_type")
-  metricName  String   @map("metric_name") @db.VarChar(100)
-  sThreshold  Decimal? @map("s_threshold") @db.Decimal(14, 4)
-  aThreshold  Decimal? @map("a_threshold") @db.Decimal(14, 4)
-  bThreshold  Decimal? @map("b_threshold") @db.Decimal(14, 4)
-  cThreshold  Decimal? @map("c_threshold") @db.Decimal(14, 4)
-  direction   String   @db.VarChar(20)
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String    @id @default(uuid()) @db.Uuid
+  platform   String    @db.VarChar(100)
+  brand      String?   @db.VarChar(100)
+  videoType  VideoType @map("video_type")
+  metricName String    @map("metric_name") @db.VarChar(100)
+  sThreshold Decimal?  @map("s_threshold") @db.Decimal(14, 4)
+  aThreshold Decimal?  @map("a_threshold") @db.Decimal(14, 4)
+  bThreshold Decimal?  @map("b_threshold") @db.Decimal(14, 4)
+  cThreshold Decimal?  @map("c_threshold") @db.Decimal(14, 4)
+  direction  String    @db.VarChar(20)
+  enabled    Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
 
   @@index([platform, brand, videoType])
   @@map("platform_benchmarks")

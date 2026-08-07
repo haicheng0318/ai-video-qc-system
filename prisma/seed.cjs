@@ -96,15 +96,25 @@ async function main() {
     },
   });
 
+  await prisma.aiModelConfig.deleteMany({
+    where: {
+      agentType: 'final_evaluation',
+      provider: 'openai_gpt',
+      modelName: 'reserved-gpt-final-evaluation-model',
+      enabled: false,
+    },
+  });
+
   await upsertModelConfig({
     agentType: 'final_evaluation',
-    provider: 'openai_gpt',
-    modelName: 'reserved-gpt-final-evaluation-model',
+    provider: 'openai',
+    modelName: 'gpt-5-mini',
     enabled: false,
-    temperature: 0.2,
+    temperature: null,
+    maxTokens: 4000,
     jsonSchema: {
-      phase: 'reserved',
-      note: 'GPT final evaluation schema will be added in phase 7.',
+      version: 'final-evaluation-v1',
+      output: 'structured_json',
     },
   });
 }

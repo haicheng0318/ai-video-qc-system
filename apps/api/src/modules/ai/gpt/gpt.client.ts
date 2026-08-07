@@ -24,8 +24,12 @@ export type OpenAiResultReviewResponse = {
   };
 };
 
+export type OpenAiFinalEvaluationRequest = OpenAiResultReviewRequest;
+export type OpenAiFinalEvaluationResponse = OpenAiResultReviewResponse;
+
 export interface OpenAiClient {
   createResultReview(request: OpenAiResultReviewRequest): Promise<OpenAiResultReviewResponse>;
+  createFinalEvaluation(request: OpenAiFinalEvaluationRequest): Promise<OpenAiFinalEvaluationResponse>;
 }
 
 function requestTimeoutMs() {
@@ -40,8 +44,20 @@ export class OpenAiResponsesClient implements OpenAiClient {
   ) {}
 
   async createResultReview(request: OpenAiResultReviewRequest): Promise<OpenAiResultReviewResponse> {
+    return this.createStructuredResponse(request, 'video_result_review', 'result review');
+  }
+
+  async createFinalEvaluation(request: OpenAiFinalEvaluationRequest): Promise<OpenAiFinalEvaluationResponse> {
+    return this.createStructuredResponse(request, 'video_final_evaluation', 'final evaluation');
+  }
+
+  private async createStructuredResponse(
+    request: OpenAiResultReviewRequest,
+    schemaName: 'video_result_review' | 'video_final_evaluation',
+    operation: 'result review' | 'final evaluation',
+  ): Promise<OpenAiResultReviewResponse> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) throw new OpenAiConfigurationError('OpenAI result review is not configured.');
+    if (!apiKey) throw new OpenAiConfigurationError(`OpenAI ${operation} is not configured.`);
 
     try {
       const response = await this.sdkFactory(apiKey, requestTimeoutMs()).responses.create({
@@ -55,7 +71,7 @@ export class OpenAiResponsesClient implements OpenAiClient {
         text: {
           format: {
             type: 'json_schema',
-            name: 'video_result_review',
+            name: schemaName,
             strict: true,
             schema: request.jsonSchema,
           },
@@ -79,9 +95,9 @@ export class OpenAiResponsesClient implements OpenAiClient {
     } catch (error) {
       if (error instanceof OpenAiConfigurationError) throw error;
       if (error instanceof OpenAI.APIConnectionTimeoutError) {
-        throw new OpenAiRequestTimeoutError('OpenAI result review request timed out.');
+        throw new OpenAiRequestTimeoutError(`OpenAI ${operation} request timed out.`);
       }
-      throw new OpenAiRequestError('OpenAI result review request failed.', error);
+      throw new OpenAiRequestError(`OpenAI ${operation} request failed.`, error);
     }
   }
 }
