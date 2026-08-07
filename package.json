@@ -23,6 +23,7 @@
     "test:web": "npm --workspace @ai-video-qc/web run test",
     "test:http:result-review": "npm --workspace @ai-video-qc/api run test:http:result-review",
     "test:http:rule-engine": "npm --workspace @ai-video-qc/api run test:http:rule-engine",
+    "test:http:final-evaluation": "npm --workspace @ai-video-qc/api run test:http:final-evaluation",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
