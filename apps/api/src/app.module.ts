@@ -13,6 +13,7 @@ import { HealthController } from './health.controller';
 import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor-reviews.module';
 import { ResultMetricsModule } from './modules/result-metrics/result-metrics.module';
 import { ResultReviewsModule } from './modules/result-reviews/result-reviews.module';
+import { FinalEvaluationsModule } from './modules/final-evaluations/final-evaluations.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { ResultReviewsModule } from './modules/result-reviews/result-reviews.mod
     SupervisorReviewsModule,
     ResultMetricsModule,
     ResultReviewsModule,
+    FinalEvaluationsModule,
   ],
   controllers: [HealthController],
 })

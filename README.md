@@ -2,7 +2,7 @@
 
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
-当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充 + 第五阶段 GPT 数据复盘 + 第六阶段后端规则引擎。
+当前实现范围：第一阶段基础系统搭建 + 第二阶段 Gemini 视频内容质量评估 + 第三阶段主管初审与返修流程 + 第四阶段运营/投放结果数据补充 + 第五阶段 GPT 数据复盘 + 第六阶段后端规则引擎 + 第七阶段 GPT 最终评定建议。
 
 ## 技术栈
 
@@ -80,7 +80,7 @@
 - 只有 `admin` 和 `content_owner` 可以执行；其他拥有视频对象读取权限的角色只读
 - 支持 latest 和 history 游标分页查询，接口不返回 Gemini/GPT `rawResponse`
 
-规则候选不是最终有效等级。当前不执行 GPT 最终评定、负责人确认、绩效判断、看板或案例库；第七阶段才执行 GPT 最终评定，第八阶段才由负责人确认。
+规则候选不是最终有效等级。第七阶段只生成 GPT 最终评定建议；负责人确认、正式最终状态、绩效判断、看板和案例库属于第八阶段。
 
 #### rule-engine-v1 规则矩阵
 
@@ -98,6 +98,16 @@
 | R33 | C/D | C/D | `invalid_candidate` | `require_final_invalid` |
 
 R23 和 R32 是对原始规则矩阵缺口的显式保守补全。规则结果只限定第七阶段的候选边界，不直接生成最终有效结论。
+
+### 第七阶段：GPT 最终评定建议
+
+- 使用 OpenAI Responses API、`store: false`、strict JSON Schema 和后端 Zod 二次校验
+- 只读取规则结果绑定的 Gemini 内容评估、主管审核、结果数据快照和 GPT 数据复盘，不读取视频、URL、用户身份或 AI 原始响应
+- GPT 只能在 `recommendedBoundary` 允许范围内建议 `effective`、`low_effective` 或 `invalid`
+- GPT 建议字段与人工确认字段分开保存；本阶段不填写 `finalGrade`、`finalStatus`、`isEffectiveFinal`、确认人或确认时间
+- HTTP 202 异步触发，支持 running 防重、stale 回收、失败重试和不可变历史记录
+- 成功进入 `pending_final_confirmation`，失败进入 `final_evaluation_failed`
+- GPT 建议不是最终业务结论；负责人确认、绩效判断和案例标记属于第八阶段
 
 ## 本地启动
 
@@ -137,6 +147,9 @@ OPENAI_RESULT_REVIEW_MODEL="gpt-5-mini"
 OPENAI_RESULT_REVIEW_MAX_OUTPUT_TOKENS="4000"
 OPENAI_REQUEST_TIMEOUT_MS="120000"
 OPENAI_RESULT_REVIEW_RUNNING_STALE_MINUTES="10"
+OPENAI_FINAL_EVALUATION_MODEL="gpt-5-mini"
+OPENAI_FINAL_EVALUATION_MAX_OUTPUT_TOKENS="4000"
+OPENAI_FINAL_EVALUATION_RUNNING_STALE_MINUTES="10"
 ```
 
 3. 启动 PostgreSQL
@@ -181,6 +194,8 @@ npm run dev:web
 | `advertiser` | 投放 | 查看全部视频 | `qianchuan_ad`、`live_room_traffic`、投放 `other` | 只读 |
 
 角色权限由后端校验，前端隐藏按钮不构成安全边界。
+
+GPT 最终评定建议仅允许 `admin` 和 `content_owner` 触发；其他角色只能按现有视频对象级权限查看建议。负责人确认接口尚未实现。
 
 ## 结果数据快照
 
@@ -338,11 +353,31 @@ curl "http://localhost:3001/api/videos/<video-id>/rule-engine/history?limit=20" 
   -H "Authorization: Bearer <accessToken>"
 ```
 
+生成 GPT 最终评定建议（仅管理员和内容负责人，返回 HTTP 202）：
+
+```bash
+curl -X POST http://localhost:3001/api/videos/<video-id>/final-evaluation \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"ruleEngineResultId":"<latest-rule-engine-result-id>"}'
+```
+
+查询最新和历史最终评定建议（不返回 `rawResponse` 或人工确认结论）：
+
+```bash
+curl http://localhost:3001/api/videos/<video-id>/final-evaluation/latest \
+  -H "Authorization: Bearer <accessToken>"
+
+curl "http://localhost:3001/api/videos/<video-id>/final-evaluations/history?limit=20" \
+  -H "Authorization: Bearer <accessToken>"
+```
+
 HTTP 验收：
 
 ```bash
 npm run test:http:result-review
 npm run test:http:rule-engine
+npm run test:http:final-evaluation
 ```
 
 `pending_data` 回流路径：通过第四阶段接口创建新的数据快照并回到 `pending_result_data`，重新执行第五阶段 GPT 数据复盘；成功后再次进入 `pending_rule_engine`，由新的 `resultReviewId` 创建新的不可变规则结果。
@@ -359,5 +394,4 @@ npm run test:http:rule-engine
 
 ## 后续阶段
 
-- 第七阶段：GPT 最终评定。
 - 第八阶段：负责人确认、看板和案例库。

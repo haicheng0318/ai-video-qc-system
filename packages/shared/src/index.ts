@@ -47,3 +47,4 @@ export type VideoStatus = (typeof videoStatuses)[number];
 
 export * from './result-metrics';
 export * from './rule-engine';
+export * from './final-evaluation';

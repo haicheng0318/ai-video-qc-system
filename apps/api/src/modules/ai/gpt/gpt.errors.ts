@@ -41,6 +41,17 @@ export class ResultReviewOutputValidationError extends Error {
 export class ResultReviewSnapshotBindingError extends Error {
   readonly code = 'RESULT_METRIC_BINDING_INVALID';
 }
+
+export class FinalEvaluationOutputValidationError extends Error {
+  readonly code = 'FINAL_EVALUATION_OUTPUT_INVALID';
+  constructor(message: string, readonly audit?: OpenAiResponseAudit) {
+    super(message);
+  }
+}
+
+export class FinalEvaluationSourceBindingError extends Error {
+  readonly code = 'FINAL_EVALUATION_SOURCE_INVALID';
+}
 export type OpenAiResponseAudit = {
   responseId: string;
   responseStatus: string;
