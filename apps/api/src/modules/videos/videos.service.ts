@@ -455,8 +455,12 @@ export class VideosService {
   }
 
   private serializeVideo<T extends Record<string, any>>(video: T) {
+    const internalFields = new Set(['rawResponse', 'successKey', 'filePath']);
     return JSON.parse(
-      JSON.stringify(video, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
+      JSON.stringify(video, (key, value) => {
+        if (internalFields.has(key)) return undefined;
+        return typeof value === 'bigint' ? value.toString() : value;
+      }),
     );
   }
 }

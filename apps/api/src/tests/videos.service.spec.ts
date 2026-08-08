@@ -367,3 +367,13 @@ test('revision database failure removes orphan file and keeps original error', a
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
+
+test('video response removes AI audit payloads and local file paths recursively', () => {
+  const response = (createService({} as PrismaService) as any).serializeVideo({
+    id: 'video', filePath: 'storage/videos/private.mp4',
+    finalVideoEvaluations: [{ id: 'evaluation', rawResponse: { secret: true }, successKey: 'internal' }],
+  });
+  assert.equal('filePath' in response, false);
+  assert.equal('rawResponse' in response.finalVideoEvaluations[0], false);
+  assert.equal('successKey' in response.finalVideoEvaluations[0], false);
+});

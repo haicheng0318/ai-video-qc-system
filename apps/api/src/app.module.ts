@@ -15,6 +15,8 @@ import { ResultMetricsModule } from './modules/result-metrics/result-metrics.mod
 import { ResultReviewsModule } from './modules/result-reviews/result-reviews.module';
 import { FinalEvaluationsModule } from './modules/final-evaluations/final-evaluations.module';
 import { FinalConfirmationsModule } from './modules/final-confirmations/final-confirmations.module';
+import { CasesModule } from './modules/cases/cases.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { FinalConfirmationsModule } from './modules/final-confirmations/final-co
     ResultReviewsModule,
     FinalEvaluationsModule,
     FinalConfirmationsModule,
+    CasesModule,
+    DashboardModule,
   ],
   controllers: [HealthController],
 })

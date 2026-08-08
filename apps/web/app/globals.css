@@ -150,6 +150,144 @@ textarea {
   color: #253247;
 }
 
+.button.danger-button {
+  background: #b42318;
+}
+
+.compact-select {
+  max-width: 180px;
+}
+
+.dashboard-filters {
+  align-items: flex-end;
+  display: flex;
+  gap: 14px;
+}
+
+.dashboard-filters label {
+  display: grid;
+  gap: 6px;
+}
+
+.kpi-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 20px;
+}
+
+.kpi {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.kpi span,
+.case-card footer {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.case-grades {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.case-grades div {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
+.case-grades dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.case-grades dd {
+  margin: 3px 0 0;
+  font-weight: 700;
+}
+
+.kpi strong {
+  font-size: 28px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.trend-chart {
+  align-items: flex-end;
+  display: flex;
+  gap: 12px;
+  min-height: 190px;
+  overflow-x: auto;
+  padding-top: 16px;
+}
+
+.trend-column {
+  align-items: center;
+  display: flex;
+  flex: 0 0 62px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-bar {
+  align-items: flex-start;
+  background: #155eef;
+  border-radius: 4px 4px 0 0;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  min-width: 38px;
+  padding-top: 5px;
+}
+
+.case-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.case-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 210px;
+  padding: 20px;
+}
+
+.case-card h2 {
+  font-size: 18px;
+}
+
+.case-label {
+  border-radius: 4px;
+  color: #fff;
+  display: inline-block;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.case-label.excellent { background: #067647; }
+.case-label.negative { background: #b42318; }
+
+.case-marking {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 12px;
+}
+
 .section-gap {
   margin-top: 20px;
 }
@@ -310,8 +448,17 @@ video {
 
 @media (max-width: 780px) {
   .form-grid,
-  .detail-grid {
+  .detail-grid,
+  .kpi-grid,
+  .summary-grid,
+  .case-grid,
+  .case-grades {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-filters {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .topbar {
