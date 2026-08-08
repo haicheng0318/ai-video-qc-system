@@ -440,6 +440,7 @@ export class FinalEvaluationsService {
     const evaluation = await this.prisma.finalVideoEvaluation.findFirst({
       where: { videoId },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: { confirmer: { select: { id: true, name: true, account: true, role: true } } },
     });
     return { videoStatus: video.status, evaluation: evaluation ? finalEvaluationResponse(evaluation) : null };
   }
@@ -460,6 +461,7 @@ export class FinalEvaluationsService {
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: query.limit + 1,
+      include: { confirmer: { select: { id: true, name: true, account: true, role: true } } },
     });
     const hasMore = records.length > query.limit;
     const page = records.slice(0, query.limit);

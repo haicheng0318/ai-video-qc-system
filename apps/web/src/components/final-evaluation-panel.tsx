@@ -122,7 +122,10 @@ export function FinalEvaluationPanel({ videoId, videoStatus, currentUser, onVide
         recommendedFinalStatus: null, recommendedIsEffective: null, recommendationConfidence: null,
         decisionSummary: null, evidenceAssessment: [], finalAttribution: [], finalSuggestion: null,
         confirmationFocus: [], riskFlags: [], status: 'running', errorMessage: null,
-        createdAt: new Date().toISOString(), completedAt: null,
+        createdAt: new Date().toISOString(), completedAt: null, finalGrade: null, finalStatus: null,
+        isEffectiveFinal: null, canBeUsedForPerformance: false, confirmedBy: null, confirmedAt: null,
+        manualAdjustReason: null, confirmationComment: null, isExcellentCase: false,
+        isNegativeCase: false, caseMarkedAt: null, caseNote: null,
       });
       await onVideoRefresh();
     } catch (error) {

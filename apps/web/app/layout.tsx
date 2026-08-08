@@ -17,6 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <Link href="/videos">视频列表</Link>
             <Link href="/videos/new">上传视频</Link>
+            <Link href="/dashboard">数据看板</Link>
+            <Link href="/cases/excellent">优秀案例</Link>
+            <Link href="/cases/negative">反面案例</Link>
           </nav>
           {children}
         </div>

@@ -75,7 +75,7 @@ test('background source drift maps to a safe binding error', () => {
   assert.throws(() => (service() as any).assertSources(value, 'rule', true), FinalEvaluationSourceBindingError);
 });
 
-test('final response never exposes rawResponse, successKey or confirmation fields', () => {
+test('final response never exposes rawResponse or successKey and safely exposes confirmation fields', () => {
   const response = finalEvaluationResponse({
     id: 'evaluation', contentReviewId: 'content', resultReviewId: 'result', ruleEngineResultId: 'rule',
     evaluationVersion: 'final-evaluation-v1', modelProvider: 'openai', modelName: 'gpt', contentGrade: 'A', dataGrade: 'A',
@@ -83,11 +83,16 @@ test('final response never exposes rawResponse, successKey or confirmation field
     recommendationConfidence: null, decisionSummary: null, evidenceAssessment: [], finalAttribution: [],
     finalSuggestion: null, confirmationFocus: [], riskFlags: [], status: 'running', errorMessage: null,
     createdAt: new Date(), completedAt: null, rawResponse: { secret: true }, successKey: 'secret', confirmedBy: 'owner',
+    confirmer: { id: 'owner', name: 'Owner', account: 'owner', role: 'content_owner' },
+    finalGrade: 'effective', finalStatus: 'final_effective', isEffectiveFinal: true,
+    canBeUsedForPerformance: true, confirmedAt: new Date(), manualAdjustReason: null,
+    confirmationComment: 'confirmed', isExcellentCase: false, isNegativeCase: false,
+    caseMarkedAt: null, caseNote: null,
   }) as Record<string, unknown>;
   assert.equal('rawResponse' in response, false);
   assert.equal('successKey' in response, false);
-  assert.equal('confirmedBy' in response, false);
-  assert.equal('finalGrade' in response, false);
+  assert.deepEqual(response.confirmedBy, { id: 'owner', name: 'Owner', account: 'owner', role: 'content_owner' });
+  assert.equal(response.finalGrade, 'effective');
 });
 
 test('history response remains a narrow immutable summary', () => {
