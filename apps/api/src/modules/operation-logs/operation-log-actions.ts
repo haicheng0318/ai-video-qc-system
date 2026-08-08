@@ -25,6 +25,8 @@ export const OperationLogAction = {
   FinalEvaluationRecovered: 'final_evaluation_recovered',
   FinalEvaluationCompleted: 'final_evaluation_completed',
   FinalEvaluationFailed: 'final_evaluation_failed',
+  FinalEvaluationConfirmed: 'final_evaluation_confirmed',
+  FinalGradeAdjusted: 'final_grade_adjusted',
 } as const;
 
 export type OperationLogAction = (typeof OperationLogAction)[keyof typeof OperationLogAction];

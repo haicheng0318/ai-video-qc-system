@@ -29,6 +29,18 @@ export type FinalEvaluationView = {
   errorMessage: string | null;
   createdAt: string;
   completedAt: string | null;
+  finalGrade: FinalRecommendationGrade | null;
+  finalStatus: FinalRecommendationStatus | null;
+  isEffectiveFinal: boolean | null;
+  canBeUsedForPerformance: boolean;
+  confirmedBy: { id: string; name: string; account: string; role: string } | null;
+  confirmedAt: string | null;
+  manualAdjustReason: string | null;
+  confirmationComment: string | null;
+  isExcellentCase: boolean;
+  isNegativeCase: boolean;
+  caseMarkedAt: string | null;
+  caseNote: string | null;
 };
 
 export type FinalEvaluationLatestResponse = {
@@ -39,7 +51,7 @@ export type FinalEvaluationLatestResponse = {
 export type FinalEvaluationHistoryItem = Pick<FinalEvaluationView,
   'id' | 'ruleEngineResultId' | 'evaluationVersion' | 'modelName' | 'status' |
   'recommendedFinalGrade' | 'recommendedFinalStatus' | 'recommendationConfidence' |
-  'errorMessage' | 'createdAt' | 'completedAt'> & { isLatest: boolean };
+  'errorMessage' | 'createdAt' | 'completedAt' | 'finalGrade' | 'finalStatus' | 'confirmedAt'> & { isLatest: boolean };
 
 export type FinalEvaluationHistoryResponse = {
   items: FinalEvaluationHistoryItem[];

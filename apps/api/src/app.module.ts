@@ -14,6 +14,7 @@ import { SupervisorReviewsModule } from './modules/supervisor-reviews/supervisor
 import { ResultMetricsModule } from './modules/result-metrics/result-metrics.module';
 import { ResultReviewsModule } from './modules/result-reviews/result-reviews.module';
 import { FinalEvaluationsModule } from './modules/final-evaluations/final-evaluations.module';
+import { FinalConfirmationsModule } from './modules/final-confirmations/final-confirmations.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { FinalEvaluationsModule } from './modules/final-evaluations/final-evalua
     ResultMetricsModule,
     ResultReviewsModule,
     FinalEvaluationsModule,
+    FinalConfirmationsModule,
   ],
   controllers: [HealthController],
 })

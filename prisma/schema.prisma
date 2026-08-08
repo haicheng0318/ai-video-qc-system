@@ -84,6 +84,7 @@ model User {
   resultMetrics           VideoResultMetric[]
   finalConfirmations      FinalVideoEvaluation[] @relation("FinalConfirmedBy")
   finalEvaluationTriggers FinalVideoEvaluation[] @relation("FinalEvaluationTriggeredBy")
+  caseMarkings            FinalVideoEvaluation[] @relation("FinalCaseMarkedBy")
   operationLogs           OperationLog[]
 
   @@map("users")
@@ -340,6 +341,10 @@ model FinalVideoEvaluation {
   confirmedBy              String?          @map("confirmed_by") @db.Uuid
   confirmedAt              DateTime?        @map("confirmed_at")
   manualAdjustReason       String?          @map("manual_adjust_reason") @db.Text
+  confirmationComment      String?          @map("confirmation_comment") @db.Text
+  caseMarkedById           String?          @map("case_marked_by_id") @db.Uuid
+  caseMarkedAt             DateTime?        @map("case_marked_at")
+  caseNote                 String?          @map("case_note") @db.Text
   createdAt                DateTime         @default(now()) @map("created_at")
   updatedAt                DateTime         @updatedAt @map("updated_at")
   video                    Video            @relation(fields: [videoId], references: [id])
@@ -348,6 +353,7 @@ model FinalVideoEvaluation {
   ruleEngineResult         RuleEngineResult @relation(fields: [ruleEngineResultId], references: [id])
   triggeredBy              User             @relation("FinalEvaluationTriggeredBy", fields: [triggeredById], references: [id])
   confirmer                User?            @relation("FinalConfirmedBy", fields: [confirmedBy], references: [id])
+  caseMarker               User?            @relation("FinalCaseMarkedBy", fields: [caseMarkedById], references: [id])
 
   @@index([videoId])
   @@index([contentReviewId])
@@ -355,6 +361,13 @@ model FinalVideoEvaluation {
   @@index([ruleEngineResultId])
   @@index([triggeredById])
   @@index([status])
+  @@index([confirmedAt])
+  @@index([finalGrade])
+  @@index([canBeUsedForPerformance])
+  @@index([isExcellentCase])
+  @@index([isNegativeCase])
+  @@index([caseMarkedAt])
+  @@index([caseMarkedById])
   @@index([videoId, createdAt, id])
   @@map("final_video_evaluations")
 }

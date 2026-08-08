@@ -14,6 +14,7 @@ import { VideoType } from '@ai-video-qc/shared';
 import { ResultReviewPanel } from '@/components/result-review-panel';
 import { RuleEnginePanel } from '@/components/rule-engine-panel';
 import { FinalEvaluationPanel } from '@/components/final-evaluation-panel';
+import { FinalConfirmationPanel } from '@/components/final-confirmation-panel';
 
 type ContentReviewScore = {
   id: string;
@@ -96,6 +97,9 @@ const videoStatusLabels: Record<string, string> = {
   final_evaluation_failed: '最终评定建议失败',
   pending_final_confirmation: '等待负责人确认',
   pending_data: '等待补充数据',
+  final_effective: '正式有效',
+  final_low_effective: '正式低有效',
+  final_invalid: '正式无效',
 };
 
 export default function VideoDetailPage({ params }: { params: { id: string } }) {
@@ -321,6 +325,12 @@ export default function VideoDetailPage({ params }: { params: { id: string } }) 
         onVideoRefresh={loadVideo}
       />
       <FinalEvaluationPanel
+        videoId={video.id}
+        videoStatus={video.status}
+        currentUser={currentUser}
+        onVideoRefresh={loadVideo}
+      />
+      <FinalConfirmationPanel
         videoId={video.id}
         videoStatus={video.status}
         currentUser={currentUser}
