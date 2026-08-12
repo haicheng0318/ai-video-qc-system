@@ -2,7 +2,7 @@ import { ConflictException, Injectable, Logger, NotFoundException } from '@nestj
 import { Prisma, UserRole, Video, VideoStatus } from '@prisma/client';
 import { createReadStream, statSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
-import { basename, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { Request, Response } from 'express';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
@@ -371,7 +371,13 @@ export class VideosService {
 
   streamVideoFile(video: Video, request: Request, response: Response) {
     const absolutePath = resolve(rootDir(), video.filePath);
-    if (!absolutePath.startsWith(storageDir())) {
+    const relativePath = relative(storageDir(), absolutePath);
+    if (
+      relativePath === ''
+      || relativePath === '..'
+      || relativePath.startsWith(`..${sep}`)
+      || isAbsolute(relativePath)
+    ) {
       throw new NotFoundException('Video file path is invalid.');
     }
 
@@ -383,7 +389,7 @@ export class VideosService {
       'Accept-Ranges': 'bytes',
     };
 
-    if (!range) {
+    if (range === undefined) {
       response.writeHead(200, {
         ...commonHeaders,
         'Content-Length': stats.size,
@@ -392,9 +398,18 @@ export class VideosService {
       return;
     }
 
-    const [startText, endText] = range.replace(/bytes=/, '').split('-');
-    const start = Number.parseInt(startText, 10);
-    const end = endText ? Number.parseInt(endText, 10) : stats.size - 1;
+    const parsedRange = this.parseSingleRange(range, stats.size);
+    if (!parsedRange) {
+      response.writeHead(416, {
+        ...commonHeaders,
+        'Content-Range': `bytes */${stats.size}`,
+        'Content-Length': 0,
+      });
+      response.end();
+      return;
+    }
+
+    const { start, end } = parsedRange;
     const chunkSize = end - start + 1;
 
     response.writeHead(206, {
@@ -404,6 +419,33 @@ export class VideosService {
     });
 
     createReadStream(absolutePath, { start, end }).pipe(response);
+  }
+
+  private parseSingleRange(range: string, fileSize: number) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || (!match[1] && !match[2]) || fileSize <= 0) return null;
+
+    const parseInteger = (value: string) => {
+      if (!/^\d+$/.test(value)) return null;
+      const parsed = Number(value);
+      return Number.isSafeInteger(parsed) ? parsed : null;
+    };
+
+    if (!match[1]) {
+      const suffixLength = parseInteger(match[2]);
+      if (suffixLength === null || suffixLength <= 0) return null;
+      return {
+        start: suffixLength >= fileSize ? 0 : fileSize - suffixLength,
+        end: fileSize - 1,
+      };
+    }
+
+    const start = parseInteger(match[1]);
+    if (start === null || start >= fileSize) return null;
+    const requestedEnd = match[2] ? parseInteger(match[2]) : fileSize - 1;
+    if (requestedEnd === null || requestedEnd < start) return null;
+
+    return { start, end: Math.min(requestedEnd, fileSize - 1) };
   }
 
   private async removeUploadedFile(filePath: string) {

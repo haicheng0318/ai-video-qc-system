@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
-import { UserRole, VideoStatus, VideoType } from '@prisma/client';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { UserRole, Video, VideoStatus, VideoType } from '@prisma/client';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { OperationLogsService } from '../modules/operation-logs/operation-logs.service';
 import { VideosService } from '../modules/videos/videos.service';
 import { PrismaService } from '../modules/prisma/prisma.service';
@@ -17,6 +20,7 @@ const testUser = {
   role: UserRole.director,
   managerId: null,
 };
+const projectRoot = resolve(process.cwd(), '../../');
 
 async function createFixtureFile() {
   const directory = await mkdtemp(join(tmpdir(), 'ai-video-qc-upload-'));
@@ -36,6 +40,57 @@ function uploadFile(filePath: string) {
 
 function createService(prisma: PrismaService, operationLogs = new OperationLogsService({} as PrismaService)) {
   return new VideosService(prisma, {} as import('../modules/permissions/permissions.service').PermissionsService, operationLogs);
+}
+
+function videoFile(filePath: string, size: number): Video {
+  return {
+    id: '00000000-0000-4000-8000-000000000099',
+    title: 'Stream fixture',
+    originalFileName: 'fixture.mp4',
+    filePath,
+    fileUrl: null,
+    coverUrl: null,
+    mimeType: 'video/mp4',
+    fileSizeBytes: BigInt(size),
+    duration: null,
+    brand: null,
+    product: null,
+    platform: null,
+    videoType: VideoType.product_card,
+    scriptDescription: null,
+    isForAds: false,
+    isEventVideo: false,
+    eventName: null,
+    relatedRequirement: null,
+    creatorId: testUser.id,
+    status: VideoStatus.submitted,
+    parentVideoId: null,
+    version: 1,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+async function streamResult(service: VideosService, video: Video, range?: string) {
+  const output = new PassThrough();
+  const chunks: Buffer[] = [];
+  let status = 0;
+  let headers: Record<string, string | number> = {};
+  output.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+  Object.assign(output, {
+    writeHead: (nextStatus: number, nextHeaders: Record<string, string | number>) => {
+      status = nextStatus;
+      headers = nextHeaders;
+      return output;
+    },
+  });
+  service.streamVideoFile(
+    video,
+    { headers: range === undefined ? {} : { range } } as Request,
+    output as unknown as Response,
+  );
+  await once(output, 'finish');
+  return { status, headers, body: Buffer.concat(chunks) };
 }
 
 const parentVideoId = '00000000-0000-4000-8000-000000000030';
@@ -376,4 +431,121 @@ test('video response removes AI audit payloads and local file paths recursively'
   assert.equal('filePath' in response, false);
   assert.equal('rawResponse' in response.finalVideoEvaluations[0], false);
   assert.equal('successKey' in response.finalVideoEvaluations[0], false);
+});
+
+test('video stream serves the complete file without a Range header', async () => {
+  const storageRoot = await mkdtemp(join(projectRoot, 'storage/videos/stream-'));
+  const filePath = join(storageRoot, 'complete.mp4');
+  const content = Buffer.from(Array.from({ length: 1000 }, (_, index) => index % 256));
+  await writeFile(filePath, content);
+  try {
+    const result = await streamResult(
+      createService({} as PrismaService),
+      videoFile(relative(projectRoot, filePath), content.length),
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.headers['Content-Length'], content.length);
+    assert.deepEqual(result.body, content);
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+for (const scenario of [
+  { range: 'bytes=0-99', start: 0, end: 99 },
+  { range: 'bytes=100-', start: 100, end: 999 },
+  { range: 'bytes=-500', start: 500, end: 999 },
+  { range: 'bytes=-5000', start: 0, end: 999 },
+  { range: 'bytes=900-5000', start: 900, end: 999 },
+]) {
+  test(`${scenario.range} serves a valid single byte range`, async () => {
+    const storageRoot = await mkdtemp(join(projectRoot, 'storage/videos/stream-'));
+    const filePath = join(storageRoot, 'range.mp4');
+    const content = Buffer.from(Array.from({ length: 1000 }, (_, index) => index % 256));
+    await writeFile(filePath, content);
+    try {
+      const result = await streamResult(
+        createService({} as PrismaService),
+        videoFile(relative(projectRoot, filePath), content.length),
+        scenario.range,
+      );
+      assert.equal(result.status, 206);
+      assert.equal(result.headers['Content-Length'], scenario.end - scenario.start + 1);
+      assert.equal(result.headers['Content-Range'], `bytes ${scenario.start}-${scenario.end}/${content.length}`);
+      assert.deepEqual(result.body, content.subarray(scenario.start, scenario.end + 1));
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const range of [
+  'bytes=abc-',
+  'items=0-10',
+  'bytes=100-50',
+  'bytes=1000-',
+  'bytes=99999999999-',
+  'bytes=0-10,20-30',
+  'bytes=-0',
+  'bytes=-',
+  '',
+]) {
+  test(`${range || 'empty Range'} returns 416 without a stream error`, async () => {
+    const storageRoot = await mkdtemp(join(projectRoot, 'storage/videos/stream-'));
+    const filePath = join(storageRoot, 'invalid-range.mp4');
+    const content = Buffer.alloc(1000, 7);
+    await writeFile(filePath, content);
+    try {
+      const result = await streamResult(
+        createService({} as PrismaService),
+        videoFile(relative(projectRoot, filePath), content.length),
+        range,
+      );
+      assert.equal(result.status, 416);
+      assert.equal(result.headers['Content-Range'], `bytes */${content.length}`);
+      assert.equal(result.headers['Content-Length'], 0);
+      assert.equal(result.body.length, 0);
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+}
+
+test('video stream allows a file inside the configured storage root', async () => {
+  const storageRoot = await mkdtemp(join(projectRoot, 'storage/videos/path-'));
+  const filePath = join(storageRoot, 'inside.mp4');
+  await writeFile(filePath, 'inside');
+  try {
+    const result = await streamResult(
+      createService({} as PrismaService),
+      videoFile(relative(projectRoot, filePath), 6),
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.body.toString(), 'inside');
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('video stream rejects a sibling directory with the storage prefix', () => {
+  const siblingPath = join(projectRoot, 'storage/videos_evil/escape.mp4');
+  assert.throws(
+    () => createService({} as PrismaService).streamVideoFile(
+      videoFile(relative(projectRoot, siblingPath), 1),
+      { headers: {} } as Request,
+      new PassThrough() as unknown as Response,
+    ),
+    NotFoundException,
+  );
+});
+
+test('video stream rejects a parent traversal outside the storage root', () => {
+  assert.throws(
+    () => createService({} as PrismaService).streamVideoFile(
+      videoFile('storage/videos/../../outside.mp4', 1),
+      { headers: {} } as Request,
+      new PassThrough() as unknown as Response,
+    ),
+    NotFoundException,
+  );
 });

@@ -89,3 +89,38 @@ test('pipeline query is separate from finalized denominator', async () => {
   await service.summary({}, user(UserRole.admin));
   assert.equal(calls.filter((query) => sqlText(query).includes('FROM videos v')).length, 1);
 });
+
+test('supervisor summary aggregates own and direct-report videos through the SQL visibility scope', async () => {
+  const calls: any[] = [];
+  const service = new DashboardService({ $queryRaw: async (query: any) => {
+    calls.push(query);
+    return sqlText(query).includes('FROM final_video_evaluations')
+      ? [{ finalized: 3n, effective: 1n, low_effective: 1n, invalid: 1n, effective_output: 2n }]
+      : [{}];
+  } } as any);
+  const result = await service.summary({}, user(UserRole.supervisor));
+  const formalQuery = calls.find((query) => sqlText(query).includes('FROM final_video_evaluations'));
+  assert.match(sqlText(formalQuery), /v\.creator_id = .* OR creator\.manager_id =/);
+  assert.equal(formalQuery.values.filter((value: unknown) => value === user(UserRole.supervisor).id).length, 2);
+  assert.equal(result.finalizedCount, 3);
+  assert.equal(result.effectiveOutputCount, 2);
+  assert.equal(result.effectiveOutputRate, 66.67);
+});
+
+test('supervisor breakdown excludes users outside the SQL visibility scope', async () => {
+  const calls: any[] = [];
+  const service = new DashboardService({ $queryRaw: async (query: any) => {
+    calls.push(query);
+    return [{
+      group_key: 'direct-report-id', group_label: '直属编导', finalized: 2n,
+      effective: 1n, low_effective: 0n, invalid: 1n, performance_eligible: 1n,
+      excellent_cases: 0n, negative_cases: 1n, manually_adjusted: 0n,
+    }];
+  } } as any);
+  const result = await service.breakdown({ groupBy: 'creator' }, user(UserRole.supervisor));
+  assert.match(sqlText(calls[0]), /v\.creator_id = .* OR creator\.manager_id =/);
+  assert.doesNotMatch(JSON.stringify(result), /管辖范围外编导/);
+  assert.deepEqual(result.items.map((item) => item.groupLabel), ['直属编导']);
+  assert.equal(result.items[0].finalizedCount, 2);
+  assert.equal(result.items[0].effectiveOutputRate, 50);
+});
