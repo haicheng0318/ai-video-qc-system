@@ -27,6 +27,23 @@ export function finalEvaluationResponse(evaluation: Record<string, any>) {
     errorMessage: evaluation.errorMessage,
     createdAt: new Date(evaluation.createdAt).toISOString(),
     completedAt: evaluation.completedAt ? new Date(evaluation.completedAt).toISOString() : null,
+    finalGrade: evaluation.finalGrade,
+    finalStatus: evaluation.finalStatus,
+    isEffectiveFinal: evaluation.isEffectiveFinal,
+    canBeUsedForPerformance: evaluation.canBeUsedForPerformance,
+    confirmedBy: evaluation.confirmer ? {
+      id: evaluation.confirmer.id,
+      name: evaluation.confirmer.name,
+      account: evaluation.confirmer.account,
+      role: evaluation.confirmer.role,
+    } : null,
+    confirmedAt: evaluation.confirmedAt ? new Date(evaluation.confirmedAt).toISOString() : null,
+    manualAdjustReason: evaluation.manualAdjustReason,
+    confirmationComment: evaluation.confirmationComment,
+    isExcellentCase: evaluation.isExcellentCase,
+    isNegativeCase: evaluation.isNegativeCase,
+    caseMarkedAt: evaluation.caseMarkedAt ? new Date(evaluation.caseMarkedAt).toISOString() : null,
+    caseNote: evaluation.caseNote,
   };
 }
 
@@ -44,6 +61,9 @@ export function finalEvaluationHistoryResponse(evaluation: Record<string, any>, 
     errorMessage: response.errorMessage,
     createdAt: response.createdAt,
     completedAt: response.completedAt,
+    finalGrade: response.finalGrade,
+    finalStatus: response.finalStatus,
+    confirmedAt: response.confirmedAt,
     isLatest,
   };
 }

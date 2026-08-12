@@ -122,10 +122,10 @@ test('panel warns that suggestion is not a final business conclusion', () => {
   assert.match(html, /待确认|负责人确认/);
 });
 
-test('panel source has no confirmation or manual adjustment command', async () => {
+test('GPT suggestion panel remains separate from confirmation commands', async () => {
   const source = await readFile(resolve(__dirname, '../components/final-evaluation-panel.tsx'), 'utf8');
-  assert.doesNotMatch(source, /confirmedBy|manualAdjustReason|isEffectiveFinal|canBeUsedForPerformance/);
   assert.doesNotMatch(source, /确认最终|手工调整|标记优秀|标记反面/);
+  assert.doesNotMatch(source, /submitFinalConfirmation|submitCaseMarking/);
 });
 
 test('panel never renders rawResponse or successKey', async () => {
