@@ -50,4 +50,17 @@ export class ResultReviewsController {
       userAgent: request.headers['user-agent'],
     });
   }
+
+  @Get('result-reviews/:reviewId')
+  byId(
+    @Param('videoId') videoId: string,
+    @Param('reviewId') reviewId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.resultReviewsService.byId(videoId, reviewId, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+  }
 }

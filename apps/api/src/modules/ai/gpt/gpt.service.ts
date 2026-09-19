@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { OpenAiClient, OPENAI_CLIENT } from './gpt.client';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { EvaluationJobsService } from '../../evaluation-jobs/evaluation-jobs.service';
+import { StructuredTextClient, TEXT_MODEL_CLIENT } from './gpt.client';
 import {
   FinalEvaluationOutputValidationError,
-  OpenAiRefusalError,
-  OpenAiResponseError,
+  TextModelRefusalError,
+  TextModelResponseError,
   ResultReviewOutputValidationError,
 } from './gpt.errors';
 import { resultReviewJsonSchema, validateResultReviewOutput } from './gpt-result-review.schema';
@@ -12,9 +13,9 @@ import { RecommendedBoundary } from '@ai-video-qc/shared';
 
 @Injectable()
 export class GptService {
-  readonly provider = 'openai';
+  readonly provider = 'aliyun_bailian';
 
-  constructor(@Inject(OPENAI_CLIENT) private readonly client: OpenAiClient) {}
+  constructor(@Inject(TEXT_MODEL_CLIENT) private readonly client: StructuredTextClient, @Optional() private readonly jobs?: EvaluationJobsService) {}
 
   async reviewResultData(input: {
     model: string;
@@ -26,21 +27,22 @@ export class GptService {
       ...input,
       jsonSchema: resultReviewJsonSchema,
     });
+    await this.collect(response);
     if (response.responseStatus !== 'completed') {
-      throw new OpenAiResponseError('OpenAI result review response did not complete.', response);
+      throw new TextModelResponseError('Qwen result review response did not complete.', response);
     }
     if (response.refusal) {
-      throw new OpenAiRefusalError('OpenAI refused the result review request.', response);
+      throw new TextModelRefusalError('Qwen refused the result review request.', response);
     }
     if (!response.rawText?.trim()) {
-      throw new OpenAiResponseError('OpenAI result review returned empty output.', response);
+      throw new TextModelResponseError('Qwen result review returned empty output.', response);
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(response.rawText);
     } catch {
-      throw new ResultReviewOutputValidationError('OpenAI result review returned invalid JSON.', response);
+      throw new ResultReviewOutputValidationError('Qwen result review returned invalid JSON.', response);
     }
 
     return {
@@ -72,20 +74,21 @@ export class GptService {
       maxOutputTokens: input.maxOutputTokens,
       jsonSchema: finalEvaluationJsonSchema,
     });
+    await this.collect(response);
     if (response.responseStatus !== 'completed') {
-      throw new OpenAiResponseError('OpenAI final evaluation response did not complete.', response);
+      throw new TextModelResponseError('Qwen final evaluation response did not complete.', response);
     }
     if (response.refusal) {
-      throw new OpenAiRefusalError('OpenAI refused the final evaluation request.', response);
+      throw new TextModelRefusalError('Qwen refused the final evaluation request.', response);
     }
     if (!response.rawText?.trim()) {
-      throw new OpenAiResponseError('OpenAI final evaluation returned empty output.', response);
+      throw new TextModelResponseError('Qwen final evaluation returned empty output.', response);
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(response.rawText);
     } catch {
-      throw new FinalEvaluationOutputValidationError('OpenAI final evaluation returned invalid JSON.', response);
+      throw new FinalEvaluationOutputValidationError('Qwen final evaluation returned invalid JSON.', response);
     }
     try {
       return {
@@ -97,6 +100,16 @@ export class GptService {
         throw new FinalEvaluationOutputValidationError(error.message, response);
       }
       throw error;
+    }
+  }
+  private async collect(response: import('./gpt.client').StructuredTextResponse) {
+    try {
+      await this.jobs?.recordUsage(response.usage, response.usageAvailable === true);
+      response.usageCollectionStatus = response.usageAvailable ? 'collected' : 'unknown';
+    } catch {
+      response.usageCollectionStatus = 'failed';
+      // Telemetry failure must not discard an already received paid response or reissue it.
+      await this.jobs?.recordCollectionFailure?.().catch(() => undefined);
     }
   }
 }

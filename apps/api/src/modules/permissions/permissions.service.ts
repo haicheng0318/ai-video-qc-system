@@ -17,6 +17,7 @@ export function canManageResultData(user: AuthenticatedUser, video: Video) {
   const responsibleRole =
     video.videoType === 'qianchuan_ad' ||
     video.videoType === 'live_room_traffic' ||
+    (video.videoType === 'product_card' && video.isForAds) ||
     (video.videoType === 'other' && video.isForAds)
       ? UserRole.advertiser
       : UserRole.operator;
@@ -85,7 +86,7 @@ export class PermissionsService {
     const allowed =
       user.role === UserRole.admin ||
       user.role === UserRole.content_owner ||
-      (user.role === UserRole.director && video.creatorId === user.id);
+      ([UserRole.director, UserRole.visitor].includes(user.role as 'director' | 'visitor') && video.creatorId === user.id);
 
     if (!allowed) {
       await this.operationLogsService.create({
@@ -161,7 +162,7 @@ export class PermissionsService {
       await this.logVideoPermissionDenied(
         user,
         video.id,
-        'GPT result review trigger denied.',
+        'AI result review trigger denied.',
         requestMeta,
       );
       throw new ForbiddenException('You do not have permission to trigger result review.');
@@ -187,7 +188,7 @@ export class PermissionsService {
   ) {
     const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
     if (!allowed) {
-      await this.logVideoPermissionDenied(user, video.id, 'GPT final evaluation trigger denied.', requestMeta);
+      await this.logVideoPermissionDenied(user, video.id, 'AI final evaluation trigger denied.', requestMeta);
       throw new ForbiddenException('You do not have permission to trigger final evaluation.');
     }
   }

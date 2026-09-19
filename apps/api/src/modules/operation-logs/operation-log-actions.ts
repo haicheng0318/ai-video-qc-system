@@ -16,6 +16,8 @@ export const OperationLogAction = {
   SupervisorReviewViewed: 'supervisor_review_viewed',
   VideoRevisionUploaded: 'video_revision_uploaded',
   ResultMetricSnapshotCreated: 'result_metric_snapshot_created',
+  PlatformBenchmarkCreated: 'platform_benchmark_created',
+  PlatformBenchmarkUpdated: 'platform_benchmark_updated',
   AiResultReviewStarted: 'ai_result_review_started',
   AiResultReviewRecovered: 'ai_result_review_recovered',
   AiResultReviewCompleted: 'ai_result_review_completed',
@@ -30,6 +32,8 @@ export const OperationLogAction = {
   ExcellentCaseMarked: 'excellent_case_marked',
   NegativeCaseMarked: 'negative_case_marked',
   CaseMarkRemoved: 'case_mark_removed',
+  VideoReportExported: 'video_report_exported',
+  CaseLibraryExported: 'case_library_exported',
 } as const;
 
 export type OperationLogAction = (typeof OperationLogAction)[keyof typeof OperationLogAction];

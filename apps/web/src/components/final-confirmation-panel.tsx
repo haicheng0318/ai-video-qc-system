@@ -16,11 +16,15 @@ import {
   submitCaseMarking,
   submitFinalConfirmation,
 } from '@/lib/final-confirmation-ui';
+import { boundaryLabels, displayLabel, finalStatusLabels } from '@/lib/display-labels';
+import { useUnsavedChanges } from '@/lib/unsaved-changes';
+import { workflowEvidenceKey } from '@/lib/workflow-refresh';
+import { formatShanghaiDateTime } from '@/lib/display-time';
 
 const gradeLabels: Record<FinalGrade, string> = { effective: '有效', low_effective: '低有效', invalid: '无效' };
 
-export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVideoRefresh }: {
-  videoId: string; videoStatus: string; currentUser: ApiUser | null; onVideoRefresh: () => Promise<void>;
+export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVideoRefresh, allowedActions }: {
+  videoId: string; videoStatus: string; currentUser: ApiUser | null; onVideoRefresh: () => Promise<void>; allowedActions?: string[];
 }) {
   const [evaluation, setEvaluation] = useState<FinalEvaluationLatestResponse['evaluation']>(null);
   const [rule, setRule] = useState<RuleEngineLatestResponse['ruleEngineResult']>(null);
@@ -32,6 +36,9 @@ export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVi
   const [caseType, setCaseType] = useState<CaseType>('none');
   const [caseReason, setCaseReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
+  const evidenceKey = workflowEvidenceKey(videoStatus, allowedActions);
 
   const load = useCallback(async () => {
     const [evaluationResult, ruleResult] = await Promise.allSettled([
@@ -50,8 +57,8 @@ export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVi
     } else setErrors((state) => ({ ...state, rule: '规则边界暂时不可用。' }));
   }, [videoId]);
 
-  useEffect(() => { void load(); }, [load]);
-  const canConfirm = canConfirmFinalEvaluation(currentUser, videoStatus, evaluation);
+  useEffect(() => { void load(); }, [evidenceKey, load]);
+  const canConfirm = allowedActions ? allowedActions.includes('confirm_final_evaluation') : canConfirmFinalEvaluation(currentUser, videoStatus, evaluation);
   const grades = useMemo(() => rule ? allowedFinalGrades(rule.recommendedBoundary) : [], [rule]);
 
   async function confirm() {
@@ -69,6 +76,7 @@ export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVi
         ...(comment.trim() ? { confirmationComment: comment.trim() } : {}),
         ...(reason.trim() ? { manualAdjustReason: reason.trim() } : {}),
       });
+      setDirty(false);
       await load(); await onVideoRefresh();
     } catch (error) { setErrors((state) => ({ ...state, action: finalConfirmationError(error) })); }
     finally { setSubmitting(false); }
@@ -81,6 +89,7 @@ export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVi
     setSubmitting(true);
     try {
       await submitCaseMarking(apiFetch, videoId, { evaluationId: evaluation.id, caseType, reason: caseReason.trim() });
+      setDirty(false);
       await load();
     } catch (error) { setErrors((state) => ({ ...state, action: finalConfirmationError(error) })); }
     finally { setSubmitting(false); }
@@ -91,37 +100,37 @@ export function FinalConfirmationPanel({ videoId, videoStatus, currentUser, onVi
       <div className="page-title"><div><h2>负责人最终确认</h2><p className="muted">规则引擎控制硬边界，负责人保存正式业务结论。</p></div></div>
       {!evaluation ? <p className="muted">暂无最终评定建议。</p> : (
         <div className="review-result">
-          <p>GPT 建议：{evaluation.recommendedFinalGrade ? gradeLabels[evaluation.recommendedFinalGrade] : '-'}</p>
-          <p>规则硬边界：{rule?.recommendedBoundary || '-'}</p>
+          <p>千问建议：{evaluation.recommendedFinalGrade ? gradeLabels[evaluation.recommendedFinalGrade] : '-'}</p>
+          <p>规则硬边界：{displayLabel(boundaryLabels, rule?.recommendedBoundary)}</p>
           {evaluation.confirmedAt ? <>
             <p><strong>正式等级：{evaluation.finalGrade ? gradeLabels[evaluation.finalGrade] : '-'}</strong></p>
-            <p>正式状态：{evaluation.finalStatus || '-'}</p>
-            <p>确认人：{evaluation.confirmedBy?.name || '-'}；确认时间：{new Date(evaluation.confirmedAt).toLocaleString()}</p>
+            <p>正式状态：{displayLabel(finalStatusLabels, evaluation.finalStatus)}</p>
+            <p>确认人：{evaluation.confirmedBy?.name || '-'}；确认时间：{formatShanghaiDateTime(evaluation.confirmedAt)}</p>
             <p>确认说明：{evaluation.confirmationComment || '-'}</p>
             <p>人工调整原因：{evaluation.manualAdjustReason || '-'}</p>
             <p>绩效参考资格：{evaluation.canBeUsedForPerformance ? '可作为参考' : '不可作为参考'}</p>
             <p className="warning-list">绩效参考资格仅表示可进入人工绩效参考材料，不代表自动计算工资或绩效。</p>
           </> : null}
           {canConfirm ? <div className="form-grid">
-            <label className="form-field">正式等级<select value={finalGrade} onChange={(event) => setFinalGrade(event.target.value as FinalGrade)}>
+            <label className="form-field">正式等级<select value={finalGrade} onChange={(event) => { setFinalGrade(event.target.value as FinalGrade); setDirty(true); }}>
               {grades.map((grade) => <option value={grade} key={grade}>{gradeLabels[grade]}</option>)}
             </select></label>
-            <label className="form-field">绩效参考资格<select value={performance ? 'yes' : 'no'} onChange={(event) => setPerformance(event.target.value === 'yes')}>
+            <label className="form-field">绩效参考资格<select value={performance ? 'yes' : 'no'} onChange={(event) => { setPerformance(event.target.value === 'yes'); setDirty(true); }}>
               <option value="no">不可作为参考</option><option value="yes">可作为参考</option>
             </select></label>
-            <label className="form-field full">确认说明<textarea value={comment} onChange={(event) => setComment(event.target.value)} /></label>
-            {evaluation.recommendedFinalGrade !== finalGrade ? <label className="form-field full">调整原因<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
+            <label className="form-field full">确认说明<textarea value={comment} onChange={(event) => { setComment(event.target.value); setDirty(true); }} /></label>
+            {evaluation.recommendedFinalGrade !== finalGrade ? <label className="form-field full">调整原因<textarea value={reason} onChange={(event) => { setReason(event.target.value); setDirty(true); }} /></label> : null}
             <div className="form-field full"><button className="button danger-button" type="button" onClick={confirm} disabled={submitting}>{submitting ? '提交中' : '确认正式结论'}</button></div>
           </div> : null}
-          {evaluation.confirmedAt && currentUser && ['admin', 'content_owner'].includes(currentUser.role) ? <div className="case-marking">
+          {evaluation.confirmedAt && (allowedActions ? allowedActions.includes('mark_case') : currentUser && ['admin', 'content_owner'].includes(currentUser.role)) ? <div className="case-marking">
             <h3>案例库标记</h3>
             <div className="form-grid">
-              <label className="form-field">案例类型<select value={caseType} onChange={(event) => setCaseType(event.target.value as CaseType)}>
+              <label className="form-field">案例类型<select value={caseType} onChange={(event) => { setCaseType(event.target.value as CaseType); setDirty(true); }}>
                 <option value="none">移除案例标记</option>
                 {evaluation.finalGrade === 'effective' ? <option value="excellent">优秀案例</option> : null}
                 {evaluation.finalGrade === 'invalid' ? <option value="negative">反面案例</option> : null}
               </select></label>
-              <label className="form-field full">标记说明<textarea value={caseReason} onChange={(event) => setCaseReason(event.target.value)} /></label>
+              <label className="form-field full">标记说明<textarea value={caseReason} onChange={(event) => { setCaseReason(event.target.value); setDirty(true); }} /></label>
               <div className="form-field full"><button className="button secondary" type="button" onClick={markCase} disabled={submitting}>保存案例标记</button></div>
             </div>
           </div> : null}

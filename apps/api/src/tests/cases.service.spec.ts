@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { VideoStatus } from '@prisma/client';
 import { CasesService } from '../modules/cases/cases.service';
+import { CaseListQueryDto } from '../modules/cases/dto/case-list-query.dto';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 
 const user = { id: 'user', role: 'content_owner', account: 'owner', name: 'Owner', managerId: null } as any;
 const videoId = '22222222-2222-4222-8222-222222222222';
@@ -79,9 +82,30 @@ for (const type of ['excellent', 'negative'] as const) {
     await value.service.list({ type, limit: 20 }, user);
     const where = value.calls[0].where;
     assert.equal(where[type === 'excellent' ? 'isExcellentCase' : 'isNegativeCase'], true);
-    assert.equal(where.video.creatorId, 'visible');
+    assert.equal(where.video.AND[0].creatorId, 'visible');
   });
 }
+
+test('creator filter cannot replace the current director visibility boundary', async () => {
+  const value = listHarness();
+  await value.service.list({ type: 'excellent', limit: 20, creatorId: '33333333-3333-4333-8333-333333333333' }, user);
+  assert.deepEqual(value.calls[0].where.video.AND, [
+    { creatorId: 'visible' },
+    { creatorId: '33333333-3333-4333-8333-333333333333' },
+  ]);
+});
+
+test('case export page limit is accepted by the controller query DTO', () => {
+  const dto = plainToInstance(CaseListQueryDto, { type: 'excellent', limit: '50' });
+  assert.deepEqual(validateSync(dto), []);
+});
+
+test('case date-only filters cover complete Asia/Shanghai calendar days', async () => {
+  const value = listHarness();
+  await value.service.list({ type: 'excellent', limit: 20, startDate: '2026-09-10', endDate: '2026-09-10' }, user);
+  assert.equal(value.calls[0].where.caseMarkedAt.gte.toISOString(), '2026-09-09T16:00:00.000Z');
+  assert.equal(value.calls[0].where.caseMarkedAt.lte.toISOString(), '2026-09-10T15:59:59.999Z');
+});
 
 test('case list is narrow and never exposes raw AI response', async () => {
   const value = listHarness([{

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import React from 'react';
+import { displayLabel, videoStatusLabels } from '@/lib/display-labels';
 
 type VersionLink = { id: string; title: string; status: string; version: number };
 
@@ -27,7 +28,7 @@ export function VideoVersionChain({
       <div className="version-chain">
         {chain.map((item) => (
           <Link className={item.id === currentId ? 'current' : ''} key={item.id} href={`/videos/${item.id}`}>
-            V{item.version}<span>{item.status}</span>
+            V{item.version}<span>{displayLabel(videoStatusLabels, item.status)}</span>
           </Link>
         ))}
       </div>

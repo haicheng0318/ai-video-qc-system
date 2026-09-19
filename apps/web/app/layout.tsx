@@ -1,28 +1,19 @@
 import './globals.css';
-import Link from 'next/link';
+import { AuthBoundary } from '@/components/auth-boundary';
+import { AppShell } from '@/components/app-shell';
 
 export const metadata = {
-  title: 'AI短视频质检评估系统 V1.0',
-  description: 'Content middle-platform video quality control system',
+  title: 'AI短视频质检评估系统 V1.01',
+  description: '内容中台 AI 短视频质检与有效产出评定系统',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
       <body>
-        <div className="shell">
-          <nav className="topbar">
-            <Link className="brand" href="/videos">
-              AI短视频质检评估系统 V1.0
-            </Link>
-            <Link href="/videos">视频列表</Link>
-            <Link href="/videos/new">上传视频</Link>
-            <Link href="/dashboard">数据看板</Link>
-            <Link href="/cases/excellent">优秀案例</Link>
-            <Link href="/cases/negative">反面案例</Link>
-          </nav>
-          {children}
-        </div>
+        <AuthBoundary>
+          <AppShell>{children}</AppShell>
+        </AuthBoundary>
       </body>
     </html>
   );

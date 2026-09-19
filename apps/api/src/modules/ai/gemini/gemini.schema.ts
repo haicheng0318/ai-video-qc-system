@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GeminiOutputValidationError } from './gemini.errors';
+import { ContentReviewOutputValidationError } from './gemini.errors';
 
 const gradeSchema = z.enum(['S', 'A', 'B', 'C', 'D']);
 const severitySchema = z.enum(['high', 'medium', 'low']);
@@ -59,11 +59,13 @@ export const ContentReviewOutputSchema = z.object({
 
 export type ContentReviewOutput = z.infer<typeof ContentReviewOutputSchema>;
 
-const stringSchema = { type: 'STRING' } as const;
-const nullableTimestampSchema = { type: 'STRING', nullable: true } as const;
+const stringSchema = { type: 'string' } as const;
+const nullableTimestampSchema = {
+  anyOf: [{ type: 'string' }, { type: 'null' }],
+} as const;
 
-export const geminiResponseJsonSchema = {
-  type: 'OBJECT',
+export const contentReviewResponseJsonSchema = {
+  type: 'object',
   required: [
     'contentSummary',
     'totalScore',
@@ -77,40 +79,40 @@ export const geminiResponseJsonSchema = {
   ],
   properties: {
     contentSummary: stringSchema,
-    totalScore: { type: 'INTEGER', minimum: 0, maximum: 100 },
-    contentGrade: { type: 'STRING', enum: ['S', 'A', 'B', 'C', 'D'] },
-    isPublishableRecommendation: { type: 'BOOLEAN' },
+    totalScore: { type: 'integer', minimum: 0, maximum: 100 },
+    contentGrade: { type: 'string', enum: ['S', 'A', 'B', 'C', 'D'] },
+    isPublishableRecommendation: { type: 'boolean' },
     mainProblems: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         required: ['dimension', 'description', 'timestamp', 'severity'],
         properties: {
           dimension: stringSchema,
           description: stringSchema,
           timestamp: nullableTimestampSchema,
-          severity: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+          severity: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
         additionalProperties: false,
       },
     },
     revisionSuggestions: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         required: ['problem', 'suggestion', 'priority'],
         properties: {
           problem: stringSchema,
           suggestion: stringSchema,
-          priority: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+          priority: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
         additionalProperties: false,
       },
     },
     complianceRisks: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         required: ['riskType', 'description', 'timestamp'],
         properties: {
           riskType: stringSchema,
@@ -120,16 +122,16 @@ export const geminiResponseJsonSchema = {
         additionalProperties: false,
       },
     },
-    usableScenarios: { type: 'ARRAY', items: stringSchema },
+    usableScenarios: { type: 'array', items: stringSchema },
     scores: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         required: ['dimension', 'score', 'maxScore', 'comment'],
         properties: {
           dimension: stringSchema,
-          score: { type: 'INTEGER', minimum: 0 },
-          maxScore: { type: 'INTEGER', minimum: 1 },
+          score: { type: 'integer', minimum: 0 },
+          maxScore: { type: 'integer', minimum: 1 },
           comment: stringSchema,
         },
         additionalProperties: false,
@@ -142,7 +144,7 @@ export const geminiResponseJsonSchema = {
 export function validateContentReviewOutput(value: unknown): ContentReviewOutput {
   const result = ContentReviewOutputSchema.safeParse(value);
   if (!result.success) {
-    throw new GeminiOutputValidationError('Gemini content review output failed schema validation.');
+    throw new ContentReviewOutputValidationError('Video content review output failed schema validation.');
   }
   return result.data;
 }

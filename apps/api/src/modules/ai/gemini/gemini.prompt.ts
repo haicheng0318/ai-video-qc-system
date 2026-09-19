@@ -1,6 +1,6 @@
 import { ContentReviewPromptInput } from './gemini.types';
 
-export const CONTENT_REVIEW_PROMPT_VERSION = 'phase-2-content-review-v1';
+export const CONTENT_REVIEW_PROMPT_VERSION = 'phase-2-content-review-v2-qwen-omni';
 
 export function buildContentReviewPrompt(input: ContentReviewPromptInput) {
   return `
@@ -16,7 +16,8 @@ export function buildContentReviewPrompt(input: ContentReviewPromptInput) {
 - 脚本描述：${input.scriptDescription || '未提供'}
 - 相关需求：${input.relatedRequirement || '未提供'}
 
-请只评价视频内容本身，不能推断真实运营或投放结果，不能输出绩效结论，也不能评价 ROI、CTR、CVR 或其他业务数据。
+	请只评价视频内容本身，不能推断真实运营或投放结果，不能输出绩效结论，也不能评价 ROI、CTR、CVR 或其他业务数据。
+	除 JSON Schema 规定的英文枚举值和通用缩写外，所有自然语言文本必须使用简体中文。
 请评估：前3秒吸引力、产品露出、卖点表达、画面质感、构图、镜头语言、节奏、字幕清晰度、口播清晰度、BGM匹配度、平台适配、用途适配和合规风险。
 总分范围为0-100，等级标准为：S=90-100，A=80-89，B=70-79，C=60-69，D=0-59。
 主要问题必须包含维度、描述、可选时间点和严重程度；修改建议必须包含问题、建议和优先级；评分明细必须包含 dimension、score、maxScore、comment，且 score 不得大于 maxScore。

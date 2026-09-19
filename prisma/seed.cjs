@@ -35,12 +35,9 @@ async function main() {
 
   await prisma.user.upsert({
     where: { account: username },
-    update: {
-      name,
-      passwordHash,
-      role: UserRole.admin,
-      status: 'active',
-    },
+    // Production containers run this idempotent seed during startup. Never
+    // overwrite an administrator's changed password or account settings.
+    update: {},
     create: {
       name,
       account: username,
@@ -53,7 +50,6 @@ async function main() {
   await prisma.aiModelConfig.deleteMany({
     where: {
       agentType: 'video_content_review',
-      provider: 'gemini',
       enabled: false,
       jsonSchema: {
         path: ['phase'],
@@ -62,14 +58,23 @@ async function main() {
     },
   });
 
+  await prisma.aiModelConfig.updateMany({
+    where: {
+      agentType: { in: ['content_review', 'video_content_review'] },
+      provider: 'gemini',
+      enabled: true,
+    },
+    data: { enabled: false },
+  });
+
   await upsertModelConfig({
     agentType: 'video_content_review',
-    provider: 'gemini',
-    modelName: 'gemini-2.5-flash',
-    enabled: false,
+    provider: 'aliyun_bailian',
+    modelName: 'qwen3.5-omni-plus',
+    enabled: true,
     temperature: 0.2,
     jsonSchema: {
-      version: 'phase-2-content-review-v1',
+      version: 'phase-2-content-review-v2-qwen-omni',
       output: 'structured_json',
     },
   });
@@ -83,15 +88,24 @@ async function main() {
     },
   });
 
+  await prisma.aiModelConfig.updateMany({
+    where: {
+      agentType: { in: ['result_review', 'final_evaluation'] },
+      provider: { in: ['openai', 'openai_gpt'] },
+      enabled: true,
+    },
+    data: { enabled: false },
+  });
+
   await upsertModelConfig({
     agentType: 'result_review',
-    provider: 'openai',
-    modelName: 'gpt-5-mini',
-    enabled: false,
-    temperature: null,
+    provider: 'aliyun_bailian',
+    modelName: 'qwen3.5-plus',
+    enabled: true,
+    temperature: 0.2,
     maxTokens: 4000,
     jsonSchema: {
-      version: 'result-review-v1',
+      version: 'result-review-v2-qwen',
       output: 'structured_json',
     },
   });
@@ -107,13 +121,13 @@ async function main() {
 
   await upsertModelConfig({
     agentType: 'final_evaluation',
-    provider: 'openai',
-    modelName: 'gpt-5-mini',
-    enabled: false,
-    temperature: null,
+    provider: 'aliyun_bailian',
+    modelName: 'qwen3.5-plus',
+    enabled: true,
+    temperature: 0.2,
     maxTokens: 4000,
     jsonSchema: {
-      version: 'final-evaluation-v1',
+      version: 'final-evaluation-v2-qwen',
       output: 'structured_json',
     },
   });

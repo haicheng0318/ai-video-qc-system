@@ -7,15 +7,16 @@ import {
   Optional,
   Inject,
 } from '@nestjs/common';
-import { AiReviewStatus, DataSufficiency, Prisma, VideoStatus } from '@prisma/client';
+import { AiReviewStatus, DataSufficiency, EvaluationJob, Prisma, VideoStatus } from '@prisma/client';
+import { EvaluationJobsService, EvaluationLeaseLostError } from '../evaluation-jobs/evaluation-jobs.service';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import {
-  OpenAiConfigurationError,
-  OpenAiRefusalError,
-  OpenAiRequestError,
-  OpenAiRequestTimeoutError,
-  OpenAiResponseError,
-  OpenAiResponseAudit,
+  TextModelConfigurationError,
+  TextModelRefusalError,
+  TextModelRequestError,
+  TextModelRequestTimeoutError,
+  TextModelResponseError,
+  TextModelResponseAudit,
   ResultReviewOutputValidationError,
   ResultReviewSnapshotBindingError,
 } from '../ai/gpt/gpt.errors';
@@ -41,6 +42,7 @@ export type ResultReviewBackgroundScheduler = (task: ResultReviewBackgroundTask)
 
 type RequestMeta = { ipAddress?: string; userAgent?: string };
 type AuditResponse = {
+  usageCollectionStatus?: string;
   responseId?: string;
   responseStatus?: string;
   model?: string;
@@ -62,14 +64,14 @@ function positiveInteger(value: string | undefined, fallback: number) {
 }
 
 function staleMinutes() {
-  const value = Number(process.env.OPENAI_RESULT_REVIEW_RUNNING_STALE_MINUTES || 10);
+  const value = Number(process.env.QWEN_RESULT_REVIEW_RUNNING_STALE_MINUTES || 10);
   return Number.isFinite(value) && value > 0 ? value : 10;
 }
 
-export function sanitizeOpenAiText(value: string | undefined, maximum = 20_000) {
+export function sanitizeModelText(value: string | undefined, maximum = 20_000) {
   if (!value) return undefined;
   let sanitized = value;
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
   if (apiKey) sanitized = sanitized.split(apiKey).join('[redacted]');
   sanitized = sanitized
     .replace(/Bearer\s+[^"',}\]\s]+/gi, 'Bearer [redacted]')
@@ -80,14 +82,14 @@ export function sanitizeOpenAiText(value: string | undefined, maximum = 20_000) 
 }
 
 function safeFailure(error: unknown) {
-  if (error instanceof OpenAiConfigurationError) return { type: error.code, message: 'OpenAI result review is not configured.' };
-  if (error instanceof OpenAiRequestTimeoutError) return { type: error.code, message: 'OpenAI result review timed out.' };
-  if (error instanceof OpenAiRequestError) return { type: error.code, message: 'OpenAI result review request failed.' };
-  if (error instanceof OpenAiResponseError) return { type: error.code, message: 'OpenAI returned an incomplete result review.' };
-  if (error instanceof OpenAiRefusalError) return { type: error.code, message: 'OpenAI could not complete this result review.' };
-  if (error instanceof ResultReviewOutputValidationError) return { type: error.code, message: 'OpenAI returned an invalid structured result.' };
+  if (error instanceof TextModelConfigurationError) return { type: error.code, message: 'Qwen result review is not configured.' };
+  if (error instanceof TextModelRequestTimeoutError) return { type: error.code, message: 'Qwen result review timed out.' };
+  if (error instanceof TextModelRequestError) return { type: error.code, message: 'Qwen result review request failed.' };
+  if (error instanceof TextModelResponseError) return { type: error.code, message: 'Qwen returned an incomplete result review.' };
+  if (error instanceof TextModelRefusalError) return { type: error.code, message: 'Qwen could not complete this result review.' };
+  if (error instanceof ResultReviewOutputValidationError) return { type: error.code, message: 'Qwen returned an invalid structured result.' };
   if (error instanceof ResultReviewSnapshotBindingError) return { type: error.code, message: 'Result metric snapshot changed during review.' };
-  return { type: 'OPENAI_RESULT_REVIEW_FAILED', message: 'GPT result review failed.' };
+  return { type: 'QWEN_RESULT_REVIEW_FAILED', message: 'Qwen result review failed.' };
 }
 
 @Injectable()
@@ -101,6 +103,7 @@ export class ResultReviewsService {
     private readonly gptService: GptService,
     @Optional() @Inject(RESULT_REVIEW_BACKGROUND_SCHEDULER)
     private readonly backgroundScheduler?: ResultReviewBackgroundScheduler,
+    @Optional() private readonly jobs?: EvaluationJobsService,
   ) {}
 
   async trigger(
@@ -109,6 +112,7 @@ export class ResultReviewsService {
     user: AuthenticatedUser,
     requestMeta: RequestMeta,
   ) {
+    if (!this.jobs && !this.backgroundScheduler) throw new Error('Persistent evaluation queue is required.');
     if (!uuidPattern.test(videoId)) throw new NotFoundException('Video not found.');
     const video = await this.prisma.video.findUnique({ where: { id: videoId } });
     if (!video) throw new NotFoundException('Video not found.');
@@ -118,11 +122,13 @@ export class ResultReviewsService {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const lockedVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!lockedVideo) throw new NotFoundException('Video not found.');
+      await this.jobs?.assertNoActive(transaction, videoId, 'result');
 
       const running = await transaction.aiResultReview.findMany({
         where: { videoId, status: AiReviewStatus.running },
         orderBy: { createdAt: 'desc' },
       });
+      if (this.jobs && running.length) throw new ConflictException('Legacy evaluation is awaiting durable recovery.');
       const staleBefore = new Date(Date.now() - staleMinutes() * 60_000);
       if (running.some((review) => review.createdAt > staleBefore)) {
         throw new ConflictException('A result review is already running for this video.');
@@ -173,21 +179,21 @@ export class ResultReviewsService {
       }
 
       const modelConfig = await transaction.aiModelConfig.findFirst({
-        where: { enabled: true, provider: 'openai', agentType: 'result_review' },
+        where: { enabled: true, provider: 'aliyun_bailian', agentType: 'result_review' },
         orderBy: { createdAt: 'asc' },
       });
-      const modelName = modelConfig?.modelName?.trim() || process.env.OPENAI_RESULT_REVIEW_MODEL?.trim() || 'gpt-5-mini';
+      const modelName = modelConfig?.modelName?.trim() || process.env.QWEN_RESULT_REVIEW_MODEL?.trim() || 'qwen3.5-plus';
       const maxOutputTokens = modelConfig?.maxTokens && modelConfig.maxTokens > 0
         ? modelConfig.maxTokens
         : positiveInteger(
-        process.env.OPENAI_RESULT_REVIEW_MAX_OUTPUT_TOKENS,
+        process.env.QWEN_RESULT_REVIEW_MAX_OUTPUT_TOKENS,
         4000,
       );
       const review = await transaction.aiResultReview.create({
         data: {
           videoId,
           resultMetricId: dto.resultMetricId,
-          modelProvider: 'openai',
+          modelProvider: 'aliyun_bailian',
           modelName,
           status: AiReviewStatus.running,
           dataSufficiency: DataSufficiency.pending,
@@ -208,20 +214,48 @@ export class ResultReviewsService {
           modelName,
           videoStatus: VideoStatus.ai_result_reviewing,
         },
-        comment: 'GPT result review started.',
+        comment: 'Qwen result review started.',
         ipAddress: requestMeta.ipAddress,
         userAgent: requestMeta.userAgent,
       }, transaction);
-      return { reviewId: review.id, resultMetricId: dto.resultMetricId, modelName, maxOutputTokens };
+      let jobId: string | undefined;
+      if (this.jobs) {
+        const content = await transaction.aiContentReview.findFirst({ where: { videoId, status: AiReviewStatus.succeeded }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+        const supervisor = await transaction.supervisorReview.findUnique({ where: { videoId } });
+        const benchmarks = lockedVideo.platform ? await transaction.platformBenchmark.findMany({ where: {
+          enabled: true, platform: lockedVideo.platform, videoType: lockedVideo.videoType,
+          OR: lockedVideo.brand ? [{ brand: lockedVideo.brand }, { brand: null }] : [{ brand: null }],
+        } }) : [];
+        const selected = selectApplicableBenchmarks(benchmarks as BenchmarkInput[], lockedVideo.brand, lockedVideo.videoType, lockedVideo.isForAds);
+        const snapshot = await transaction.evaluationInputSnapshot.create({ data: {
+          videoId, actorId: user.id, benchmarkIds: benchmarks.map((item) => item.id),
+          data: selected as Prisma.InputJsonValue,
+        } });
+        const job = await this.jobs.enqueue(transaction, {
+          videoId, actorId: user.id, stage: 'result', resultReviewId: review.id, maxOutputTokens,
+          inputRefs: { resultMetricId: dto.resultMetricId, contentReviewId: content?.id || null,
+            supervisorReviewId: supervisor?.id || null, benchmarkSnapshotId: snapshot.id },
+        });
+        jobId = job.id;
+      }
+      return { reviewId: review.id, resultMetricId: dto.resultMetricId, modelName, maxOutputTokens, jobId };
     });
 
-    this.runInBackground(started, user, requestMeta);
+    if (!this.jobs) this.runInBackground(started, user, requestMeta);
     return {
       reviewId: started.reviewId,
       resultMetricId: started.resultMetricId,
       status: AiReviewStatus.running,
       videoStatus: VideoStatus.ai_result_reviewing,
+      ...(started.jobId ? { jobId: started.jobId } : {}),
     };
+  }
+
+  async executeJob(job: EvaluationJob) {
+    const review = await this.prisma.aiResultReview.findUniqueOrThrow({ where: { id: job.resultReviewId! } });
+    const actor = await this.prisma.user.findUniqueOrThrow({ where: { id: job.actorId } });
+    await this.process({ reviewId: review.id, resultMetricId: review.resultMetricId!, modelName: review.modelName,
+      maxOutputTokens: job.maxOutputTokens, inputRefs: job.inputRefs as Record<string, any> }, actor, {});
   }
 
   private runInBackground(
@@ -240,19 +274,11 @@ export class ResultReviewsService {
       this.backgroundScheduler(task);
       return;
     }
-    setImmediate(() => {
-      void task().catch((error) => {
-        this.logger.error('Unhandled GPT result review background failure was contained.', {
-          reviewId: started.reviewId,
-          videoId: undefined,
-          errorType: safeFailure(error).type,
-        });
-      });
-    });
+    throw new Error('Persistent evaluation queue is required.');
   }
 
   private async process(
-    started: { reviewId: string; resultMetricId: string; modelName: string; maxOutputTokens: number },
+    started: { reviewId: string; resultMetricId: string; modelName: string; maxOutputTokens: number; inputRefs?: Record<string, any> },
     user: AuthenticatedUser,
     requestMeta: RequestMeta,
   ) {
@@ -266,11 +292,20 @@ export class ResultReviewsService {
     });
     if (!metric) throw new ResultReviewSnapshotBindingError('Result metric snapshot is unavailable.');
     const contentReview = await this.prisma.aiContentReview.findFirst({
-      where: { videoId: video.id, status: AiReviewStatus.succeeded },
+      where: { videoId: video.id, status: AiReviewStatus.succeeded, ...(started.inputRefs ? { id: started.inputRefs.contentReviewId || '00000000-0000-4000-8000-000000000000' } : {}) },
       orderBy: { createdAt: 'desc' },
     });
     const supervisorReview = await this.prisma.supervisorReview.findUnique({ where: { videoId: video.id } });
-    const benchmarkRows = video.platform ? await this.prisma.platformBenchmark.findMany({
+    if (started.inputRefs && (supervisorReview?.id || null) !== started.inputRefs.supervisorReviewId) {
+      throw new ResultReviewSnapshotBindingError('Supervisor source changed before review.');
+    }
+    const snapshot = started.inputRefs ? await this.prisma.evaluationInputSnapshot.findUnique({
+      where: { id: started.inputRefs.benchmarkSnapshotId },
+    }) : null;
+    if (started.inputRefs && (snapshot?.videoId !== video.id || snapshot.version !== 'benchmark-v1')) {
+      throw new ResultReviewSnapshotBindingError('Benchmark snapshot is unavailable.');
+    }
+    const benchmarkRows = !snapshot && video.platform ? await this.prisma.platformBenchmark.findMany({
       where: {
         enabled: true,
         platform: video.platform,
@@ -278,7 +313,7 @@ export class ResultReviewsService {
         OR: video.brand ? [{ brand: video.brand }, { brand: null }] : [{ brand: null }],
       },
     }) : [];
-    const selected = selectApplicableBenchmarks(
+    const selected = snapshot ? snapshot.data as ReturnType<typeof selectApplicableBenchmarks> : selectApplicableBenchmarks(
       benchmarkRows as BenchmarkInput[],
       video.brand,
       video.videoType,
@@ -297,6 +332,7 @@ export class ResultReviewsService {
     });
 
     try {
+      await this.jobs?.markExternalStarted();
       const response = await this.gptService.reviewResultData({
         model: started.modelName,
         developerPrompt: RESULT_REVIEW_DEVELOPER_PROMPT,
@@ -307,14 +343,15 @@ export class ResultReviewsService {
         responseId: response.responseId,
         responseStatus: response.responseStatus,
         model: response.model,
-        rawText: sanitizeOpenAiText(response.rawText),
+        rawText: sanitizeModelText(response.rawText),
         usage: response.usage,
+        usageCollectionStatus: response.usageCollectionStatus,
         parsed: response.parsedOutput,
         benchmarkCoverage: selected.benchmarkCoverage,
       };
-      this.assertBenchmarkConsistency(response.parsedOutput, selected.benchmarkCoverage);
       await this.complete(started.reviewId, video.id, started.resultMetricId, response.parsedOutput, audit, user, requestMeta);
     } catch (error) {
+      if (error instanceof EvaluationLeaseLostError) throw error;
       audit = this.auditFromError(error, selected.benchmarkCoverage) || audit;
       await this.markFailed(started.reviewId, video.id, started.resultMetricId, error, audit, user, requestMeta);
     }
@@ -322,26 +359,18 @@ export class ResultReviewsService {
 
   private auditFromError(error: unknown, benchmarkCoverage: string): AuditResponse | null {
     const source = error && typeof error === 'object' && 'audit' in error
-      ? (error as { audit?: OpenAiResponseAudit }).audit
+      ? (error as { audit?: TextModelResponseAudit }).audit
       : undefined;
     if (!source) return null;
     return {
       responseId: source.responseId,
       responseStatus: source.responseStatus,
       model: source.model,
-      rawText: sanitizeOpenAiText(source.rawText),
+      rawText: sanitizeModelText(source.rawText),
       usage: source.usage,
+      usageCollectionStatus: source.usageCollectionStatus,
       benchmarkCoverage,
     };
-  }
-
-  private assertBenchmarkConsistency(output: ResultReviewOutput, coverage: string) {
-    if (coverage !== 'none') return;
-    const missingBenchmark = output.sufficiencyReasons.some((reason) => reason.code === 'missing_benchmark');
-    if (output.dataSufficiency !== 'insufficient' || output.dataScore !== null || output.dataGrade !== null ||
-      output.isBusinessEffectiveRecommendation !== null || !missingBenchmark) {
-      throw new ResultReviewOutputValidationError('No benchmark coverage requires an insufficient result.');
-    }
   }
 
   private async complete(
@@ -355,6 +384,7 @@ export class ResultReviewsService {
   ) {
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.jobs?.assertCurrent(transaction, videoId, reviewId);
       const [currentVideo, currentReview, currentMetric, latestMetric] = await Promise.all([
         transaction.video.findUnique({ where: { id: videoId } }),
         transaction.aiResultReview.findUnique({ where: { id: reviewId } }),
@@ -386,6 +416,7 @@ export class ResultReviewsService {
             rawText: audit.rawText || null,
             parsed: output,
             usage: audit.usage || { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            usageCollectionStatus: audit.usageCollectionStatus || 'unknown',
             benchmarkCoverage: audit.benchmarkCoverage || 'none',
           } as Prisma.InputJsonValue,
           status: AiReviewStatus.succeeded,
@@ -409,10 +440,11 @@ export class ResultReviewsService {
           dataGrade: output.dataGrade,
           videoStatus: VideoStatus.pending_rule_engine,
         },
-        comment: 'GPT result review completed.',
+        comment: 'Qwen result review completed.',
         ipAddress: requestMeta.ipAddress,
         userAgent: requestMeta.userAgent,
       }, transaction);
+      await this.jobs?.finishCurrent(transaction, 'succeeded');
     });
   }
 
@@ -428,6 +460,7 @@ export class ResultReviewsService {
     const failure = safeFailure(error);
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.jobs?.assertCurrent(transaction, videoId, reviewId);
       const currentReview = await transaction.aiResultReview.findUnique({ where: { id: reviewId } });
       const currentVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!currentReview || currentReview.status !== AiReviewStatus.running) return;
@@ -443,6 +476,7 @@ export class ResultReviewsService {
             model: audit.model || currentReview.modelName,
             rawText: audit.rawText || null,
             usage: audit.usage || null,
+            usageCollectionStatus: audit.usageCollectionStatus || 'unknown',
             benchmarkCoverage: audit.benchmarkCoverage || null,
           } as Prisma.InputJsonValue : undefined,
         },
@@ -469,6 +503,7 @@ export class ResultReviewsService {
         ipAddress: requestMeta.ipAddress,
         userAgent: requestMeta.userAgent,
       }, transaction);
+      await this.jobs?.finishCurrent(transaction, 'failed', error instanceof TextModelRequestTimeoutError || error instanceof TextModelRequestError, error);
     });
   }
 
@@ -479,7 +514,7 @@ export class ResultReviewsService {
     error: unknown,
   ) {
     const review = await this.prisma.aiResultReview.findUnique({ where: { id: started.reviewId } }).catch(() => null);
-    this.logger.error('GPT result review background task failed outside normal processing.', {
+    this.logger.error('Qwen result review background task failed outside normal processing.', {
       reviewId: started.reviewId,
       videoId: review?.videoId,
       resultMetricId: started.resultMetricId,
@@ -489,7 +524,7 @@ export class ResultReviewsService {
     try {
       await this.markFailed(review.id, review.videoId, started.resultMetricId, error, {}, user, requestMeta);
     } catch (persistenceError) {
-      this.logger.error('Failed to persist contained GPT result review failure.', {
+      this.logger.error('Failed to persist contained Qwen result review failure.', {
         reviewId: started.reviewId,
         videoId: review.videoId,
         resultMetricId: started.resultMetricId,
@@ -504,7 +539,18 @@ export class ResultReviewsService {
       where: { videoId },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
-    return { videoStatus: video.status, review: review ? resultReviewResponse(review) : null };
+    const job = review?.status === AiReviewStatus.running
+      ? await this.prisma.evaluationJob?.findFirst({ where: { resultReviewId: review.id }, select: { id: true } })
+      : null;
+    return { videoStatus: video.status, review: review ? resultReviewResponse(review) : null, jobId: job?.id || null };
+  }
+
+  async byId(videoId: string, reviewId: string, user: AuthenticatedUser, requestMeta: RequestMeta) {
+    const video = await this.findAccessibleVideo(videoId, user, requestMeta);
+    if (!uuidPattern.test(reviewId)) throw new NotFoundException('Result review not found.');
+    const review = await this.prisma.aiResultReview.findFirst({ where: { id: reviewId, videoId } });
+    if (!review) throw new NotFoundException('Result review not found.');
+    return { videoStatus: video.status, review: resultReviewResponse(review) };
   }
 
   async history(videoId: string, query: ResultReviewHistoryQueryDto, user: AuthenticatedUser, requestMeta: RequestMeta) {
@@ -558,7 +604,7 @@ export class ResultReviewsService {
     if (!video) throw new NotFoundException('Video not found.');
     await this.permissionsService.assertCanAccessVideo(user, video, {
       ...requestMeta,
-      action: 'GPT result review access denied.',
+      action: 'AI result review access denied.',
     });
     return video;
   }

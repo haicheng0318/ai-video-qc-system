@@ -1,8 +1,11 @@
 import * as dotenv from 'dotenv';
 import { join } from 'node:path';
 
-dotenv.config({ path: join(process.cwd(), '../../.env') });
-dotenv.config();
+// Explicit isolated-test/managed-runtime mode: do not read developer secret files.
+if (process.env.QC_SKIP_DOTENV !== '1') {
+  dotenv.config({ path: join(process.cwd(), '../../.env') });
+  dotenv.config();
+}
 
 export type RuntimeConfig = {
   jwtSecret: string;
@@ -36,6 +39,26 @@ export function validateEnvironment(environment: NodeJS.ProcessEnv = process.env
   const jwtExpiresIn = environment.JWT_EXPIRES_IN?.trim() || '2h';
   if (parseJwtExpiresIn(jwtExpiresIn) > 7200) {
     throw new Error('JWT_EXPIRES_IN must not exceed 7200 seconds.');
+  }
+
+  if (environment.VIDEO_STORAGE_PROVIDER?.trim().toLowerCase() === 'cos') {
+    for (const name of [
+      'COS_REGION',
+      'COS_BUCKET',
+      'TENCENTCLOUD_SECRET_ID',
+      'TENCENTCLOUD_SECRET_KEY',
+    ]) {
+      if (!environment[name]?.trim()) {
+        throw new Error(`${name} is required when VIDEO_STORAGE_PROVIDER=cos.`);
+      }
+    }
+  }
+
+  if (environment.NODE_ENV === 'production') {
+    const webOrigin = environment.WEB_ORIGIN?.trim();
+    if (!webOrigin || !/^https:\/\/[^/]+$/i.test(webOrigin)) {
+      throw new Error('WEB_ORIGIN must be a single HTTPS origin in production.');
+    }
   }
 
   return { jwtSecret, jwtExpiresIn };

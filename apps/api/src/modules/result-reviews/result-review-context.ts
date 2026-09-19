@@ -1,7 +1,6 @@
 import { Prisma, VideoType } from '@prisma/client';
 import {
   getResultMetricFieldConfig,
-  resultMetricDataFields,
   resultMetricFieldDefinitions,
   ResultMetricField,
 } from '@ai-video-qc/shared';
@@ -104,11 +103,12 @@ export function buildResultReviewContext(input: {
   benchmarks: Array<Record<string, unknown>>;
   benchmarkCoverage: BenchmarkCoverage;
 }) {
+  const fieldConfig = getResultMetricFieldConfig(input.video.videoType, Boolean(input.video.isForAds));
+  const analysisFields = fieldConfig.fields.filter((field) => !excludedMetricFields.has(field));
   const metricValues: Record<string, unknown> = {
     resultMetricId: input.metric.id,
   };
-  for (const field of resultMetricDataFields) {
-    if (excludedMetricFields.has(field)) continue;
+  for (const field of analysisFields) {
     metricValues[field] = serializeMetricValue(field, input.metric[field]);
   }
 
@@ -137,5 +137,10 @@ export function buildResultReviewContext(input: {
     } : null,
     benchmarks: input.benchmarks,
     benchmarkCoverage: input.benchmarkCoverage,
+    dataContract: {
+      applicableFields: analysisFields,
+      coreFields: fieldConfig.coreFields,
+      derivedFields: analysisFields.filter((field) => ['cpc', 'cpm', 'roi'].includes(field)),
+    },
   };
 }

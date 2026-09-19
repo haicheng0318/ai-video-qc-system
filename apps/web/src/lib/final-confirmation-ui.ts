@@ -23,8 +23,8 @@ export function finalConfirmationValidation(input: {
   if (!allowedFinalGrades(input.boundary).includes(input.finalGrade)) return '所选等级超出规则引擎允许边界。';
   if (input.finalGrade === 'invalid' && input.canBeUsedForPerformance) return '无效视频不能用于绩效参考。';
   const adjusted = input.recommendedFinalGrade !== null && input.finalGrade !== input.recommendedFinalGrade;
-  if (adjusted && input.manualAdjustReason.trim().length < 10) return '调整 GPT 建议时，请填写至少 10 个字符的调整原因。';
-  if (!adjusted && input.manualAdjustReason.trim()) return '接受 GPT 建议时无需填写调整原因。';
+  if (adjusted && input.manualAdjustReason.trim().length < 10) return '调整 AI 建议时，请填写至少 10 个字符的调整原因。';
+  if (!adjusted && input.manualAdjustReason.trim()) return '接受 AI 建议时无需填写调整原因。';
   if (input.boundary === 'require_manual_confirmation' && input.confirmationComment.trim().length < 10) {
     return '该规则边界需要至少 10 个字符的人工确认说明。';
   }

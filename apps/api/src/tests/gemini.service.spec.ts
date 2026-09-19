@@ -5,11 +5,11 @@ import { test } from 'node:test';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AiReviewStatus, UserRole, VideoStatus } from '@prisma/client';
 import {
-  GeminiBackgroundTask,
-  GeminiService,
-  sanitizeGeminiText,
+  ContentReviewBackgroundTask,
+  ContentReviewService,
+  sanitizeContentReviewText,
 } from '../modules/ai/gemini/gemini.service';
-import { GeminiConfigurationError } from '../modules/ai/gemini/gemini.errors';
+import { ContentReviewConfigurationError } from '../modules/ai/gemini/gemini.errors';
 import { OperationLogsService } from '../modules/operation-logs/operation-logs.service';
 import { PermissionsService } from '../modules/permissions/permissions.service';
 import { PrismaService } from '../modules/prisma/prisma.service';
@@ -82,20 +82,21 @@ function createHarness(options: {
   analyze?: () => Promise<{ rawResponse: string }>;
   missingVideo?: boolean;
   denyTrigger?: boolean;
+  denyAccess?: boolean;
   failFailurePersistence?: boolean;
   useDefaultScheduler?: boolean;
 } = {}) {
   const logs: Array<Record<string, unknown>> = [];
   const updates: Array<Record<string, unknown>> = [];
-  const tasks: GeminiBackgroundTask[] = [];
+  const tasks: ContentReviewBackgroundTask[] = [];
   const video = { ...baseVideo, status: options.status || VideoStatus.submitted };
   const reviews: ReviewRecord[] = [];
   if (options.runningCreatedAt) {
     reviews.push({
       id: 'stale-or-fresh-review',
       videoId: video.id,
-      modelProvider: 'gemini',
-      modelName: 'gemini-2.5-flash',
+      modelProvider: 'aliyun_bailian',
+      modelName: 'qwen3.5-omni-plus',
       status: AiReviewStatus.running,
       createdAt: options.runningCreatedAt,
       errorMessage: null,
@@ -106,7 +107,8 @@ function createHarness(options: {
     findMany: async () => reviews.filter((review) => review.status === AiReviewStatus.running),
     findUnique: async ({ where }: { where: { id: string } }) =>
       reviews.find((review) => review.id === where.id) || null,
-    findFirst: async () => reviews.at(-1) || null,
+    findFirst: async ({ where }: { where: { videoId: string; id?: string } }) =>
+      reviews.filter((review) => review.videoId === where.videoId && (!where.id || review.id === where.id)).at(-1) || null,
     create: async ({ data }: { data: Record<string, unknown> }) => {
       const review: ReviewRecord = {
         id: `review-${reviews.length + 1}`,
@@ -164,7 +166,9 @@ function createHarness(options: {
     assertCanTriggerContentReview: async () => {
       if (options.denyTrigger) throw new ForbiddenException();
     },
-    assertCanAccessVideo: async () => undefined,
+    assertCanAccessVideo: async () => {
+      if (options.denyAccess) throw new ForbiddenException();
+    },
   } as unknown as PermissionsService;
   const operationLogs = {
     create: async (input: Record<string, unknown>) => {
@@ -174,7 +178,7 @@ function createHarness(options: {
   const client = {
     analyzeVideo: options.analyze || (async () => ({ rawResponse: successfulRawResponse })),
   };
-  const service = new GeminiService(
+  const service = new ContentReviewService(
     prisma,
     permissions,
     operationLogs,
@@ -192,6 +196,27 @@ test('content review rejects missing video with 404', async () => {
   );
 });
 
+test('pinned content review is scoped to the video and omits raw output', async () => {
+  const harness = createHarness();
+  const id = '00000000-0000-4000-8000-000000000002';
+  harness.reviews.push({ id, videoId: baseVideo.id, modelProvider: 'aliyun_bailian', modelName: 'test',
+    status: AiReviewStatus.running, createdAt: new Date(), errorMessage: null, rawResponse: 'private', scores: [] });
+  harness.reviews.push({ ...harness.reviews[0], id: '00000000-0000-4000-8000-000000000003' });
+  const result = await harness.service.latest(baseVideo.id, user, {}, id);
+  assert.equal(result.review?.id, id);
+  assert.equal(Object.hasOwn(result.review!, 'rawResponse'), false);
+  assert.equal(harness.logs.length, 0, 'polling should not create heartbeat audit rows');
+  harness.reviews[0].videoId = 'another-video';
+  await assert.rejects(harness.service.latest(baseVideo.id, user, {}, id), NotFoundException);
+});
+
+test('pinned content review enforces access and validates IDs', async () => {
+  const id = '00000000-0000-4000-8000-000000000002';
+  const denied = createHarness({ denyAccess: true });
+  await assert.rejects(denied.service.latest(baseVideo.id, user, {}, id), ForbiddenException);
+  await assert.rejects(createHarness().service.latest(baseVideo.id, user, {}, 'bad-id'), NotFoundException);
+});
+
 test('content review rejects unauthorized trigger with 403', async () => {
   const harness = createHarness({ denyTrigger: true });
   await assert.rejects(
@@ -200,7 +225,7 @@ test('content review rejects unauthorized trigger with 403', async () => {
   );
 });
 
-test('trigger returns running before Gemini background work starts', async () => {
+test('trigger returns running before Qwen background work starts', async () => {
   let analyzeStarted = false;
   const harness = createHarness({
     analyze: async () => {
@@ -242,7 +267,7 @@ test('fresh running content review returns 409', async () => {
 test('stale running review is recovered and a new review is created', async () => {
   const harness = createHarness({
     status: VideoStatus.ai_content_reviewing,
-    runningCreatedAt: new Date(Date.now() - 11 * 60_000),
+    runningCreatedAt: new Date(Date.now() - 16 * 60_000),
   });
 
   const result = await harness.service.triggerContentReview(baseVideo.id, user, {});
@@ -267,6 +292,8 @@ test('background success persists succeeded result and safe raw response', async
     assert.equal(review?.status, AiReviewStatus.succeeded);
     assert.equal(harness.video.status, VideoStatus.pending_supervisor_review);
     assert.deepEqual(review?.rawResponse, {
+      usage: null,
+      usageCollectionStatus: 'unknown',
       rawText: successfulRawResponse,
       parsed: successfulOutput,
     });
@@ -281,7 +308,7 @@ test('background failure persists failed review and video state', async () => {
   await withVideoFile(async () => {
     const harness = createHarness({
       analyze: async () => {
-        throw new GeminiConfigurationError('key missing');
+        throw new ContentReviewConfigurationError('key missing');
       },
     });
     const result = await harness.service.triggerContentReview(baseVideo.id, user, {});
@@ -289,7 +316,7 @@ test('background failure persists failed review and video state', async () => {
 
     const review = harness.reviews.find((item) => item.id === result.reviewId);
     assert.equal(review?.status, AiReviewStatus.failed);
-    assert.equal(review?.errorMessage, 'Gemini content review is not configured.');
+    assert.equal(review?.errorMessage, 'Qwen content review is not configured.');
     assert.equal(harness.video.status, VideoStatus.ai_content_failed);
     assert.ok(harness.logs.some((log) =>
       log.actionType === 'ai_content_review_failed' && log.result === 'failure'));
@@ -298,11 +325,20 @@ test('background failure persists failed review and video state', async () => {
   });
 });
 
+test('schema failure after collector failure retains already received content usage evidence', async () => {
+  await withVideoFile(async () => {
+    const harness = createHarness({ analyze: async () => ({ rawResponse: '{invalid', usage: { inputTokens: 13, outputTokens: 7 }, usageCollectionStatus: 'failed' }) });
+    const result = await harness.service.triggerContentReview(baseVideo.id, user, {}); await harness.tasks[0]();
+    const review = harness.reviews.find(item => item.id === result.reviewId);
+    assert.deepEqual(review?.rawResponse, { rawText: '{invalid', usage: { inputTokens: 13, outputTokens: 7 }, usageCollectionStatus: 'failed' });
+  });
+});
+
 test('background persistence failure is contained without rejecting the scheduled task', async () => {
   await withVideoFile(async () => {
     const harness = createHarness({
       analyze: async () => {
-        throw new GeminiConfigurationError('key missing');
+        throw new ContentReviewConfigurationError('key missing');
       },
       failFailurePersistence: true,
     });
@@ -311,26 +347,11 @@ test('background persistence failure is contained without rejecting the schedule
   });
 });
 
-test('default setImmediate scheduler contains background rejection', async () => {
-  await withVideoFile(async () => {
-    const unhandled: unknown[] = [];
-    const listener = (error: unknown) => unhandled.push(error);
-    process.on('unhandledRejection', listener);
-    try {
-      const harness = createHarness({
-        analyze: async () => {
-          throw new GeminiConfigurationError('key missing');
-        },
-        failFailurePersistence: true,
-        useDefaultScheduler: true,
-      });
-      await harness.service.triggerContentReview(baseVideo.id, user, {});
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-      assert.deepEqual(unhandled, []);
-    } finally {
-      process.off('unhandledRejection', listener);
-    }
-  });
+test('missing persistent queue fails closed before creating a review', async () => {
+  const harness = createHarness({ useDefaultScheduler: true });
+  await assert.rejects(harness.service.triggerContentReview(baseVideo.id, user, {}), /Persistent evaluation queue is required/);
+  assert.equal(harness.reviews.length, 0);
+  assert.equal(harness.tasks.length, 0);
 });
 
 test('latest content review omits rawResponse', async () => {
@@ -345,18 +366,18 @@ test('latest content review omits rawResponse', async () => {
   });
 });
 
-test('sanitization removes every API key occurrence', () => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  process.env.GEMINI_API_KEY = 'secret-key-value';
+test('sanitization removes Qwen credentials', () => {
+  const previousQwenKey = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = 'secret-qwen-key';
   try {
-    const sanitized = sanitizeGeminiText(
-      'secret-key-value first secret-key-value second Bearer token /Users/test/private.mp4',
+    const sanitized = sanitizeContentReviewText(
+      'secret-qwen-key first Bearer token /Users/test/private.mp4',
     );
-    assert.equal(sanitized?.includes('secret-key-value'), false);
-    assert.equal(sanitized?.match(/\[redacted\]/g)?.length, 3);
+    assert.equal(sanitized?.includes('secret-qwen-key'), false);
+    assert.equal(sanitized?.match(/\[redacted\]/g)?.length, 2);
     assert.equal(sanitized?.includes('/Users/test/private.mp4'), false);
   } finally {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
+    if (previousQwenKey === undefined) delete process.env.DASHSCOPE_API_KEY;
+    else process.env.DASHSCOPE_API_KEY = previousQwenKey;
   }
 });

@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Put, Query, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { Body, Controller, Get, Param, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { CurrentUser } from '../../common/current-user.decorator';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -23,5 +23,13 @@ export class CasesController {
   @Get('cases')
   list(@Query() query: CaseListQueryDto, @CurrentUser() user: AuthenticatedUser) {
     return this.service.list(query, user);
+  }
+
+  @Get('cases/export')
+  async export(@Query() query: CaseListQueryDto, @CurrentUser() user: AuthenticatedUser, @Req() request: Request, @Res() response: Response) {
+    const exported = await this.service.export(query, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
+    response.send(exported.content);
   }
 }

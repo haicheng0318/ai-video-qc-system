@@ -21,10 +21,16 @@ const user = (role: string) => ({ id: role, name: role, account: role, role });
 
 test('different video types expose different result metric fields', () => {
   const product = getResultMetricFieldConfig('product_card', false);
+  const paidProduct = getResultMetricFieldConfig('product_card', true);
   const ads = getResultMetricFieldConfig('qianchuan_ad', true);
   const live = getResultMetricFieldConfig('live_room_traffic', true);
   assert.ok(product.fields.includes('operatorNote'));
   assert.ok(!product.fields.includes('spend'));
+  assert.ok(paidProduct.fields.includes('spend'));
+  assert.ok(paidProduct.fields.includes('cpc'));
+  assert.ok(paidProduct.fields.includes('cpm'));
+  assert.ok(paidProduct.fields.includes('roi'));
+  assert.equal(paidProduct.responsibleRole, 'advertiser');
   assert.ok(ads.fields.includes('spend'));
   assert.ok(live.fields.includes('liveRoomEntries'));
 });
@@ -55,6 +61,14 @@ test('operator and advertiser cannot edit the other responsibility type', () => 
   assert.equal(
     canSubmitResultMetrics(user('advertiser'), 'organic', false, 'approved_for_publish'),
     false,
+  );
+  assert.equal(
+    canSubmitResultMetrics(user('operator'), 'product_card', true, 'approved_for_publish'),
+    false,
+  );
+  assert.equal(
+    canSubmitResultMetrics(user('advertiser'), 'product_card', true, 'approved_for_publish'),
+    true,
   );
 });
 
@@ -166,9 +180,26 @@ test('result metric panel shows percentage and ROI units and no final conclusion
     currentUser: user('advertiser'),
     onVideoRefresh: async () => undefined,
   }));
-  assert.match(html, /点击率（%）/);
-  assert.match(html, /ROI（倍）/);
+  assert.match(html, /广告点击率（CTR）/);
+  assert.match(html, /投产比（ROI）/);
+  assert.match(html, /单位：%/);
+  assert.match(html, /单位：倍/);
   assert.doesNotMatch(html, /数据等级|最终有效|计入绩效|GPT/);
+});
+
+test('paid product card renders delivery fields and automatic derived-metric guidance', () => {
+  const html = renderToStaticMarkup(React.createElement(ResultMetricsPanel, {
+    videoId: 'video',
+    videoType: 'product_card',
+    isForAds: true,
+    videoStatus: 'pending_data',
+    currentUser: user('advertiser'),
+    onVideoRefresh: async () => undefined,
+  }));
+  assert.match(html, /消耗金额/);
+  assert.match(html, /点击成本.*留空自动计算/);
+  assert.match(html, /千次曝光成本.*留空自动计算/);
+  assert.match(html, /ROI.*留空自动计算/);
 });
 
 test('read-only roles do not render the snapshot save command', () => {

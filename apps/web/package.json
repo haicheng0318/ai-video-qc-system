@@ -6,22 +6,23 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "start": "next start -H 127.0.0.1",
+    "start": "next start -H 0.0.0.0",
     "lint": "next lint",
-    "test": "node --import tsx --test src/tests/*.spec.ts"
+    "test": "node --import tsx --test src/tests/*.spec.ts",
+    "test:browser:v101": "node scripts/v101-browser-acceptance.mjs"
   },
   "dependencies": {
     "@ai-video-qc/shared": "*",
-    "next": "^14.2.23",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "next": "15.5.24",
+    "react": "19.0.8",
+    "react-dom": "19.0.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
+    "@types/react": "~19.0.0",
+    "@types/react-dom": "~19.0.0",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.35",
+    "eslint-config-next": "15.5.24",
     "typescript": "^5.7.2"
   }
 }

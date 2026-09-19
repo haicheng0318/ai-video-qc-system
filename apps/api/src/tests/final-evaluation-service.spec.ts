@@ -62,7 +62,7 @@ const invalidSources: Array<[string, (value: any) => void]> = [
   ['invalid data grade', (value) => { value.ruleResult.dataGrade = 'X'; value.resultReview.dataGrade = 'X'; }],
 ];
 for (const [name, mutate] of invalidSources) {
-  test(`${name} blocks final evaluation before OpenAI`, () => {
+  test(`${name} blocks final evaluation before Qwen`, () => {
     const value = structuredClone(sources());
     mutate(value);
     assert.throws(() => (service() as any).assertSources(value, 'rule'));
@@ -78,7 +78,7 @@ test('background source drift maps to a safe binding error', () => {
 test('final response never exposes rawResponse or successKey and safely exposes confirmation fields', () => {
   const response = finalEvaluationResponse({
     id: 'evaluation', contentReviewId: 'content', resultReviewId: 'result', ruleEngineResultId: 'rule',
-    evaluationVersion: 'final-evaluation-v1', modelProvider: 'openai', modelName: 'gpt', contentGrade: 'A', dataGrade: 'A',
+    evaluationVersion: 'final-evaluation-v2-qwen', modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus', contentGrade: 'A', dataGrade: 'A',
     recommendedFinalGrade: null, recommendedFinalStatus: null, recommendedIsEffective: null,
     recommendationConfidence: null, decisionSummary: null, evidenceAssessment: [], finalAttribution: [],
     finalSuggestion: null, confirmationFocus: [], riskFlags: [], status: 'running', errorMessage: null,
@@ -97,7 +97,7 @@ test('final response never exposes rawResponse or successKey and safely exposes 
 
 test('history response remains a narrow immutable summary', () => {
   const response = finalEvaluationHistoryResponse({
-    id: 'evaluation', ruleEngineResultId: 'rule', evaluationVersion: 'final-evaluation-v1', modelName: 'gpt',
+    id: 'evaluation', ruleEngineResultId: 'rule', evaluationVersion: 'final-evaluation-v2-qwen', modelName: 'qwen3.5-plus',
     status: 'failed', recommendedFinalGrade: null, recommendedFinalStatus: null, recommendationConfidence: null,
     errorMessage: 'safe', createdAt: new Date(), completedAt: new Date(), evidenceAssessment: [], finalAttribution: [],
     confirmationFocus: [], riskFlags: [],
@@ -107,9 +107,28 @@ test('history response remains a narrow immutable summary', () => {
   assert.equal('rawResponse' in response, false);
 });
 
+test('exact final evaluation lookup is video-bound and returns the public projection', async () => {
+  const evaluationId = '00000000-0000-4000-8000-000000000091';
+  const videoId = '00000000-0000-4000-8000-000000000090';
+  const evaluation = {
+    id: evaluationId, videoId, contentReviewId: 'content', resultReviewId: 'result', ruleEngineResultId: 'rule',
+    evaluationVersion: 'final-evaluation-v2-qwen', modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus',
+    contentGrade: 'A', dataGrade: 'A', status: 'running', createdAt: new Date(), evidenceAssessment: [],
+    finalAttribution: [], confirmationFocus: [], riskFlags: [], rawResponse: { secret: true }, confirmer: null,
+  };
+  const prisma = {
+    video: { findUnique: async () => ({ id: videoId, status: VideoStatus.pending_final_evaluation, creator: { managerId: null } }) },
+    finalVideoEvaluation: { findFirst: async ({ where }: any) => where.id === evaluationId && where.videoId === videoId ? evaluation : null },
+  };
+  const exactService = new FinalEvaluationsService(prisma as any, { assertCanAccessVideo: async () => undefined } as any, {} as any, {} as any, () => undefined);
+  const exact = await exactService.byId(videoId, evaluationId, { id: 'owner', account: 'owner', name: 'Owner', role: 'content_owner', managerId: null } as any, {});
+  assert.equal(exact.evaluation.id, evaluationId);
+  assert.equal('rawResponse' in exact.evaluation, false);
+});
+
 test('final evaluation sanitization removes all secret occurrences and infrastructure data', () => {
-  const original = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'secret-key';
+  const original = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = 'secret-key';
   try {
     const safe = sanitizeFinalEvaluationText('secret-key secret-key Bearer abc postgresql://user:pass@host/db /Users/name/video');
     assert.equal(safe?.includes('secret-key'), false);
@@ -117,7 +136,7 @@ test('final evaluation sanitization removes all secret occurrences and infrastru
     assert.equal(safe?.includes('user:pass'), false);
     assert.equal(safe?.includes('/Users/name'), false);
   } finally {
-    if (original === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = original;
+    if (original === undefined) delete process.env.DASHSCOPE_API_KEY;
+    else process.env.DASHSCOPE_API_KEY = original;
   }
 });

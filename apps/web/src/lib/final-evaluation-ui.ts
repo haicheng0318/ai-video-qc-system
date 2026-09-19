@@ -5,6 +5,7 @@ import {
   RuleEngineLatestResponse,
 } from '@ai-video-qc/shared';
 import { ApiRequestError, ApiUser } from './api';
+import { PollingPauseReason, startStatusPolling } from './status-polling';
 
 export function canTriggerFinalEvaluation(
   user: ApiUser | null,
@@ -39,6 +40,30 @@ export function triggerFinalEvaluation(
   return request(`/api/videos/${videoId}/final-evaluation`, {
     method: 'POST',
     body: JSON.stringify({ ruleEngineResultId }),
+  });
+}
+
+export function startFinalEvaluationJobPolling(options: {
+  videoId: string; jobId: string; evaluationId: string;
+  request: <T>(path: string, init?: RequestInit) => Promise<T>;
+  onEvaluation: (value: FinalEvaluationLatestResponse) => void;
+  onPause: (reason: PollingPauseReason) => void;
+  onError?: () => void;
+  intervalMs?: number; maxDurationMs?: number; maxErrors?: number;
+  schedule?: (task: () => void, milliseconds: number) => ReturnType<typeof setTimeout>;
+  cancel?: (timer: ReturnType<typeof setTimeout>) => void;
+}) {
+  return startStatusPolling<{ status: string; stage: string; evaluationId?: string | null }>({
+    load: (signal) => options.request(`/api/evaluation-jobs/${options.jobId}`, { signal, cache: 'no-store' }),
+    isTerminal: (job) => !['queued', 'running', 'retry_wait'].includes(job.status), onValue: () => undefined,
+    onTerminal: async (job) => {
+      if (job.stage !== 'final' || job.evaluationId !== options.evaluationId) return options.onPause('network');
+      try { options.onEvaluation(await options.request(`/api/videos/${options.videoId}/final-evaluations/${options.evaluationId}`, { cache: 'no-store' })); }
+      catch { options.onError?.(); options.onPause('network'); }
+    },
+    onPause: options.onPause, onError: options.onError,
+    intervalMs: options.intervalMs, maxDurationMs: options.maxDurationMs, maxErrors: options.maxErrors,
+    schedule: options.schedule as typeof setTimeout, cancel: options.cancel as typeof clearTimeout,
   });
 }
 

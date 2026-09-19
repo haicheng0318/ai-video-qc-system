@@ -10,6 +10,7 @@ import {
   finalEvaluationErrorMessage,
   loadFinalEvaluationRequests,
   startFinalEvaluationPolling,
+  startFinalEvaluationJobPolling,
   triggerFinalEvaluation,
 } from '../lib/final-evaluation-ui';
 import { FinalEvaluationPanel } from '../components/final-evaluation-panel';
@@ -44,9 +45,9 @@ test('running evaluation hides duplicate trigger', () => {
   assert.equal(canTriggerFinalEvaluation(user('admin'), 'pending_final_evaluation', rule, { status: 'running' } as any), false);
 });
 
-test('succeeded v1 for the same rule hides duplicate trigger', () => {
+test('succeeded Qwen evaluation for the same rule hides duplicate trigger', () => {
   assert.equal(canTriggerFinalEvaluation(user('admin'), 'pending_final_evaluation', rule, {
-    status: 'succeeded', ruleEngineResultId: 'rule', evaluationVersion: 'final-evaluation-v1',
+    status: 'succeeded', ruleEngineResultId: 'rule', evaluationVersion: 'final-evaluation-v2-qwen',
   } as any), false);
 });
 
@@ -54,6 +55,26 @@ test('trigger payload contains only ruleEngineResultId', async () => {
   let body = '';
   await triggerFinalEvaluation(async (_path, init) => { body = String(init.body); return {}; }, 'video', 'rule');
   assert.deepEqual(JSON.parse(body), { ruleEngineResultId: 'rule' });
+});
+
+test('final polling follows the exact returned job and evaluation instead of latest', async () => {
+  const paths: string[] = [];
+  const scheduled: Array<() => void> = [];
+  let received = '';
+  startFinalEvaluationJobPolling({
+    videoId: 'video', jobId: 'job-final', evaluationId: 'evaluation-exact',
+    request: async (path) => {
+      paths.push(path);
+      if (path === '/api/evaluation-jobs/job-final') return { id: 'job-final', stage: 'final', status: 'succeeded', evaluationId: 'evaluation-exact' } as any;
+      return { videoStatus: 'pending_final_confirmation', evaluation: { id: 'evaluation-exact', status: 'succeeded' } } as any;
+    },
+    onEvaluation: (value) => { received = value.evaluation?.id || ''; }, onPause: () => undefined,
+    schedule: (task) => { scheduled.push(task); return 1 as never; }, cancel: () => undefined,
+  });
+  scheduled.shift()?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(paths, ['/api/evaluation-jobs/job-final', '/api/videos/video/final-evaluations/evaluation-exact']);
+  assert.equal(received, 'evaluation-exact');
 });
 
 for (const [status, expected] of [[403, '没有生成'], [409, '重新加载'], [422, '规则边界']] as const) {
@@ -118,11 +139,11 @@ test('panel warns that suggestion is not a final business conclusion', () => {
   const html = renderToStaticMarkup(React.createElement(FinalEvaluationPanel, {
     videoId: 'video', videoStatus: 'pending_final_evaluation', currentUser: user('admin'), onVideoRefresh: async () => undefined,
   }));
-  assert.match(html, /GPT 建议不是最终业务结论/);
+  assert.match(html, /千问建议不是最终业务结论/);
   assert.match(html, /待确认|负责人确认/);
 });
 
-test('GPT suggestion panel remains separate from confirmation commands', async () => {
+test('Qwen suggestion panel remains separate from confirmation commands', async () => {
   const source = await readFile(resolve(__dirname, '../components/final-evaluation-panel.tsx'), 'utf8');
   assert.doesNotMatch(source, /确认最终|手工调整|标记优秀|标记反面/);
   assert.doesNotMatch(source, /submitFinalConfirmation|submitCaseMarking/);

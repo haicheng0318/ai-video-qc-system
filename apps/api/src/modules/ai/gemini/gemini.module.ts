@@ -1,17 +1,20 @@
 import { Module } from '@nestjs/common';
+import { EvaluationJobsModule } from '../../evaluation-jobs/evaluation-jobs.module';
 import { PermissionsModule } from '../../permissions/permissions.module';
-import { GeminiClient, GEMINI_CLIENT } from './gemini.client';
-import { GeminiService } from './gemini.service';
+import { QwenClient, QWEN_CLIENT } from './qwen.client';
+import { ContentReviewService } from './gemini.service';
+import { EvaluationJobsService } from '../../evaluation-jobs/evaluation-jobs.service';
 
 @Module({
-  imports: [PermissionsModule],
+  imports: [PermissionsModule, EvaluationJobsModule],
   providers: [
     {
-      provide: GEMINI_CLIENT,
-      useFactory: () => new GeminiClient(),
+      provide: QWEN_CLIENT,
+      inject: [EvaluationJobsService],
+      useFactory: (jobs: EvaluationJobsService) => new QwenClient(undefined, { storage: (path, status) => jobs.recordTemporaryStorage(path, status), usage: async usage => { try { await jobs.recordUsage(usage); } catch (error) { await jobs.recordCollectionFailure().catch(() => undefined); throw error; } } }),
     },
-    GeminiService,
+    ContentReviewService,
   ],
-  exports: [GeminiService],
+  exports: [ContentReviewService],
 })
-export class GeminiModule {}
+export class ContentReviewModule {}

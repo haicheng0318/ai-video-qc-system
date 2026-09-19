@@ -6,4 +6,8 @@ export type AuthenticatedUser = {
   name: string;
   role: UserRole;
   managerId: string | null;
+  department?: string | null;
+  expiresAt?: Date | null;
+  mustChangePassword?: boolean;
+  sessionId?: string;
 };

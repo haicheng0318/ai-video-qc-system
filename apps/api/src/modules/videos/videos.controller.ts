@@ -14,6 +14,7 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -22,16 +23,19 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { VideoListQueryDto } from './dto/video-list-query.dto';
 import { VideosService } from './videos.service';
-import { GeminiService } from '../ai/gemini/gemini.service';
+import { ContentReviewService } from '../ai/gemini/gemini.service';
 import { CreateVideoRevisionDto } from './dto/create-video-revision.dto';
 import { videoUploadInterceptor } from './video-upload.config';
+import { CreateDirectUploadTicketDto } from './dto/create-direct-upload-ticket.dto';
+import { CreateDirectVideoDto } from './dto/create-direct-video.dto';
+import { CreateDirectVideoRevisionDto } from './dto/create-direct-video-revision.dto';
 
 @Controller('videos')
 @UseGuards(JwtAuthGuard)
 export class VideosController {
   constructor(
     private readonly videosService: VideosService,
-    private readonly geminiService: GeminiService,
+    private readonly contentReviewService: ContentReviewService,
   ) {}
 
   @Post()
@@ -46,6 +50,32 @@ export class VideosController {
       throw new BadRequestException('Video file is required.');
     }
     return this.videosService.create(body, file, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+      uploadKey: request.headers['idempotency-key'] as string,
+    });
+  }
+
+  @Post('direct-upload-ticket')
+  createDirectUploadTicket(
+    @Body() body: CreateDirectUploadTicketDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    const idempotencyKey = request.headers['idempotency-key'];
+    return this.videosService.createDirectUploadTicket(body, user, typeof idempotencyKey === 'string' ? idempotencyKey : undefined);
+  }
+
+  @Post('direct-upload-tickets/:ticketId/cancel')
+  cancelTicket(@Param('ticketId', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) { return this.videosService.cancelDirectUploadTicket(id, user); }
+
+  @Post('direct')
+  createDirect(
+    @Body() body: CreateDirectVideoDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.videosService.createDirect(body, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });
@@ -64,6 +94,20 @@ export class VideosController {
     return this.videosService.createRevision(id, body, file, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      uploadKey: request.headers['idempotency-key'] as string,
+    });
+  }
+
+  @Post(':id/revisions/direct')
+  createDirectRevision(
+    @Param('id') id: string,
+    @Body() body: CreateDirectVideoRevisionDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.videosService.createDirectRevision(id, body, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
     });
   }
 
@@ -79,7 +123,7 @@ export class VideosController {
     @CurrentUser() user: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.geminiService.triggerContentReview(id, user, {
+    return this.contentReviewService.triggerContentReview(id, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });
@@ -91,10 +135,23 @@ export class VideosController {
     @CurrentUser() user: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.geminiService.latest(id, user, {
+    return this.contentReviewService.latest(id, user, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });
+  }
+
+  @Get(':id/content-reviews/:reviewId')
+  contentReviewStatus(
+    @Param('id') id: string,
+    @Param('reviewId') reviewId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.contentReviewService.latest(id, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    }, reviewId);
   }
 
   @Get(':id')
@@ -109,6 +166,14 @@ export class VideosController {
     }
 
     return video;
+  }
+
+  @Get(':id/report')
+  async report(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser, @Req() request: Request, @Res() response: Response) {
+    const report = await this.videosService.exportReport(id, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="${report.filename}"`);
+    response.send(report.content);
   }
 
   @Get(':id/file')
@@ -128,5 +193,23 @@ export class VideosController {
     }
 
     return this.videosService.streamVideoFile(result.video, request, response);
+  }
+
+  @Get(':id/file-url')
+  async fileUrl(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    const result = await this.videosService.prepareVideoFile(id, user, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+
+    if (!result) {
+      throw new NotFoundException('Video not found.');
+    }
+
+    return this.videosService.createVideoPlaybackUrl(result.video);
   }
 }

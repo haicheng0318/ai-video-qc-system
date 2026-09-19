@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { GeminiClient } from '../modules/ai/gemini/gemini.client';
-import { GeminiFileProcessingError, GeminiFileProcessingTimeoutError, GeminiRequestError } from '../modules/ai/gemini/gemini.errors';
+import { QwenClient } from '../modules/ai/gemini/qwen.client';
+import {
+  ContentReviewFileProcessingError,
+  ContentReviewRequestError,
+} from '../modules/ai/gemini/gemini.errors';
 
 const rawResponse = JSON.stringify({
   contentSummary: '内容清晰',
@@ -15,73 +18,112 @@ const rawResponse = JSON.stringify({
   scores: [{ dimension: '信息表达', score: 10, maxScore: 10, comment: '清晰' }],
 });
 
-test('Gemini client uploads, polls to ACTIVE, and generates JSON', async () => {
-  const states = ['PROCESSING', 'ACTIVE'];
-  let getCalls = 0;
+async function* chunks(parts: string[]) {
+  for (const content of parts) yield { choices: [{ delta: { content } }] };
+}
+
+test('Qwen client uploads a private temporary video, streams JSON, and deletes the object', async () => {
+  const calls: Array<Record<string, unknown>> = [];
   let request: Record<string, unknown> | undefined;
-  const client = new GeminiClient(() => ({
-    files: {
-      upload: async () => ({ name: 'files/test', uri: 'https://example.test/file', mimeType: 'video/mp4', state: states[0] }),
-      get: async () => ({ name: 'files/test', uri: 'https://example.test/file', mimeType: 'video/mp4', state: states[++getCalls] }),
-    },
-    models: {
-      generateContent: async (input) => {
-        request = input;
-        return { text: rawResponse };
+  const client = new QwenClient(() => ({
+    oss: {
+      put: async (name, filePath, options) => {
+        calls.push({ action: 'put', name, filePath, options });
+      },
+      signatureUrlV4: async (_method, expires, _options, name) => {
+        calls.push({ action: 'sign', name, expires });
+        return 'https://private.example.test/video?signature=redacted';
+      },
+      delete: async (name) => {
+        calls.push({ action: 'delete', name });
       },
     },
-  }), { pollIntervalMs: 0, maxPollAttempts: 2 });
+    qwen: {
+      chat: {
+        completions: {
+          create: async (input) => {
+            request = input;
+            return chunks([rawResponse.slice(0, 20), rawResponse.slice(20)]);
+          },
+        },
+      },
+    },
+  }));
 
-  const result = await client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content');
+  const result = await client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'qwen3.5-omni-plus', 'evaluate');
+
   assert.equal(result.rawResponse, rawResponse);
-  assert.equal(request?.model, 'gemini-test');
-  assert.deepEqual((request?.config as { responseMimeType: string }).responseMimeType, 'application/json');
+  assert.equal(request?.model, 'qwen3.5-omni-plus');
+  assert.equal((request?.response_format as { type: string }).type, 'json_schema');
+  const messages = request?.messages as Array<{ content: Array<{ video_url?: { url: string } }> }>;
+  assert.match(messages[0].content[0].video_url?.url || '', /^https:\/\/private\.example\.test/);
+  assert.deepEqual(calls.map((call) => call.action), ['put', 'sign', 'delete']);
+  assert.match(String(calls[0].name), /^ai-video-qc\/content-review\/[0-9a-f-]+\.mp4$/);
+  assert.equal((calls[0].options as Record<string, unknown>).timeout, 300_000);
 });
 
-test('Gemini client maps FAILED file processing to a safe error', async () => {
-  const client = new GeminiClient(() => ({
-    files: {
-      upload: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'FAILED' }),
-      get: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'FAILED' }),
-    },
-    models: { generateContent: async () => ({ text: rawResponse }) },
-  }), { pollIntervalMs: 0, maxPollAttempts: 1 });
+test('Qwen client applies configured OSS upload timeout', async () => {
+  const originalTimeout = process.env.OSS_REQUEST_TIMEOUT_MS;
+  process.env.OSS_REQUEST_TIMEOUT_MS = '180000';
+  let observedTimeout: unknown;
 
-  await assert.rejects(
-    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content'),
-    GeminiFileProcessingError,
-  );
-});
-
-test('Gemini client stops polling after the configured maximum', async () => {
-  const client = new GeminiClient(() => ({
-    files: {
-      upload: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'PROCESSING' }),
-      get: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'PROCESSING' }),
-    },
-    models: { generateContent: async () => ({ text: rawResponse }) },
-  }), { pollIntervalMs: 0, maxPollAttempts: 1 });
-
-  await assert.rejects(
-    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content'),
-    GeminiFileProcessingTimeoutError,
-  );
-});
-
-test('Gemini request error preserves the SDK error as internal cause', async () => {
-  const sdkError = new Error('SDK request failed with sensitive details');
-  const client = new GeminiClient(() => ({
-    files: {
-      upload: async () => {
-        throw sdkError;
+  try {
+    const client = new QwenClient(() => ({
+      oss: {
+        put: async (_name, _filePath, options) => {
+          observedTimeout = options?.timeout;
+        },
+        signatureUrlV4: async () => 'https://private.example.test/video',
+        delete: async () => undefined,
       },
-      get: async () => ({ name: 'files/test', uri: 'https://example.test/file', state: 'ACTIVE' }),
+      qwen: {
+        chat: { completions: { create: async () => chunks([rawResponse]) } },
+      },
+    }));
+
+    await client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'qwen-test', 'evaluate');
+    assert.equal(observedTimeout, 180_000);
+  } finally {
+    if (originalTimeout === undefined) delete process.env.OSS_REQUEST_TIMEOUT_MS;
+    else process.env.OSS_REQUEST_TIMEOUT_MS = originalTimeout;
+  }
+});
+
+test('Qwen client deletes the temporary object after a model request failure', async () => {
+  const sdkError = new Error('request failed with sensitive details');
+  let deleted = false;
+  const client = new QwenClient(() => ({
+    oss: {
+      put: async () => undefined,
+      signatureUrlV4: async () => 'https://private.example.test/video',
+      delete: async () => { deleted = true; },
     },
-    models: { generateContent: async () => ({ text: rawResponse }) },
+    qwen: {
+      chat: { completions: { create: async () => { throw sdkError; } } },
+    },
   }));
 
   await assert.rejects(
-    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'gemini-test', 'evaluate content'),
-    (error: unknown) => error instanceof GeminiRequestError && error.cause === sdkError,
+    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'qwen-test', 'evaluate'),
+    (error: unknown) => error instanceof ContentReviewRequestError && error.cause === sdkError,
+  );
+  assert.equal(deleted, true);
+});
+
+test('Qwen client treats failed temporary object cleanup as a review failure', async () => {
+  const client = new QwenClient(() => ({
+    oss: {
+      put: async () => undefined,
+      signatureUrlV4: async () => 'https://private.example.test/video',
+      delete: async () => { throw new Error('delete failed'); },
+    },
+    qwen: {
+      chat: { completions: { create: async () => chunks([rawResponse]) } },
+    },
+  }));
+
+  await assert.rejects(
+    client.analyzeVideo('/safe/video.mp4', 'video/mp4', 'qwen-test', 'evaluate'),
+    ContentReviewFileProcessingError,
   );
 });

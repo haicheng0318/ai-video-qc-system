@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_video_qc
+      POSTGRES_USER: ai_video_qc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_video_qc -d ai_video_qc"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  api: &api_service
+    # Build/register once, then consume this immutable reference for every role.
+    # The release preflight rejects mutable tags before starting any service.
+    image: ${API_IMAGE:?Set the registered immutable API_IMAGE reference}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      API_HOST: 0.0.0.0
+      WEB_ORIGIN: https://${PUBLIC_HOST}
+      DATABASE_URL: postgresql://ai_video_qc:${POSTGRES_PASSWORD}@postgres:5432/ai_video_qc?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: 2h
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-系统管理员}
+      MAX_VIDEO_SIZE_MB: ${MAX_VIDEO_SIZE_MB:-500}
+      VIDEO_STORAGE_PROVIDER: ${VIDEO_STORAGE_PROVIDER:-local}
+      VIDEO_STORAGE_DIR: /data/videos
+      VIDEO_COVER_DIR: /data/covers
+      COS_REGION: ${COS_REGION:-}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_VIDEO_PREFIX: ${COS_VIDEO_PREFIX:-ai-video-qc/videos}
+      COS_SIGNED_URL_TTL_SECONDS: ${COS_SIGNED_URL_TTL_SECONDS:-900}
+      TENCENTCLOUD_SECRET_ID: ${TENCENTCLOUD_SECRET_ID:-}
+      TENCENTCLOUD_SECRET_KEY: ${TENCENTCLOUD_SECRET_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3.5-omni-plus}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      QWEN_REQUEST_TIMEOUT_MS: ${QWEN_REQUEST_TIMEOUT_MS:-300000}
+      QWEN_RUNNING_STALE_MINUTES: ${QWEN_RUNNING_STALE_MINUTES:-15}
+      QWEN_TEXT_REQUEST_TIMEOUT_MS: ${QWEN_TEXT_REQUEST_TIMEOUT_MS:-120000}
+      QWEN_RESULT_REVIEW_MODEL: ${QWEN_RESULT_REVIEW_MODEL:-qwen3.5-plus}
+      QWEN_RESULT_REVIEW_MAX_OUTPUT_TOKENS: ${QWEN_RESULT_REVIEW_MAX_OUTPUT_TOKENS:-4000}
+      QWEN_RESULT_REVIEW_RUNNING_STALE_MINUTES: ${QWEN_RESULT_REVIEW_RUNNING_STALE_MINUTES:-10}
+      QWEN_FINAL_EVALUATION_MODEL: ${QWEN_FINAL_EVALUATION_MODEL:-qwen3.5-plus}
+      QWEN_FINAL_EVALUATION_MAX_OUTPUT_TOKENS: ${QWEN_FINAL_EVALUATION_MAX_OUTPUT_TOKENS:-4000}
+      QWEN_FINAL_EVALUATION_RUNNING_STALE_MINUTES: ${QWEN_FINAL_EVALUATION_RUNNING_STALE_MINUTES:-10}
+      OSS_REGION: ${OSS_REGION:-oss-cn-beijing}
+      OSS_BUCKET: ${OSS_BUCKET:-}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      OSS_ENDPOINT: ${OSS_ENDPOINT:-}
+      OSS_REQUEST_TIMEOUT_MS: ${OSS_REQUEST_TIMEOUT_MS:-300000}
+      OSS_SIGNED_URL_TTL_SECONDS: ${OSS_SIGNED_URL_TTL_SECONDS:-3600}
+      OSS_TEMP_PREFIX: ${OSS_TEMP_PREFIX:-ai-video-qc/content-review}
+      EVALUATION_JOB_LEASE_MS: ${EVALUATION_JOB_LEASE_MS:-90000}
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - video_data:/data/videos
+      - cover_data:/data/covers
+    networks:
+      - internal
+
+  worker:
+    <<: *api_service
+    command: ["node", "dist/worker.js"]
+    ports: []
+    stop_grace_period: 6m
+
+  migrate:
+    <<: *api_service
+    command: ["node", "/app/node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "/app/prisma/schema.prisma"]
+    profiles: ["maintenance"]
+    restart: "no"
+    ports: []
+
+  bootstrap:
+    <<: *api_service
+    command: ["node", "/app/prisma/seed.cjs"]
+    profiles: ["bootstrap"]
+    restart: "no"
+    ports: []
+
+  web:
+    image: ${WEB_IMAGE:?Set the separately registered immutable WEB_IMAGE reference}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  postgres_data:
+  video_data:
+  cover_data:

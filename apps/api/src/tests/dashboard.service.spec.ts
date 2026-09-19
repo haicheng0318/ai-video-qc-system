@@ -83,6 +83,24 @@ test('summary query only counts confirmed formal evaluations', async () => {
   assert.match(sqlText(calls.find((query) => sqlText(query).includes('final_video_evaluations'))), /final_grade IS NOT NULL/);
 });
 
+test('dashboard date-only boundaries represent complete Asia/Shanghai calendar days', async () => {
+  const calls: any[] = [];
+  const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);
+  const result = await service.summary({ startDate: '2026-09-10', endDate: '2026-09-10' }, user(UserRole.admin));
+  assert.equal(result.period.startDate, '2026-09-09T16:00:00.000Z');
+  assert.equal(result.period.endDate, '2026-09-10T15:59:59.999Z');
+});
+
+test('formal dashboard and pipeline queries exclude trial videos', async () => {
+  const calls: any[] = [];
+  const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return sqlText(query).includes('date_trunc') ? [{ bucket: new Date('2026-09-01') }] : [{}]; } } as any);
+  await service.summary({}, user(UserRole.admin));
+  await service.trend({ granularity: 'day' }, user(UserRole.admin));
+  await service.breakdown({ groupBy: 'brand' }, user(UserRole.admin));
+  for (const query of calls) assert.match(sqlText(query), /v\.is_trial = false/);
+  assert.match(sqlText(calls.find((query) => sqlText(query).includes("date_trunc('day'"))), /interval '8 hours'/);
+});
+
 test('pipeline query is separate from finalized denominator', async () => {
   const calls: any[] = [];
   const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);

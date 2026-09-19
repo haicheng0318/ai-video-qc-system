@@ -72,7 +72,7 @@ export class SupervisorReviewsService {
           select: { id: true },
         });
         if (!succeededContentReview) {
-          throw new ConflictException('A successful Gemini content review is required.');
+          throw new ConflictException('A successful video content review is required.');
         }
 
         const created = await transaction.supervisorReview.create({

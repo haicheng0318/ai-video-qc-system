@@ -20,6 +20,8 @@ import {
   ResultMetricSnapshot,
   submitResultMetricSnapshot,
 } from '@/lib/result-metrics-ui';
+import { useUnsavedChanges } from '@/lib/unsaved-changes';
+import { formatShanghaiDateTime } from '@/lib/display-time';
 
 const videoTypeLabels: Record<VideoType, string> = {
   product_card: '商品卡视频',
@@ -49,6 +51,7 @@ export function ResultMetricsPanel({
   videoStatus,
   currentUser,
   onVideoRefresh,
+  allowedActions,
 }: {
   videoId: string;
   videoType: VideoType;
@@ -56,6 +59,7 @@ export function ResultMetricsPanel({
   videoStatus: string;
   currentUser: ApiUser | null;
   onVideoRefresh: () => Promise<void>;
+  allowedActions?: string[];
 }) {
   const config = useMemo(
     () => getResultMetricFieldConfig(videoType, isForAds),
@@ -91,9 +95,10 @@ export function ResultMetricsPanel({
     load().catch(() => setLatestError('结果数据暂时不可用。'));
   }, [load]);
 
-  const canEdit = canSubmitResultMetrics(currentUser, videoType, isForAds, videoStatus);
+  const canEdit = allowedActions ? allowedActions.includes('submit_result_metrics') : canSubmitResultMetrics(currentUser, videoType, isForAds, videoStatus);
   const payload = buildResultMetricPayload(config.fields, values, latest);
   const changedFields = changedMetricFields(payload);
+  useUnsavedChanges(changedFields.length > 0);
   const groupedFields = Object.entries(
     config.fields.reduce<Record<string, ResultMetricField[]>>((groups, field) => {
       const group = resultMetricFieldDefinitions[field].group;
@@ -145,7 +150,7 @@ export function ResultMetricsPanel({
             数据周期：{latest.dataStartDate || '-'} 至 {latest.dataEndDate || '-'}
           </p>
           <p>
-            提交人：{latest.submittedBy?.name || '-'} · {new Date(latest.createdAt).toLocaleString()}
+            提交人：{latest.submittedBy?.name || '-'} · {formatShanghaiDateTime(latest.createdAt)}
           </p>
           {latest.dataWarnings.length > 0 ? (
             <ul className="warning-list">
@@ -170,15 +175,18 @@ export function ResultMetricsPanel({
                       : definition.kind === 'money2'
                         ? '元'
                         : '';
+                  const isDerived = ['cpc', 'cpm', 'roi'].includes(field);
                   return (
                     <div className="form-field" key={field}>
                       <label htmlFor={`metric-${field}`}>
-                        {definition.label}{suffix ? `（${suffix}）` : ''}
+                        {definition.label}{suffix ? `（单位：${suffix}）` : ''}{isDerived ? '（留空自动计算）' : ''}
                       </label>
+                      {definition.description ? <small className="muted">{definition.description}</small> : null}
                       {['operatorNote', 'deliveryNote', 'commentKeywords'].includes(field) ? (
                         <textarea
                           id={`metric-${field}`}
                           value={values[field] || ''}
+                          placeholder={isDerived ? '根据基础指标自动计算，也可手工覆盖' : undefined}
                           onChange={(event) => setValues({ ...values, [field]: event.target.value })}
                           maxLength={field === 'commentKeywords' ? 2000 : 4000}
                         />
@@ -197,6 +205,9 @@ export function ResultMetricsPanel({
               </div>
             </fieldset>
           ))}
+          {config.fields.some((field) => ['cpc', 'cpm', 'roi'].includes(field)) ? (
+            <p className="muted">点击成本、千次曝光成本和 ROI 留空时，由后端根据消耗、点击、曝光和成交金额自动计算；手工填写时会保留平台口径并校验差异。</p>
+          ) : null}
           <div className="change-preview">
             <strong>本次变更：</strong>
             {changedFields.length > 0
@@ -241,7 +252,7 @@ export function ResultMetricsPanel({
                       .join('；') || '-'}
                   </td>
                   <td>{snapshot.submittedBy?.name || '-'}</td>
-                  <td>{new Date(snapshot.createdAt).toLocaleString()}</td>
+                  <td>{formatShanghaiDateTime(snapshot.createdAt)}</td>
                 </tr>
               ))}
             </tbody>

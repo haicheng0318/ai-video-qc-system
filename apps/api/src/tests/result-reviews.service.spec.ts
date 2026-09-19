@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AiReviewStatus, DataSufficiency, Prisma, UserRole, VideoStatus, VideoType } from '@prisma/client';
-import { ResultReviewsService, sanitizeOpenAiText } from '../modules/result-reviews/result-reviews.service';
+import { ResultReviewsService, sanitizeModelText } from '../modules/result-reviews/result-reviews.service';
 import { ResultReviewOutput } from '../modules/ai/gpt/gpt-result-review.schema';
 import { PrismaService } from '../modules/prisma/prisma.service';
 
@@ -88,7 +88,7 @@ function createHarness(options: HarnessOptions = {}) {
   if (options.freshRunning || options.staleRunning) {
     reviews.push({
       id: `00000000-0000-4000-8000-${String(reviewSequence++).padStart(12, '0')}`,
-      videoId, resultMetricId: metricId, modelProvider: 'openai', modelName: 'gpt-5-mini',
+      videoId, resultMetricId: metricId, modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus',
       status: AiReviewStatus.running, dataSufficiency: DataSufficiency.pending,
       createdAt: new Date(now - (options.staleRunning ? 11 * 60_000 : 60_000)), rawResponse: null,
     });
@@ -96,7 +96,7 @@ function createHarness(options: HarnessOptions = {}) {
   if (options.succeeded || options.failedHistory) {
     reviews.push({
       id: `00000000-0000-4000-8000-${String(reviewSequence++).padStart(12, '0')}`,
-      videoId, resultMetricId: metricId, modelProvider: 'openai', modelName: 'gpt-5-mini',
+      videoId, resultMetricId: metricId, modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus',
       status: options.succeeded ? AiReviewStatus.succeeded : AiReviewStatus.failed,
       dataSufficiency: options.succeeded ? DataSufficiency.sufficient : DataSufficiency.pending,
       dataScore: options.succeeded ? 85 : null, dataGrade: options.succeeded ? 'A' : null,
@@ -210,10 +210,10 @@ function createHarness(options: HarnessOptions = {}) {
   const gpt = {
     reviewResultData: async () => {
       gptCalls += 1;
-      if (options.failGpt) throw new Error(`sdk failure ${process.env.OPENAI_API_KEY || ''}`);
+      if (options.failGpt) throw new Error(`sdk failure ${process.env.DASHSCOPE_API_KEY || ''}`);
       const output = options.output || (options.noBenchmarks ? insufficientOutput : sufficientOutput);
       return {
-        responseId: 'resp-1', responseStatus: 'completed', model: 'gpt-5-mini',
+        responseId: 'resp-1', responseStatus: 'completed', model: 'qwen3.5-plus',
         rawText: JSON.stringify(output), usage: { inputTokens: 50, outputTokens: 20, totalTokens: 70 },
         parsedOutput: output,
       };
@@ -261,7 +261,7 @@ for (const status of [
   VideoStatus.invalid_content, VideoStatus.ai_result_reviewing, VideoStatus.pending_rule_engine,
   VideoStatus.final_effective,
 ]) {
-  test(`${status} cannot trigger GPT result review`, async () => {
+  test(`${status} cannot trigger Qwen result review`, async () => {
     await assert.rejects(createHarness({ status }).trigger(), ConflictException);
   });
 }
@@ -274,7 +274,7 @@ test('ai_result_failed can create a new retry without overwriting failed history
   assert.deepEqual(harness.getReviews()[0], before);
 });
 
-test('fresh running review returns 409 and never schedules OpenAI', async () => {
+test('fresh running review returns 409 and never schedules Qwen', async () => {
   const harness = createHarness({ status: VideoStatus.ai_result_reviewing, freshRunning: true });
   await assert.rejects(harness.trigger(), ConflictException);
   assert.equal(harness.scheduled.length, 0);
@@ -305,8 +305,8 @@ test('existing succeeded result for the same snapshot returns 409', async () => 
 });
 
 test('database-configured model and max tokens take priority', async () => {
-  const originalModel = process.env.OPENAI_RESULT_REVIEW_MODEL;
-  process.env.OPENAI_RESULT_REVIEW_MODEL = 'env-model';
+  const originalModel = process.env.QWEN_RESULT_REVIEW_MODEL;
+  process.env.QWEN_RESULT_REVIEW_MODEL = 'env-model';
   try {
     const harness = createHarness({ modelConfig: { modelName: 'db-model', maxTokens: 1234 } });
     await harness.trigger();
@@ -314,8 +314,8 @@ test('database-configured model and max tokens take priority', async () => {
     assert.equal(running?.modelName, 'db-model');
     assert.equal(harness.getLogs()[0].afterValue.modelName, 'db-model');
   } finally {
-    if (originalModel === undefined) delete process.env.OPENAI_RESULT_REVIEW_MODEL;
-    else process.env.OPENAI_RESULT_REVIEW_MODEL = originalModel;
+    if (originalModel === undefined) delete process.env.QWEN_RESULT_REVIEW_MODEL;
+    else process.env.QWEN_RESULT_REVIEW_MODEL = originalModel;
   }
 });
 
@@ -336,35 +336,35 @@ test('successful background review persists fields, audit, status and log in one
   assert.equal(harness.getLogs().at(-1)?.actionType, 'ai_result_review_completed');
 });
 
-test('no benchmark forces an auditable insufficient result with null score and grade', async () => {
-  const harness = createHarness({ noBenchmarks: true });
+test('no benchmark does not by itself force an insufficient result', async () => {
+  const harness = createHarness({ noBenchmarks: true, output: sufficientOutput });
   await harness.trigger();
   await harness.runBackground();
   const review = harness.getReviews()[0];
   assert.equal(review.status, AiReviewStatus.succeeded);
-  assert.equal(review.dataSufficiency, DataSufficiency.insufficient);
-  assert.equal(review.dataScore, null);
-  assert.equal(review.dataGrade, null);
+  assert.equal(review.dataSufficiency, DataSufficiency.sufficient);
+  assert.equal(review.dataScore, 85);
+  assert.equal(review.dataGrade, 'A');
   assert.equal(review.rawResponse.benchmarkCoverage, 'none');
-  assert.equal(review.rawResponse.parsed.sufficiencyReasons[0].code, 'missing_benchmark');
+  assert.deepEqual(review.rawResponse.parsed.sufficiencyReasons, []);
 });
 
-test('OpenAI failure persists a safe message and ai_result_failed without leaking the key', async () => {
-  const original = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'secret-key-for-test';
+test('Qwen failure persists a safe message and ai_result_failed without leaking the key', async () => {
+  const original = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = 'secret-key-for-test';
   try {
     const harness = createHarness({ failGpt: true });
     await harness.trigger();
     await harness.runBackground();
     const review = harness.getReviews()[0];
     assert.equal(review.status, AiReviewStatus.failed);
-    assert.equal(review.errorMessage, 'GPT result review failed.');
+    assert.equal(review.errorMessage, 'Qwen result review failed.');
     assert.doesNotMatch(JSON.stringify(review), /secret-key-for-test/);
     assert.equal(harness.getVideo().status, VideoStatus.ai_result_failed);
     assert.equal(harness.getLogs().at(-1)?.actionType, 'ai_result_review_failed');
   } finally {
-    if (original === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = original;
+    if (original === undefined) delete process.env.DASHSCOPE_API_KEY;
+    else process.env.DASHSCOPE_API_KEY = original;
   }
 });
 
@@ -387,6 +387,16 @@ test('latest returns null without reviews and never exposes rawResponse', async 
   assert.equal(Object.hasOwn(latest.review || {}, 'rawResponse'), false);
 });
 
+test('exact result review lookup is video-bound and keeps raw response private', async () => {
+  const harness = createHarness({ succeeded: true });
+  const stored = harness.getReviews()[0];
+  stored.rawResponse = { secretAudit: true };
+  const exact = await harness.service.byId(videoId, stored.id, actor, {});
+  assert.equal(exact.review.id, stored.id);
+  assert.equal('rawResponse' in exact.review, false);
+  await assert.rejects(harness.service.byId(videoId, '00000000-0000-4000-8000-000000009999', actor, {}), NotFoundException);
+});
+
 test('history retains failed and succeeded reviews, is newest-first and marks latest', async () => {
   const harness = createHarness({ succeeded: true, failedHistory: true });
   harness.getReviews().push({
@@ -402,17 +412,17 @@ test('history retains failed and succeeded reviews, is newest-first and marks la
   assert.ok(!('rawResponse' in history.items[0]));
 });
 
-test('OpenAI audit sanitizer removes every secret, credential URL, path and signed query value', () => {
-  const original = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'openai-secret';
+test('Qwen audit sanitizer removes every secret, credential URL, path and signed query value', () => {
+  const original = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = 'qwen-secret';
   try {
-    const sanitized = sanitizeOpenAiText(
-      'openai-secret openai-secret Bearer abc123 postgresql://user:pass@host/db ' +
+    const sanitized = sanitizeModelText(
+      'qwen-secret qwen-secret Bearer abc123 postgresql://user:pass@host/db ' +
       '/Users/name/private.txt https://example.test/path?token=abc&signature=def',
     ) || '';
-    assert.doesNotMatch(sanitized, /openai-secret|abc123|user:pass|\/Users\/name|token=abc|signature=def/);
+    assert.doesNotMatch(sanitized, /qwen-secret|abc123|user:pass|\/Users\/name|token=abc|signature=def/);
   } finally {
-    if (original === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = original;
+    if (original === undefined) delete process.env.DASHSCOPE_API_KEY;
+    else process.env.DASHSCOPE_API_KEY = original;
   }
 });

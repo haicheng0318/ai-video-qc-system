@@ -42,8 +42,27 @@ function createService(prisma: PrismaService, operationLogs = new OperationLogsS
   return new VideosService(prisma, {} as import('../modules/permissions/permissions.service').PermissionsService, operationLogs);
 }
 
+test('video list applies bounded pagination and returns metadata while preserving items', async () => {
+  let findArgs: Record<string, unknown> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, unknown>) => { findArgs = args; return [{ id: 'video-1' }]; },
+      count: async () => 41,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const permissions = { buildVideoVisibilityWhere: () => ({ creatorId: testUser.id }) };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+  (service as unknown as { serializeVideo: (video: unknown) => unknown }).serializeVideo = (video) => video;
+  const result = await service.list(testUser, { page: 3, pageSize: 20, search: 'summer' });
+  assert.equal(findArgs?.skip, 40);
+  assert.equal(findArgs?.take, 20);
+  assert.deepEqual(result, { items: [{ id: 'video-1' }], total: 41, page: 3, pageSize: 20 });
+});
+
 function videoFile(filePath: string, size: number): Video {
   return {
+    isTrial: false,
     id: '00000000-0000-4000-8000-000000000099',
     title: 'Stream fixture',
     originalFileName: 'fixture.mp4',
@@ -431,6 +450,19 @@ test('video response removes AI audit payloads and local file paths recursively'
   assert.equal('filePath' in response, false);
   assert.equal('rawResponse' in response.finalVideoEvaluations[0], false);
   assert.equal('successKey' in response.finalVideoEvaluations[0], false);
+});
+
+test('video detail response normalizes null supervisor revision requirements', () => {
+  const response = (createService({} as PrismaService) as any).serializeVideo({
+    id: 'video',
+    supervisorReview: {
+      id: 'review',
+      decision: VideoStatus.approved_for_publish,
+      revisionRequirements: null,
+    },
+  });
+
+  assert.deepEqual(response.supervisorReview.revisionRequirements, []);
 });
 
 test('video stream serves the complete file without a Range header', async () => {

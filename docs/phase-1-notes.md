@@ -8,6 +8,6 @@ This phase implements only the foundational system:
 - Default administrator seed.
 - Local video upload and authenticated file access.
 - Video list and detail pages.
-- Directory and data model placeholders for Gemini, GPT, and rule engine.
+- Directory and data model placeholders for the video content model, GPT, and rule engine.
 
 External AI APIs are intentionally not called in this phase.

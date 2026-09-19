@@ -14,11 +14,13 @@ enum UserRole {
   director
   operator
   advertiser
+  visitor
 }
 
 enum UserStatus {
   active
   disabled
+  archived
 }
 
 enum VideoStatus {
@@ -75,6 +77,17 @@ model User {
   department              String?                @db.VarChar(100)
   managerId               String?                @map("manager_id") @db.Uuid
   status                  UserStatus             @default(active)
+  expiresAt               DateTime?              @map("expires_at")
+  mustChangePassword      Boolean                @default(false) @map("must_change_password")
+  lastLoginAt             DateTime?              @map("last_login_at")
+  createdById             String?                @map("created_by_id") @db.Uuid
+  createdBy               User?                  @relation("AccountCreator", fields: [createdById], references: [id])
+  createdAccounts         User[]                 @relation("AccountCreator")
+  sessions                UserSession[]
+  quotaPolicies           QuotaPolicy[]
+  quotaLedger             QuotaLedger[]
+  quotaAdjustments        QuotaAdjustment[]
+  uploadTickets           UploadTicket[]
   createdAt               DateTime               @default(now()) @map("created_at")
   updatedAt               DateTime               @updatedAt @map("updated_at")
   manager                 User?                  @relation("UserManager", fields: [managerId], references: [id])
@@ -86,6 +99,8 @@ model User {
   finalEvaluationTriggers FinalVideoEvaluation[] @relation("FinalEvaluationTriggeredBy")
   caseMarkings            FinalVideoEvaluation[] @relation("FinalCaseMarkedBy")
   operationLogs           OperationLog[]
+  evaluationJobs          EvaluationJob[]
+  evaluationInputSnapshots EvaluationInputSnapshot[]
 
   @@map("users")
 }
@@ -106,6 +121,7 @@ model Video {
   videoType             VideoType              @map("video_type")
   scriptDescription     String?                @map("script_description") @db.Text
   isForAds              Boolean                @default(false) @map("is_for_ads")
+  isTrial               Boolean                @default(false) @map("is_trial")
   isEventVideo          Boolean                @default(false) @map("is_event_video")
   eventName             String?                @map("event_name") @db.VarChar(100)
   relatedRequirement    String?                @map("related_requirement") @db.Text
@@ -125,6 +141,8 @@ model Video {
   ruleEngineResults     RuleEngineResult[]
   finalVideoEvaluations FinalVideoEvaluation[]
   operationLogs         OperationLog[]
+  evaluationJobs        EvaluationJob[]
+  evaluationInputSnapshots EvaluationInputSnapshot[]
 
   @@index([creatorId])
   @@index([status])
@@ -153,6 +171,7 @@ model AiContentReview {
   scores                      ContentReviewScore[]
   finalVideoEvaluations       FinalVideoEvaluation[]
   ruleEngineResults           RuleEngineResult[]
+  evaluationJobs              EvaluationJob[]
 
   @@index([videoId])
   @@map("ai_content_reviews")
@@ -251,6 +270,7 @@ model VideoResultMetric {
 }
 
 model AiResultReview {
+  evaluationJobs EvaluationJob[]
   id                                String                 @id @default(uuid()) @db.Uuid
   videoId                           String                 @map("video_id") @db.Uuid
   resultMetricId                    String?                @map("result_metric_id") @db.Uuid
@@ -306,6 +326,7 @@ model RuleEngineResult {
 }
 
 model FinalVideoEvaluation {
+  evaluationJobs EvaluationJob[]
   id                       String           @id @default(uuid()) @db.Uuid
   videoId                  String           @map("video_id") @db.Uuid
   contentReviewId          String           @map("content_review_id") @db.Uuid
@@ -429,4 +450,212 @@ model PlatformBenchmark {
 
   @@index([platform, brand, videoType])
   @@map("platform_benchmarks")
+}
+
+// Queue status is infrastructure-only; it never replaces the three business grades.
+model EvaluationJob {
+  id                String   @id @default(uuid()) @db.Uuid
+  retriedFromId     String?  @unique @map("retried_from_id") @db.Uuid
+  failureCategory   String? @map("failure_category") @db.VarChar(30)
+  videoId           String   @map("video_id") @db.Uuid
+  actorId           String   @map("actor_id") @db.Uuid
+  stage             String   @db.VarChar(20)
+  status            String   @default("queued") @db.VarChar(30)
+  contentReviewId   String?  @unique @map("content_review_id") @db.Uuid
+  resultReviewId    String?  @unique @map("result_review_id") @db.Uuid
+  finalEvaluationId String? @unique @map("final_evaluation_id") @db.Uuid
+  inputRefs         Json     @default("{}") @map("input_refs")
+  maxOutputTokens   Int      @default(4000) @map("max_output_tokens")
+  attempts          Int      @default(0)
+  maxAttempts       Int      @default(3) @map("max_attempts")
+  availableAt       DateTime @default(now()) @map("available_at")
+  leaseToken        String?  @map("lease_token") @db.Uuid
+  leaseExpiresAt    DateTime? @map("lease_expires_at")
+  workerId          String?  @map("worker_id") @db.VarChar(150)
+  externalStartedAt DateTime? @map("external_started_at")
+  failureCode       String?  @map("failure_code") @db.VarChar(80)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  completedAt       DateTime? @map("completed_at")
+  video             Video @relation(fields: [videoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor             User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  contentReview     AiContentReview? @relation(fields: [contentReviewId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  resultReview      AiResultReview? @relation(fields: [resultReviewId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  finalEvaluation   FinalVideoEvaluation? @relation(fields: [finalEvaluationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  attemptHistory    EvaluationJobAttempt[]
+  usageRecords      AiUsageRecord[]
+
+  @@index([status, availableAt, createdAt])
+  @@index([status, leaseExpiresAt])
+  @@map("evaluation_jobs")
+}
+
+model EvaluationJobAttempt {
+  id                String @id @default(uuid()) @db.Uuid
+  jobId             String @map("job_id") @db.Uuid
+  attemptNumber     Int @map("attempt_number")
+  failureCategory   String? @map("failure_category") @db.VarChar(30)
+  fencingToken      String @unique @map("fencing_token") @db.Uuid
+  workerId          String @map("worker_id") @db.VarChar(150)
+  status            String @db.VarChar(30)
+  startedAt         DateTime @default(now()) @map("started_at")
+  externalStartedAt DateTime? @map("external_started_at")
+  completedAt       DateTime? @map("completed_at")
+  failureCode       String? @map("failure_code") @db.VarChar(80)
+  job               EvaluationJob @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  usageRecord       AiUsageRecord?
+
+  @@unique([jobId, attemptNumber])
+  @@map("evaluation_job_attempts")
+}
+
+model AiUsageRecord {
+  id String @id @default(uuid()) @db.Uuid
+  jobId String @map("job_id") @db.Uuid
+  attemptId String @unique @map("attempt_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  isTrial Boolean @default(false) @map("is_trial")
+  collectionStatus String @default("pending") @map("collection_status") @db.VarChar(20)
+  failureCategory String? @map("failure_category") @db.VarChar(30)
+  stage String @db.VarChar(20)
+  provider String @db.VarChar(50)
+  modelName String @map("model_name") @db.VarChar(100)
+  status String @default("started") @db.VarChar(30)
+  inputTokens Int? @map("input_tokens")
+  outputTokens Int? @map("output_tokens")
+  estimatedCost Decimal? @map("estimated_cost") @db.Decimal(20, 8)
+  actualCost Decimal? @map("actual_cost") @db.Decimal(20, 8)
+  currency String? @db.VarChar(3)
+  rateVersion Int? @map("rate_version")
+  rateSnapshot Json? @map("rate_snapshot")
+  createdAt DateTime @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+  job EvaluationJob @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  attempt EvaluationJobAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  @@index([createdAt, stage, userId])
+  @@map("ai_usage_records")
+}
+
+model RuntimeSetting {
+  key String @id @db.VarChar(80)
+  value Json
+  version Int @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("runtime_settings")
+}
+
+model ConfigurationRevision {
+  id String @id @default(uuid()) @db.Uuid
+  kind String @db.VarChar(30)
+  targetId String @map("target_id") @db.VarChar(100)
+  version Int
+  value Json
+  actorId String? @map("actor_id") @db.Uuid
+  reason String @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([kind, targetId, version])
+  @@map("configuration_revisions")
+}
+
+model WorkerHeartbeat {
+  id String @id @db.VarChar(150)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  @@map("worker_heartbeats")
+}
+
+model TemporaryStorageRecord {
+  id String @id @default(uuid()) @db.Uuid
+  jobId String? @map("job_id") @db.Uuid
+  provider String @db.VarChar(20)
+  objectPath String @unique @map("object_path") @db.Text
+  status String @db.VarChar(30)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("temporary_storage_records")
+}
+
+model EvaluationInputSnapshot {
+  id           String @id @default(uuid()) @db.Uuid
+  videoId      String @map("video_id") @db.Uuid
+  actorId      String @map("actor_id") @db.Uuid
+  version      String @default("benchmark-v1") @db.VarChar(30)
+  benchmarkIds String[] @map("benchmark_ids") @db.Uuid
+  data         Json
+  createdAt    DateTime @default(now()) @map("created_at")
+  video        Video @relation(fields: [videoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor        User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([videoId])
+  @@map("evaluation_input_snapshots")
+}
+
+model UserSession {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  ipAddress String? @map("ip_address") @db.VarChar(80)
+  userAgent String? @map("user_agent") @db.VarChar(500)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+model QuotaPolicy {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  kind String @db.VarChar(30)
+  period String @db.VarChar(10)
+  limit BigInt?
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@unique([userId, kind])
+  @@map("quota_policies")
+}
+
+model QuotaLedger {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  kind String @db.VarChar(30)
+  businessKey String @map("business_key") @db.VarChar(200)
+  amount BigInt
+  state String @default("reserved") @db.VarChar(20)
+  windowStart DateTime @map("window_start")
+  windowEnd DateTime? @map("window_end")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@unique([userId, kind, businessKey])
+  @@index([userId, kind, windowStart, state])
+  @@map("quota_ledger")
+}
+
+model QuotaAdjustment {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  businessKey String @map("business_key") @db.VarChar(200)
+  data Json
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@unique([userId, businessKey])
+  @@map("quota_adjustments")
+}
+
+model UploadTicket {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  objectPath String @unique @map("object_path") @db.Text
+  finalObjectPath String? @unique @map("final_object_path") @db.Text
+  cleanedAt DateTime? @map("cleaned_at")
+  cleanupError String? @map("cleanup_error") @db.VarChar(200)
+  cleanupAttempts Int @default(0) @map("cleanup_attempts")
+  fileSizeBytes BigInt @map("file_size_bytes")
+  mimeType String @map("mime_type") @db.VarChar(100)
+  status String @default("reserved") @db.VarChar(20)
+  expiresAt DateTime @map("expires_at")
+  videoId String? @unique @map("video_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([userId, status, expiresAt])
+  @@map("upload_tickets")
 }

@@ -69,7 +69,7 @@ for (const caseType of ['excellent', 'negative', 'none'] as const) {
 
 for (const [file, patterns] of [
   ['../components/final-confirmation-panel.tsx', ['最终确认不可撤销', '绩效参考资格仅表示', 'case-marking']],
-  ['../../app/dashboard/page.tsx', ['已确认', '流程积压', 'GPT 建议一致率']],
+  ['../../app/dashboard/page.tsx', ['已确认', '流程积压', '千问建议一致率']],
   ['../components/case-library-page.tsx', ['已完成负责人确认', '案例列表暂时不可用']],
 ] as const) {
   test(`${file} contains required Phase 8 messaging`, async () => {
@@ -79,12 +79,12 @@ for (const [file, patterns] of [
   });
 }
 
-test('video detail orders formal confirmation after GPT suggestion', async () => {
+test('video detail orders formal confirmation after Qwen suggestion', async () => {
   const source = await readFile(resolve(__dirname, '../../app/videos/[id]/page.tsx'), 'utf8');
   assert.ok(source.indexOf('<FinalConfirmationPanel') > source.indexOf('<FinalEvaluationPanel'));
 });
 
 test('navigation exposes dashboard and both case libraries', async () => {
-  const source = await readFile(resolve(__dirname, '../../app/layout.tsx'), 'utf8');
+  const source = await readFile(resolve(__dirname, '../components/app-shell.tsx'), 'utf8');
   for (const href of ['/dashboard', '/cases/excellent', '/cases/negative']) assert.match(source, new RegExp(href));
 });
