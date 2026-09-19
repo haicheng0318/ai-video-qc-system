@@ -18,6 +18,7 @@ import { FinalEvaluationPanel } from '@/components/final-evaluation-panel';
 import { FinalConfirmationPanel } from '@/components/final-confirmation-panel';
 import {
   displayLabel,
+  contentDimensionLabels,
   finalGradeLabels,
   operationLogActionLabels,
   operationLogDescription,
@@ -49,8 +50,11 @@ type ContentReview = {
   isPublishableRecommendation?: boolean | null;
   mainProblems?: Array<{ dimension: string; description: string; timestamp?: string | null; severity: string }> | null;
   revisionSuggestions?: Array<{ problem: string; suggestion: string; priority: string }> | null;
-  complianceRisks?: Array<{ riskType: string; description: string; timestamp?: string | null }> | null;
+  complianceRisks?: Array<{ riskType: string; description: string; timestamp?: string | null; severity?: string }> | null;
   usableScenarios?: string[] | null;
+  scoringVersion?: string | null;
+  promptVersion?: string | null;
+  scoreCalculation?: 'backend_deterministic' | 'legacy_model_reported';
   status: string;
   errorMessage?: string | null;
   createdAt: string;
@@ -293,12 +297,17 @@ function VideoDetail({ params }: { params: { id: string } }) {
           <div>
             <p>内容总分：{contentReview.totalScore ?? '-'}</p>
             <p>内容等级：{contentReview.contentGrade || '-'}</p>
+            {contentReview.scoreCalculation === 'backend_deterministic' ? (
+              <p className="muted">评分规则：{contentReview.scoringVersion || 'content-score-v2'} · 总分由后端规则计算</p>
+            ) : (
+              <p className="muted">历史模型评分（{contentReview.scoringVersion || 'legacy-model-score-v1'}）</p>
+            )}
             <p>建议发布：{contentReview.isPublishableRecommendation ? '是' : '否'}</p>
             <p>内容摘要：{contentReview.contentSummary || '-'}</p>
             <h3>维度评分</h3>
             <ul>
               {contentReview.scores.map((score) => (
-                <li key={score.id}>{score.dimension}：{score.score}/{score.maxScore}，{score.comment || '-'}</li>
+                <li key={score.id}>{displayLabel(contentDimensionLabels, score.dimension)}：{score.score}/{score.maxScore}，{score.comment || '-'}</li>
               ))}
             </ul>
             <h3>主要问题</h3>
@@ -316,7 +325,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
             <h3>合规风险</h3>
             <ul>
               {(contentReview.complianceRisks || []).map((risk, index) => (
-                <li key={`${risk.riskType}-${index}`}>{risk.riskType}：{risk.description}</li>
+                <li key={`${risk.riskType}-${index}`}>{risk.riskType}：{risk.description}{risk.severity ? `（严重程度：${displayLabel(severityLabels, risk.severity)}）` : ''}</li>
               ))}
             </ul>
             <h3>可使用场景</h3>

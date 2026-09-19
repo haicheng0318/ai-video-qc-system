@@ -9,6 +9,22 @@ import { ResultReviewsService } from '../modules/result-reviews/result-reviews.s
 import { FinalEvaluationsService } from '../modules/final-evaluations/final-evaluations.service';
 import { PermissionsService } from '../modules/permissions/permissions.service';
 import { ForbiddenException } from '@nestjs/common';
+import { contentDimensionCodes } from '../modules/ai/gemini/content-scoring';
+
+const successfulContentResponse = (contentSummary = '清晰') => JSON.stringify({
+  contentSummary,
+  isPublishableRecommendation: true,
+  mainProblems: [],
+  revisionSuggestions: [],
+  complianceRisks: [],
+  usableScenarios: [],
+  scores: contentDimensionCodes.map((dimension) => ({
+    dimension,
+    rating: 5,
+    evidence: `${dimension}证据充分`,
+    timestamp: null,
+  })),
+});
 
 const url = process.env.EVALUATION_JOBS_TEST_DATABASE_URL;
 test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertain-call recovery', { skip: !url }, async () => {
@@ -90,7 +106,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     const service = new ContentReviewService(db as any,
       { assertCanTriggerContentReview: async () => undefined } as any,
       new OperationLogsService(db as any),
-      { analyzeVideo: async () => { calls += 1; return { rawResponse: JSON.stringify({ contentSummary: '清晰', totalScore: 90, contentGrade: 'S', isPublishableRecommendation: true, mainProblems: [], revisionSuggestions: [], complianceRisks: [], usableScenarios: [], scores: [{ dimension: '信息表达', score: 10, maxScore: 10, comment: '清晰' }] }) }; } } as any,
+      { analyzeVideo: async () => { calls += 1; return { rawResponse: successfulContentResponse() }; } } as any,
       undefined, { isCosPath: () => true, materialize: async () => ({ path: '/test/video.mp4', cleanup: async () => undefined }) } as any,
       jobs);
     const triggered = await service.triggerContentReview(third.videoId, actor, {});
@@ -195,7 +211,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     const replacement = await service.triggerContentReview(race.videoId, actor, {});
     const replacementLease = await jobs.claim('replacement-worker');
     await jobs.runWithLease(replacementLease, () => service.executeJob(replacementLease.job));
-    finishProvider({ rawResponse: JSON.stringify({ contentSummary: '迟到结果', totalScore: 90, contentGrade: 'S', isPublishableRecommendation: true, mainProblems: [], revisionSuggestions: [], complianceRisks: [], usableScenarios: [], scores: [{ dimension: '信息表达', score: 10, maxScore: 10, comment: '清晰' }] }) });
+    finishProvider({ rawResponse: successfulContentResponse('迟到结果') });
     await rejected;
     assert.equal((await db.aiContentReview.findUnique({ where: { id: old.reviewId } }))?.rawResponse, null);
     assert.equal((await db.aiContentReview.findUnique({ where: { id: replacement.reviewId } }))?.status, 'succeeded');

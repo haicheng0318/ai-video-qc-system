@@ -164,6 +164,8 @@ model AiContentReview {
   complianceRisks             Json?                  @map("compliance_risks")
   usableScenarios             Json?                  @map("usable_scenarios")
   rawResponse                 Json?                  @map("raw_response")
+  scoringVersion              String?                @map("scoring_version") @db.VarChar(80)
+  promptVersion               String?                @map("prompt_version") @db.VarChar(80)
   status                      AiReviewStatus         @default(pending)
   errorMessage                String?                @map("error_message") @db.Text
   createdAt                   DateTime               @default(now()) @map("created_at")

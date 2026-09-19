@@ -5,17 +5,18 @@ import {
   ContentReviewFileProcessingError,
   ContentReviewRequestError,
 } from '../modules/ai/gemini/gemini.errors';
+import { contentDimensionCodes } from '../modules/ai/gemini/content-scoring';
 
 const rawResponse = JSON.stringify({
   contentSummary: '内容清晰',
-  totalScore: 90,
-  contentGrade: 'S',
   isPublishableRecommendation: true,
   mainProblems: [],
   revisionSuggestions: [],
   complianceRisks: [],
   usableScenarios: ['投放'],
-  scores: [{ dimension: '信息表达', score: 10, maxScore: 10, comment: '清晰' }],
+  scores: contentDimensionCodes.map((dimension) => ({
+    dimension, rating: 5, evidence: `${dimension}证据充分`, timestamp: null,
+  })),
 });
 
 async function* chunks(parts: string[]) {

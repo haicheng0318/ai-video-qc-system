@@ -13,6 +13,7 @@ import * as bcrypt from 'bcryptjs';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { configureLocalAcceptance } from '../test-support/local-acceptance';
+import { contentDimensionCodes } from '../modules/ai/gemini/content-scoring';
 
 const url = process.env.RELEASE_TEST_DATABASE_URL;
 test('V1.01 real local HTTP, database and worker acceptance (synthetic providers only)', { skip: !url }, async t => {
@@ -50,9 +51,10 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
   app.get(QWEN_CLIENT).analyzeVideo = async (path: string) => {
     calls.content++; assert.ok((await readFile(path)).length > 0);
     if (contentFailure) return { rawResponse: '{invalid-json-fixture', usage: { inputTokens: 9, outputTokens: 2 } };
-    return { rawResponse: JSON.stringify({ contentSummary: '本地固定视频内容证据', totalScore: contentGrade === 'A' ? 85 : 65,
-      contentGrade, isPublishableRecommendation: true, mainProblems: [], revisionSuggestions: [], complianceRisks: [],
-      usableScenarios: ['本地验收'], scores: [{ dimension: '信息表达', score: 8, maxScore: 10, comment: '清晰' }] }),
+    return { rawResponse: JSON.stringify({ contentSummary: '本地固定视频内容证据',
+      isPublishableRecommendation: true, mainProblems: [], revisionSuggestions: [], complianceRisks: [],
+      usableScenarios: ['本地验收'], scores: contentDimensionCodes.map((dimension) => ({ dimension,
+        rating: contentGrade === 'A' ? 4 : 3, evidence: `${dimension}本地固定证据`, timestamp: null })) }),
       usage: { inputTokens: 10, outputTokens: 5 } };
   };
   const textResponse = (body: unknown) => ({ responseId: randomUUID(), responseStatus: 'completed', rawText: JSON.stringify(body),

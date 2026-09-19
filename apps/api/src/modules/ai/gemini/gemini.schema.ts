@@ -1,23 +1,18 @@
 import { z } from 'zod';
 import { ContentReviewOutputValidationError } from './gemini.errors';
+import { contentDimensionCodes } from './content-scoring';
 
-const gradeSchema = z.enum(['S', 'A', 'B', 'C', 'D']);
 const severitySchema = z.enum(['high', 'medium', 'low']);
 
 const scoreItemSchema = z.object({
-  dimension: z.string().min(1),
-  score: z.number().int().min(0),
-  maxScore: z.number().int().positive(),
-  comment: z.string(),
-}).strict().refine((item) => item.score <= item.maxScore, {
-  message: 'score must not exceed maxScore',
-  path: ['score'],
-});
+  dimension: z.enum(contentDimensionCodes),
+  rating: z.number().int().min(0).max(5),
+  evidence: z.string().min(1).max(1000),
+  timestamp: z.string().max(30).nullable(),
+}).strict();
 
 export const ContentReviewOutputSchema = z.object({
   contentSummary: z.string(),
-  totalScore: z.number().int().min(0).max(100),
-  contentGrade: gradeSchema,
   isPublishableRecommendation: z.boolean(),
   mainProblems: z.array(z.object({
     dimension: z.string().min(1),
@@ -34,25 +29,17 @@ export const ContentReviewOutputSchema = z.object({
     riskType: z.string(),
     description: z.string(),
     timestamp: z.string().nullable(),
+    severity: severitySchema,
   }).strict()),
   usableScenarios: z.array(z.string()),
-  scores: z.array(scoreItemSchema),
+  scores: z.array(scoreItemSchema).length(contentDimensionCodes.length),
 }).strict().superRefine((value, context) => {
-  const expectedGrade = value.totalScore >= 90
-    ? 'S'
-    : value.totalScore >= 80
-      ? 'A'
-      : value.totalScore >= 70
-        ? 'B'
-        : value.totalScore >= 60
-          ? 'C'
-          : 'D';
-
-  if (value.contentGrade !== expectedGrade) {
+  const uniqueDimensions = new Set(value.scores.map((score) => score.dimension));
+  if (uniqueDimensions.size !== contentDimensionCodes.length) {
     context.addIssue({
       code: 'custom',
-      message: `contentGrade must match totalScore band ${expectedGrade}`,
-      path: ['contentGrade'],
+      message: 'scores must contain every content dimension exactly once',
+      path: ['scores'],
     });
   }
 });
@@ -68,8 +55,6 @@ export const contentReviewResponseJsonSchema = {
   type: 'object',
   required: [
     'contentSummary',
-    'totalScore',
-    'contentGrade',
     'isPublishableRecommendation',
     'mainProblems',
     'revisionSuggestions',
@@ -79,8 +64,6 @@ export const contentReviewResponseJsonSchema = {
   ],
   properties: {
     contentSummary: stringSchema,
-    totalScore: { type: 'integer', minimum: 0, maximum: 100 },
-    contentGrade: { type: 'string', enum: ['S', 'A', 'B', 'C', 'D'] },
     isPublishableRecommendation: { type: 'boolean' },
     mainProblems: {
       type: 'array',
@@ -113,11 +96,12 @@ export const contentReviewResponseJsonSchema = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['riskType', 'description', 'timestamp'],
+        required: ['riskType', 'description', 'timestamp', 'severity'],
         properties: {
           riskType: stringSchema,
           description: stringSchema,
           timestamp: nullableTimestampSchema,
+          severity: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
         additionalProperties: false,
       },
@@ -125,14 +109,16 @@ export const contentReviewResponseJsonSchema = {
     usableScenarios: { type: 'array', items: stringSchema },
     scores: {
       type: 'array',
+      minItems: contentDimensionCodes.length,
+      maxItems: contentDimensionCodes.length,
       items: {
         type: 'object',
-        required: ['dimension', 'score', 'maxScore', 'comment'],
+        required: ['dimension', 'rating', 'evidence', 'timestamp'],
         properties: {
-          dimension: stringSchema,
-          score: { type: 'integer', minimum: 0 },
-          maxScore: { type: 'integer', minimum: 1 },
-          comment: stringSchema,
+          dimension: { type: 'string', enum: contentDimensionCodes },
+          rating: { type: 'integer', minimum: 0, maximum: 5 },
+          evidence: { type: 'string', minLength: 1, maxLength: 1000 },
+          timestamp: nullableTimestampSchema,
         },
         additionalProperties: false,
       },

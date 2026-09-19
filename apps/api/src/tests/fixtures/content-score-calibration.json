@@ -1,0 +1,105 @@
+{
+  "fixtureVersion": "content-calibration-v1",
+  "cases": [
+    {
+      "id": "synthetic-excellent-001",
+      "videoType": "product_card",
+      "ratings": {
+        "hook": 5,
+        "product_exposure": 5,
+        "selling_points": 5,
+        "visual_quality": 5,
+        "composition": 5,
+        "camera_language": 5,
+        "pacing": 5,
+        "subtitle_clarity": 5,
+        "voiceover_clarity": 5,
+        "bgm_fit": 5,
+        "platform_fit": 5,
+        "purpose_fit": 5
+      },
+      "complianceRisks": [],
+      "expectedGrade": "S"
+    },
+    {
+      "id": "synthetic-good-002",
+      "videoType": "brand_seeding",
+      "ratings": {
+        "hook": 4,
+        "product_exposure": 4,
+        "selling_points": 4,
+        "visual_quality": 4,
+        "composition": 4,
+        "camera_language": 4,
+        "pacing": 4,
+        "subtitle_clarity": 4,
+        "voiceover_clarity": 4,
+        "bgm_fit": 4,
+        "platform_fit": 4,
+        "purpose_fit": 4
+      },
+      "complianceRisks": [],
+      "expectedGrade": "A"
+    },
+    {
+      "id": "synthetic-mixed-003",
+      "videoType": "qianchuan_ad",
+      "ratings": {
+        "hook": 4,
+        "product_exposure": 4,
+        "selling_points": 4,
+        "visual_quality": 4,
+        "composition": 3,
+        "camera_language": 3,
+        "pacing": 4,
+        "subtitle_clarity": 3,
+        "voiceover_clarity": 3,
+        "bgm_fit": 3,
+        "platform_fit": 3,
+        "purpose_fit": 3
+      },
+      "complianceRisks": [],
+      "expectedGrade": "B"
+    },
+    {
+      "id": "synthetic-minimum-004",
+      "videoType": "organic",
+      "ratings": {
+        "hook": 3,
+        "product_exposure": 3,
+        "selling_points": 3,
+        "visual_quality": 3,
+        "composition": 3,
+        "camera_language": 3,
+        "pacing": 3,
+        "subtitle_clarity": 3,
+        "voiceover_clarity": 3,
+        "bgm_fit": 3,
+        "platform_fit": 3,
+        "purpose_fit": 3
+      },
+      "complianceRisks": [],
+      "expectedGrade": "C"
+    },
+    {
+      "id": "synthetic-poor-005",
+      "videoType": "other",
+      "ratings": {
+        "hook": 2,
+        "product_exposure": 2,
+        "selling_points": 2,
+        "visual_quality": 2,
+        "composition": 2,
+        "camera_language": 2,
+        "pacing": 2,
+        "subtitle_clarity": 2,
+        "voiceover_clarity": 2,
+        "bgm_fit": 2,
+        "platform_fit": 2,
+        "purpose_fit": 2
+      },
+      "complianceRisks": [],
+      "expectedGrade": "D"
+    }
+  ]
+}

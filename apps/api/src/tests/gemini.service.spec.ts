@@ -13,6 +13,7 @@ import { ContentReviewConfigurationError } from '../modules/ai/gemini/gemini.err
 import { OperationLogsService } from '../modules/operation-logs/operation-logs.service';
 import { PermissionsService } from '../modules/permissions/permissions.service';
 import { PrismaService } from '../modules/prisma/prisma.service';
+import { contentDimensionCodes } from '../modules/ai/gemini/content-scoring';
 
 const user = {
   id: 'director-id',
@@ -41,14 +42,17 @@ const baseVideo = {
 
 const successfulOutput = {
   contentSummary: '内容清晰',
-  totalScore: 90,
-  contentGrade: 'S',
   isPublishableRecommendation: true,
   mainProblems: [],
   revisionSuggestions: [],
   complianceRisks: [],
   usableScenarios: ['投放'],
-  scores: [{ dimension: '信息表达', score: 10, maxScore: 10, comment: '清晰' }],
+  scores: contentDimensionCodes.map((dimension) => ({
+    dimension,
+    rating: 4,
+    evidence: `${dimension}表现良好`,
+    timestamp: null,
+  })),
 };
 const successfulRawResponse = JSON.stringify(successfulOutput);
 
@@ -290,12 +294,24 @@ test('background success persists succeeded result and safe raw response', async
 
     const review = harness.reviews.find((item) => item.id === result.reviewId);
     assert.equal(review?.status, AiReviewStatus.succeeded);
+    assert.equal(review?.totalScore, 80);
+    assert.equal(review?.contentGrade, 'A');
+    assert.equal(review?.scoringVersion, 'content-score-v2');
+    assert.equal(review?.promptVersion, 'content-review-v3-deterministic-score');
     assert.equal(harness.video.status, VideoStatus.pending_supervisor_review);
     assert.deepEqual(review?.rawResponse, {
       usage: null,
       usageCollectionStatus: 'unknown',
       rawText: successfulRawResponse,
-      parsed: successfulOutput,
+      parsedModelOutput: successfulOutput,
+      calculated: {
+        scoringVersion: 'content-score-v2',
+        baseScore: 80,
+        totalScore: 80,
+        contentGrade: 'A',
+        hardCap: 100,
+        reasonCodes: [],
+      },
     });
     assert.ok(harness.logs.some((log) =>
       log.actionType === 'ai_content_review_completed' && log.result === 'success'));

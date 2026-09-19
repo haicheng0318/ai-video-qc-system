@@ -23,8 +23,9 @@ import {
   ContentReviewOutputValidationError,
   ContentReviewTimeoutError,
 } from './gemini.errors';
-import { buildContentReviewPrompt } from './gemini.prompt';
+import { buildContentReviewPrompt, CONTENT_REVIEW_PROMPT_VERSION } from './gemini.prompt';
 import { ContentReviewOutput, validateContentReviewOutput } from './gemini.schema';
+import { calculateContentScore } from './content-scoring';
 
 export const CONTENT_REVIEW_BACKGROUND_SCHEDULER = Symbol('CONTENT_REVIEW_BACKGROUND_SCHEDULER');
 export type ContentReviewBackgroundTask = () => Promise<void>;
@@ -343,6 +344,11 @@ export class ContentReviewService {
         throw new ContentReviewOutputValidationError('Qwen content review response was not valid JSON.');
       }
       const output = sanitizeOutput(validateContentReviewOutput(parsed));
+      const calculated = calculateContentScore({
+        videoType: video.videoType,
+        scores: output.scores,
+        complianceRisks: output.complianceRisks,
+      });
       const sanitizedRawText = sanitizeContentReviewText(rawResponse);
       if (!sanitizedRawText) throw new ContentReviewOutputValidationError('Qwen content review response was empty.');
 
@@ -356,18 +362,22 @@ export class ContentReviewService {
           where: { id: reviewId },
           data: {
             contentSummary: output.contentSummary,
-            totalScore: output.totalScore,
-            contentGrade: output.contentGrade,
-            isPublishableRecommendation: output.isPublishableRecommendation,
+            totalScore: calculated.totalScore,
+            contentGrade: calculated.contentGrade,
+            isPublishableRecommendation:
+              output.isPublishableRecommendation && calculated.hardCap === 100,
             mainProblems: output.mainProblems,
             revisionSuggestions: output.revisionSuggestions,
             complianceRisks: output.complianceRisks,
             usableScenarios: output.usableScenarios,
+            scoringVersion: calculated.scoringVersion,
+            promptVersion: CONTENT_REVIEW_PROMPT_VERSION,
             rawResponse: {
               rawText: sanitizedRawText,
               usage: result.usage || null,
               usageCollectionStatus: result.usageCollectionStatus || 'unknown',
-              parsed: output,
+              parsedModelOutput: output,
+              calculated,
             },
             status: AiReviewStatus.succeeded,
             errorMessage: null,
@@ -377,9 +387,11 @@ export class ContentReviewService {
           data: output.scores.map((score) => ({
             aiContentReviewId: reviewId,
             dimension: score.dimension,
-            score: score.score,
-            maxScore: score.maxScore,
-            comment: score.comment,
+            score: score.rating,
+            maxScore: 5,
+            comment: score.timestamp
+              ? `${score.evidence}（时间点：${score.timestamp}）`
+              : score.evidence,
           })),
         });
         await transaction.video.update({
@@ -455,6 +467,11 @@ export class ContentReviewService {
         revisionSuggestions: review.revisionSuggestions,
         complianceRisks: review.complianceRisks,
         usableScenarios: review.usableScenarios,
+        scoringVersion: review.scoringVersion,
+        promptVersion: review.promptVersion,
+        scoreCalculation: review.scoringVersion === 'content-score-v2'
+          ? 'backend_deterministic'
+          : 'legacy_model_reported',
         status: review.status,
         errorMessage: review.errorMessage,
         createdAt: review.createdAt,

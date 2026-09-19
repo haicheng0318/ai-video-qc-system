@@ -7,6 +7,21 @@ export const videoTypeLabels: Record<string, string> = {
   other: '其他',
 };
 
+export const contentDimensionLabels: Record<string, string> = {
+  hook: '前3秒吸引力',
+  product_exposure: '产品露出',
+  selling_points: '卖点表达',
+  visual_quality: '画面质感',
+  composition: '构图',
+  camera_language: '镜头语言',
+  pacing: '节奏',
+  subtitle_clarity: '字幕清晰度',
+  voiceover_clarity: '口播清晰度',
+  bgm_fit: 'BGM匹配度',
+  platform_fit: '平台适配',
+  purpose_fit: '用途适配',
+};
+
 export const videoStatusLabels: Record<string, string> = {
   submitted: '待内容评估',
   ai_content_reviewing: '内容评估中',
