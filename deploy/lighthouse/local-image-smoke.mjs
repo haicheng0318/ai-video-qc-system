@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateEnvironment, assertOwnedContainer } from './local-release.mjs';
@@ -95,7 +95,12 @@ async function main() {
     }
     const query = statement => docker('exec', 'ai-qc-task5-local', 'psql', '-X', '-U', 'release_admin', '-d', database, '-Atc', statement);
     assert.equal(query('SELECT count(*) FROM users'), '0', 'starting the image must not seed accounts');
-    assert.equal(query('SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL'), '12');
+    const expectedMigrationCount = (await readdir(join(root, 'prisma/migrations'), { withFileTypes: true }))
+      .filter(entry => entry.isDirectory()).length;
+    assert.equal(
+      query('SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL'),
+      String(expectedMigrationCount),
+    );
     assert.equal(JSON.parse(docker('inspect', worker))[0].State.Running, true);
     for (let attempt = 0; attempt < 40 && query('SELECT count(*) FROM worker_heartbeats') === '0'; attempt++) await new Promise(done => setTimeout(done, 250));
     assert.equal(query("SELECT count(*) FROM worker_heartbeats WHERE last_seen_at > now() - interval '30 seconds'"), '1', 'independent worker must persist a fresh heartbeat');
