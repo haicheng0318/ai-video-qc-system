@@ -60,6 +60,41 @@ test('video list applies bounded pagination and returns metadata while preservin
   assert.deepEqual(result, { items: [{ id: 'video-1' }], total: 41, page: 3, pageSize: 20 });
 });
 
+test('video list search preserves supervisor team visibility scope', async () => {
+  let findArgs: Record<string, any> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, any>) => { findArgs = args; return []; },
+      count: async () => 0,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const supervisor = { ...testUser, id: 'supervisor-id', role: UserRole.supervisor };
+  const visibility = {
+    OR: [
+      { creatorId: supervisor.id },
+      { creator: { managerId: supervisor.id } },
+    ],
+  };
+  const permissions = { buildVideoVisibilityWhere: () => visibility };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+  await service.list(supervisor, { page: 1, pageSize: 20, search: 'summer' });
+
+  assert.deepEqual(findArgs?.where, {
+    AND: [
+      visibility,
+      {
+        OR: [
+          { title: { contains: 'summer', mode: 'insensitive' } },
+          { brand: { contains: 'summer', mode: 'insensitive' } },
+          { product: { contains: 'summer', mode: 'insensitive' } },
+          { platform: { contains: 'summer', mode: 'insensitive' } },
+        ],
+      },
+    ],
+  });
+});
+
 function videoFile(filePath: string, size: number): Video {
   return {
     isTrial: false,

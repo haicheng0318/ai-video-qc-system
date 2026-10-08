@@ -302,21 +302,28 @@ export class VideosService {
   }
 
   async list(user: AuthenticatedUser, query: VideoListQueryDto) {
-    const where: Prisma.VideoWhereInput = {
-      ...this.permissionsService.buildVideoVisibilityWhere(user),
-    };
+    const visibilityWhere = this.permissionsService.buildVideoVisibilityWhere(user);
+    const where: Prisma.VideoWhereInput = query.search
+      ? {
+          AND: [
+            visibilityWhere,
+            {
+              OR: [
+                { title: { contains: query.search, mode: 'insensitive' } },
+                { brand: { contains: query.search, mode: 'insensitive' } },
+                { product: { contains: query.search, mode: 'insensitive' } },
+                { platform: { contains: query.search, mode: 'insensitive' } },
+              ],
+            },
+          ],
+        }
+      : { ...visibilityWhere };
 
     if (query.status) where.status = query.status;
     if (query.videoType) where.videoType = query.videoType;
     if (query.brand) where.brand = { contains: query.brand, mode: 'insensitive' };
     if (query.product) where.product = { contains: query.product, mode: 'insensitive' };
     if (query.platform) where.platform = { contains: query.platform, mode: 'insensitive' };
-    if (query.search) where.OR = [
-      { title: { contains: query.search, mode: 'insensitive' } },
-      { brand: { contains: query.search, mode: 'insensitive' } },
-      { product: { contains: query.search, mode: 'insensitive' } },
-      { platform: { contains: query.search, mode: 'insensitive' } },
-    ];
     if (query.creatorId && adminListFilterRoles.includes(user.role)) {
       where.creatorId = query.creatorId;
     }
