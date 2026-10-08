@@ -1,0 +1,7 @@
+{$PUBLIC_HOST} {
+	encode gzip zstd
+
+	@api path /api/*
+	reverse_proxy @api api:3001
+	reverse_proxy web:3000
+}

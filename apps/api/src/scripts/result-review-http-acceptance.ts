@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import '../test-support/local-http-entrypoint';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
@@ -61,7 +62,7 @@ const fakeGptService = {
     const count = (attempts.get(resultMetricId) || 0) + 1;
     attempts.set(resultMetricId, count);
     if (inputContext.resultMetric.campaignName === 'fail-once' && count === 1) {
-      throw new Error('Synthetic local OpenAI failure.');
+      throw new Error('Synthetic local Qwen failure.');
     }
     const parsedOutput = inputContext.resultMetric.campaignName === 'insufficient'
       ? insufficient
@@ -69,7 +70,7 @@ const fakeGptService = {
     return {
       responseId: `fake-${randomUUID()}`,
       responseStatus: 'completed',
-      model: 'gpt-5-mini',
+      model: 'qwen3.5-plus',
       rawText: JSON.stringify(parsedOutput),
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       parsedOutput,
@@ -191,6 +192,7 @@ async function cleanup(prisma: PrismaClient, fixture: Fixture) {
   await prisma.aiResultReview.deleteMany({ where: { videoId: { in: fixture.videoIds } } });
   await prisma.videoResultMetric.deleteMany({ where: { id: { in: fixture.metricIds } } });
   await prisma.video.deleteMany({ where: { id: { in: fixture.videoIds } } });
+  await prisma.userSession.deleteMany({ where: { userId: { in: fixture.userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: fixture.userIds } } });
   await prisma.platformBenchmark.deleteMany({ where: { id: { in: fixture.benchmarkIds } } });
 }
@@ -214,17 +216,17 @@ async function main() {
     async function login(role: UserRole) {
       const [account, password] = fixture!.accounts[role]!.split(':');
       const response = await fetch(`${base}/api/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account, password }),
+        method: 'POST', headers: { 'content-type': 'application/json', Origin: process.env.WEB_ORIGIN || 'http://localhost:3000', 'X-QC-CSRF': '1' }, body: JSON.stringify({ account, password }),
       });
       assert.equal(response.status, 201);
-      return (await response.json() as { accessToken: string }).accessToken;
+      return response.headers.get('set-cookie')!.split(';')[0];
     }
     const tokens = Object.fromEntries(await Promise.all(
       [UserRole.admin, UserRole.operator, UserRole.advertiser, UserRole.director].map(async (role) => [role, await login(role)]),
     )) as Partial<Record<UserRole, string>>;
     const request = (path: string, token: string, init: RequestInit = {}) => fetch(`${base}${path}`, {
       ...init,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
+      headers: { Cookie: token, 'content-type': 'application/json', Origin: process.env.WEB_ORIGIN || 'http://localhost:3000', 'X-QC-CSRF': '1', ...init.headers },
     });
     const trigger = (scenario: ScenarioKey, role: UserRole) => {
       const target = fixture!.videos[scenario];

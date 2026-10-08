@@ -4,6 +4,7 @@ import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { submitVideoRevision } from '@/lib/video-revision-ui';
+import { useUnsavedChanges } from '@/lib/unsaved-changes';
 
 export function VideoRevisionPanel({
   parentVideoId,
@@ -17,13 +18,18 @@ export function VideoRevisionPanel({
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError('');
     try {
-      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), router.push);
+      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), (path) => {
+        setDirty(false);
+        router.push(path);
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : '返修版本上传失败');
       setSubmitting(false);
@@ -35,7 +41,7 @@ export function VideoRevisionPanel({
       <h2>上传返修版本</h2>
       <p><strong>主管意见：</strong>{comment || '-'}</p>
       {requirements.length > 0 ? <ul>{requirements.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-      <form className="form-grid" onSubmit={onSubmit}>
+      <form className="form-grid" onSubmit={onSubmit} onChange={() => setDirty(true)}>
         <div className="form-field full">
           <label htmlFor="revision-file">新视频文件</label>
           <input id="revision-file" name="file" type="file" accept="video/mp4,video/quicktime,video/webm" required />

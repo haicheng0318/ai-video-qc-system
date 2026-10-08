@@ -1,18 +1,20 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import React, { FormEvent, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import {
   submitSupervisorReview,
   SupervisorDecision,
   validateSupervisorReview,
 } from '@/lib/supervisor-review-ui';
+import { useUnsavedChanges } from '@/lib/unsaved-changes';
+import { formatShanghaiDateTime } from '@/lib/display-time';
 
 export type SupervisorReviewView = {
   id: string;
   decision: SupervisorDecision;
   comment: string | null;
-  revisionRequirements: string[];
+  revisionRequirements: string[] | null;
   reviewedAt: string;
   reviewer: { name: string; account: string; role: string };
 };
@@ -41,6 +43,11 @@ export function SupervisorReviewPanel({
   const [requirements, setRequirements] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
+  const visibleRevisionRequirements = Array.isArray(review?.revisionRequirements)
+    ? review.revisionRequirements
+    : [];
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -70,7 +77,7 @@ export function SupervisorReviewPanel({
         },
         () => window.confirm(`确认提交“${decisionLabels[decision]}”决定？提交后不可重复审核。`),
       );
-      if (result) await onCompleted();
+      if (result) { setDirty(false); await onCompleted(); }
     } catch (err) {
       setError(err instanceof Error ? err.message : '主管审核提交失败');
     } finally {
@@ -85,10 +92,10 @@ export function SupervisorReviewPanel({
         <div className="review-result">
           <p><strong>审核结果：</strong>{decisionLabels[review.decision] || review.decision}</p>
           <p><strong>审核人：</strong>{review.reviewer.name}（{review.reviewer.account}）</p>
-          <p><strong>审核时间：</strong>{new Date(review.reviewedAt).toLocaleString()}</p>
+          <p><strong>审核时间：</strong>{formatShanghaiDateTime(review.reviewedAt)}</p>
           <p><strong>审核意见：</strong>{review.comment || '-'}</p>
-          {review.revisionRequirements.length > 0 ? (
-            <ul>{review.revisionRequirements.map((item) => <li key={item}>{item}</li>)}</ul>
+          {visibleRevisionRequirements.length > 0 ? (
+            <ul>{visibleRevisionRequirements.map((item) => <li key={item}>{item}</li>)}</ul>
           ) : null}
         </div>
       ) : canReview ? (
@@ -101,7 +108,7 @@ export function SupervisorReviewPanel({
                   className={decision === item.value ? 'active' : ''}
                   key={item.value}
                   type="button"
-                  onClick={() => setDecision(item.value)}
+                  onClick={() => { setDecision(item.value); setDirty(true); }}
                   disabled={submitting}
                 >
                   {item.label}
@@ -116,7 +123,7 @@ export function SupervisorReviewPanel({
             <textarea
               id="supervisor-comment"
               value={comment}
-              onChange={(event) => setComment(event.target.value)}
+              onChange={(event) => { setComment(event.target.value); setDirty(true); }}
               required={decision !== 'approved_for_publish'}
               maxLength={4000}
             />
@@ -127,7 +134,7 @@ export function SupervisorReviewPanel({
               <textarea
                 id="revision-requirements"
                 value={requirements}
-                onChange={(event) => setRequirements(event.target.value)}
+                onChange={(event) => { setRequirements(event.target.value); setDirty(true); }}
                 required
               />
             </div>

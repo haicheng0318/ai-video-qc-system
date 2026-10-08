@@ -1,4 +1,4 @@
-export const FINAL_EVALUATION_VERSION = 'final-evaluation-v1' as const;
+export const FINAL_EVALUATION_VERSION = 'final-evaluation-v2-qwen' as const;
 export const finalRecommendationGrades = ['effective', 'low_effective', 'invalid'] as const;
 export const finalRecommendationStatuses = ['final_effective', 'final_low_effective', 'final_invalid'] as const;
 
@@ -46,6 +46,7 @@ export type FinalEvaluationView = {
 export type FinalEvaluationLatestResponse = {
   videoStatus: string;
   evaluation: FinalEvaluationView | null;
+  jobId?: string | null;
 };
 
 export type FinalEvaluationHistoryItem = Pick<FinalEvaluationView,

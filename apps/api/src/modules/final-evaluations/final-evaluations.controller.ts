@@ -29,6 +29,12 @@ export class FinalEvaluationsController {
     @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
     return this.service.history(videoId, query, user, requestMeta(request));
   }
+
+  @Get('final-evaluations/:evaluationId')
+  byId(@Param('videoId') videoId: string, @Param('evaluationId') evaluationId: string,
+    @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.service.byId(videoId, evaluationId, user, requestMeta(request));
+  }
 }
 
 function requestMeta(request: Request) {

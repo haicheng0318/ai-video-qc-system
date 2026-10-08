@@ -115,7 +115,7 @@ export function evaluateRuleBoundary(input: RuleBoundaryInput): RuleBoundaryOutp
       dataSufficiency: 'insufficient',
       ruleCode: 'R00_DATA_INSUFFICIENT',
       ruleResult: 'pending_data',
-      ruleReason: `内容等级为 ${input.contentGrade}，数据等级为空，数据充分性为 insufficient。GPT 数据复盘判定当前数据样本不足。命中 R00：暂停最终评定，等待补充新的运营或投放数据。`,
+      ruleReason: `内容等级为 ${input.contentGrade}，数据等级为空，数据充分性为 insufficient。AI 数据复盘判定当前数据样本不足。命中 R00：暂停最终评定，等待补充新的运营或投放数据。`,
       recommendedBoundary: 'pending_data',
     };
   }

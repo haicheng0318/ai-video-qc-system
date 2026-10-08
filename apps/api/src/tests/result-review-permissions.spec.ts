@@ -32,12 +32,14 @@ test('operator can trigger non-ad other but cannot trigger ad-owned types', () =
   assert.equal(canManageResultData(actor(UserRole.operator), video(VideoType.other, true)), false);
   assert.equal(canManageResultData(actor(UserRole.operator), video(VideoType.qianchuan_ad, true)), false);
   assert.equal(canManageResultData(actor(UserRole.operator), video(VideoType.live_room_traffic, true)), false);
+  assert.equal(canManageResultData(actor(UserRole.operator), video(VideoType.product_card, true)), false);
 });
 
 test('advertiser can trigger ad-owned types only', () => {
   assert.equal(canManageResultData(actor(UserRole.advertiser), video(VideoType.qianchuan_ad, true)), true);
   assert.equal(canManageResultData(actor(UserRole.advertiser), video(VideoType.live_room_traffic, true)), true);
   assert.equal(canManageResultData(actor(UserRole.advertiser), video(VideoType.other, true)), true);
+  assert.equal(canManageResultData(actor(UserRole.advertiser), video(VideoType.product_card, true)), true);
   assert.equal(canManageResultData(actor(UserRole.advertiser), video(VideoType.organic, false)), false);
 });
 

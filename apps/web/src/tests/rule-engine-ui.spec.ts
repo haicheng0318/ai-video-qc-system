@@ -17,7 +17,7 @@ import {
 const user = (role: string) => ({ id: role, account: role, name: role, role });
 const review = {
   id: '00000000-0000-4000-8000-000000000301', resultMetricId: 'metric',
-  modelProvider: 'openai', modelName: 'gpt-5-mini', dataScore: 85, dataGrade: 'A',
+  modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus', dataScore: 85, dataGrade: 'A',
   dataSufficiency: 'sufficient', isBusinessEffectiveRecommendation: true,
   resultSummary: null, performanceProblems: [], attributionAnalysis: [], optimizationSuggestions: [],
   sufficiencyReasons: [], continueTestRecommendation: null, status: 'succeeded', errorMessage: null,
@@ -154,9 +154,11 @@ test('frontend never imports or evaluates backend rule functions', async () => {
 });
 
 test('invalid candidate is consistently labelled as a candidate, not a final invalid verdict', async () => {
-  const source = await readFile(new URL('../components/rule-engine-panel.tsx', import.meta.url), 'utf8');
-  assert.match(source, /invalid_candidate: '无效候选'/);
-  assert.doesNotMatch(source, /invalid_candidate: '最终无效'/);
+  const panelSource = await readFile(new URL('../components/rule-engine-panel.tsx', import.meta.url), 'utf8');
+  const labelSource = await readFile(new URL('../lib/display-labels.ts', import.meta.url), 'utf8');
+  assert.match(panelSource, /ruleResultLabels/);
+  assert.match(labelSource, /invalid_candidate: '无效候选'/);
+  assert.doesNotMatch(labelSource, /invalid_candidate: '最终无效'/);
 });
 
 test('rule UI never renders AI rawResponse', async () => {

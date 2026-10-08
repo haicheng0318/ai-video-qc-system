@@ -8,11 +8,22 @@ type Period = { startDate: Date; endDate: Date };
 type AggregateRow = Record<string, bigint | number | string | null>;
 
 function period(query: DashboardQueryDto): Period {
-  const endDate = query.endDate ? new Date(query.endDate) : new Date();
-  endDate.setUTCHours(23, 59, 59, 999);
-  const startDate = query.startDate ? new Date(query.startDate) : new Date(endDate);
-  if (!query.startDate) startDate.setUTCDate(startDate.getUTCDate() - 29);
-  startDate.setUTCHours(0, 0, 0, 0);
+  const parts = (value?: string) => {
+    if (value) {
+      const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+      if (!match) throw new BadRequestException('Dashboard dates must use an ISO calendar date.');
+      const result = { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+      const checked = new Date(Date.UTC(result.year, result.month - 1, result.day));
+      if (checked.getUTCFullYear() !== result.year || checked.getUTCMonth() !== result.month - 1 || checked.getUTCDate() !== result.day) throw new BadRequestException('Dashboard date is invalid.');
+      return result;
+    }
+    const shanghaiNow = new Date(Date.now() + 8 * 3600000);
+    return { year: shanghaiNow.getUTCFullYear(), month: shanghaiNow.getUTCMonth() + 1, day: shanghaiNow.getUTCDate() };
+  };
+  const end = parts(query.endDate);
+  const endDate = new Date(Date.UTC(end.year, end.month - 1, end.day + 1) - 8 * 3600000 - 1);
+  const start = query.startDate ? parts(query.startDate) : (() => { const value = new Date(endDate.getTime() - 29 * 86400000); const shifted = new Date(value.getTime() + 8 * 3600000); return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth() + 1, day: shifted.getUTCDate() }; })();
+  const startDate = new Date(Date.UTC(start.year, start.month - 1, start.day) - 8 * 3600000);
   if (startDate > endDate) throw new BadRequestException('startDate must not be after endDate.');
   return { startDate, endDate };
 }
@@ -75,6 +86,7 @@ export class DashboardService {
           AND f.final_grade IS NOT NULL
           AND f.final_status IS NOT NULL
           AND f.is_effective_final IS NOT NULL
+          AND v.is_trial = false
           ${filters}
       `),
       this.prisma.$queryRaw<AggregateRow[]>(Prisma.sql`
@@ -85,7 +97,7 @@ export class DashboardService {
           COUNT(*) FILTER (WHERE v.status = 'pending_final_confirmation') AS pending_final_confirmation
         FROM videos v
         JOIN users creator ON creator.id = v.creator_id
-        WHERE TRUE ${filters}
+        WHERE v.is_trial = false ${filters}
       `).then((rows) => rows[0] || {}),
     ]);
     const row: AggregateRow = rows[0] || {};
@@ -127,8 +139,8 @@ export class DashboardService {
   async trend(query: DashboardTrendQueryDto, user: AuthenticatedUser) {
     const selectedPeriod = period(query);
     const bucket = query.granularity === 'week'
-      ? Prisma.sql`date_trunc('week', f.confirmed_at)`
-      : Prisma.sql`date_trunc('day', f.confirmed_at)`;
+      ? Prisma.sql`date_trunc('week', f.confirmed_at + interval '8 hours') - interval '8 hours'`
+      : Prisma.sql`date_trunc('day', f.confirmed_at + interval '8 hours') - interval '8 hours'`;
     const rows = await this.prisma.$queryRaw<AggregateRow[]>(Prisma.sql`
       SELECT ${bucket} AS bucket,
         COUNT(*) AS finalized,
@@ -142,6 +154,7 @@ export class DashboardService {
         AND f.final_grade IS NOT NULL
         AND f.final_status IS NOT NULL
         AND f.is_effective_final IS NOT NULL
+        AND v.is_trial = false
         ${this.filters(query, user)}
       GROUP BY 1 ORDER BY 1 ASC
     `);
@@ -186,6 +199,7 @@ export class DashboardService {
         AND f.final_grade IS NOT NULL
         AND f.final_status IS NOT NULL
         AND f.is_effective_final IS NOT NULL
+        AND v.is_trial = false
         ${this.filters(query, user)}
       GROUP BY 1, 2 ORDER BY finalized DESC, group_label ASC
     `);

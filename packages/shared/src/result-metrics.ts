@@ -77,13 +77,15 @@ export type ResultMetricFieldDefinition = {
   label: string;
   kind: ResultMetricFieldKind;
   group: '发布信息' | '流量互动' | '商品转化' | '投放成本' | '直播结果' | '补充说明';
+  description?: string;
 };
 
 const field = (
   label: string,
   kind: ResultMetricFieldKind,
   group: ResultMetricFieldDefinition['group'],
-): ResultMetricFieldDefinition => ({ label, kind, group });
+  description?: string,
+): ResultMetricFieldDefinition => ({ label, kind, group, description });
 
 export const resultMetricFieldDefinitions: Record<ResultMetricField, ResultMetricFieldDefinition> = {
   publishUrl: field('发布链接', 'url', '发布信息'),
@@ -92,20 +94,20 @@ export const resultMetricFieldDefinitions: Record<ResultMetricField, ResultMetri
   dataEndDate: field('数据结束日期', 'date', '发布信息'),
   dataScreenshotUrl: field('数据截图链接', 'url', '发布信息'),
   campaignName: field('投放计划名称', 'text', '投放成本'),
-  impressions: field('曝光量', 'count', '流量互动'),
-  views: field('播放量', 'count', '流量互动'),
-  clicks: field('点击量', 'count', '流量互动'),
-  ctr: field('点击率', 'percentage', '流量互动'),
-  productClicks: field('商品点击量', 'count', '商品转化'),
-  productCtr: field('商品点击率', 'percentage', '商品转化'),
-  spend: field('消耗金额', 'money2', '投放成本'),
-  cpc: field('点击成本', 'decimal4', '投放成本'),
-  cpm: field('千次曝光成本', 'decimal4', '投放成本'),
+  impressions: field('曝光量', 'count', '流量互动', '视频广告被平台计为展示的次数；同一用户多次看到可能重复计数。'),
+  views: field('播放量', 'count', '流量互动', '被平台计为播放的次数；请统一使用起播、有效播放或指定时长口径。'),
+  clicks: field('广告总点击量', 'count', '流量互动', '广告或指定组件的总点击次数，不等同于商品详情页点击。'),
+  ctr: field('广告点击率（CTR）', 'percentage', '流量互动', '广告总点击量 ÷ 曝光量 × 100%。'),
+  productClicks: field('商品点击量', 'count', '商品转化', '进入商品卡或商品详情页的点击次数；当前口径下不应高于广告总点击量。'),
+  productCtr: field('商品点击率', 'percentage', '商品转化', '默认按商品点击量 ÷ 播放量 × 100%；平台口径不同时请在投放备注中说明。'),
+  spend: field('投放消耗金额', 'money2', '投放成本', '数据周期内平台实际消耗的投放金额。'),
+  cpc: field('平均点击成本（CPC）', 'decimal4', '投放成本', '投放消耗金额 ÷ 广告总点击量。'),
+  cpm: field('千次曝光成本（CPM）', 'decimal4', '投放成本', '投放消耗金额 ÷ 曝光量 × 1000。'),
   orders: field('订单量', 'count', '商品转化'),
   gmv: field('成交金额', 'money2', '商品转化'),
-  conversionRate: field('转化率', 'percentage', '商品转化'),
-  cvr: field('CVR', 'percentage', '商品转化'),
-  roi: field('ROI', 'roi', '商品转化'),
+  conversionRate: field('商品点击转化率', 'percentage', '商品转化', '订单量 ÷ 商品点击量 × 100%。'),
+  cvr: field('广告点击转化率（CVR）', 'percentage', '商品转化', '订单量 ÷ 广告总点击量 × 100%。'),
+  roi: field('投产比（ROI）', 'roi', '商品转化', '成交金额 ÷ 投放消耗金额。'),
   liveRoomEntries: field('直播间进入人数', 'count', '直播结果'),
   entryRate: field('进房率', 'percentage', '直播结果'),
   entryCost: field('进房成本', 'decimal4', '直播结果'),
@@ -115,7 +117,7 @@ export const resultMetricFieldDefinitions: Record<ResultMetricField, ResultMetri
   liveGmv: field('直播成交金额', 'money2', '直播结果'),
   threeSecondViewRate: field('3 秒播放率', 'percentage', '流量互动'),
   completionRate: field('完播率', 'percentage', '流量互动'),
-  avgWatchSeconds: field('平均观看秒数', 'count', '流量互动'),
+  avgWatchSeconds: field('平均观看时长', 'count', '流量互动', '单位为秒。'),
   likes: field('点赞量', 'count', '流量互动'),
   comments: field('评论量', 'count', '流量互动'),
   shares: field('转发量', 'count', '流量互动'),
@@ -134,6 +136,13 @@ const productCardFields: ResultMetricField[] = [
   'impressions', 'views', 'clicks', 'ctr', 'productClicks', 'productCtr',
   'orders', 'gmv', 'conversionRate', 'cvr', 'threeSecondViewRate',
   'completionRate', 'avgWatchSeconds', 'operatorNote',
+];
+const paidProductCardFields: ResultMetricField[] = [
+  ...resultMetricCommonFields,
+  'campaignName', 'impressions', 'views', 'clicks', 'ctr', 'productClicks',
+  'productCtr', 'spend', 'cpc', 'cpm', 'orders', 'gmv', 'conversionRate',
+  'cvr', 'roi', 'threeSecondViewRate', 'completionRate', 'avgWatchSeconds',
+  'deliveryNote', 'planStatus',
 ];
 const qianchuanFields: ResultMetricField[] = [
   ...resultMetricCommonFields,
@@ -188,6 +197,14 @@ export function getResultMetricFieldConfig(
       fields,
       coreFields: fields.filter((name) => resultMetricNumericFieldSet.has(name)),
       responsibleRole: isForAds ? 'advertiser' : 'operator',
+    };
+  }
+
+  if (videoType === 'product_card' && isForAds) {
+    return {
+      fields: paidProductCardFields,
+      coreFields: ['impressions', 'clicks', 'spend', 'orders', 'gmv'],
+      responsibleRole: 'advertiser',
     };
   }
 

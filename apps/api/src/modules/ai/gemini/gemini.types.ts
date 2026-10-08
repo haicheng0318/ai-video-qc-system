@@ -15,12 +15,8 @@ export type ContentReviewPromptInput = {
   relatedRequirement?: string | null;
 };
 
-export type GeminiFileReference = {
-  name: string;
-  uri: string;
-  mimeType: string;
-};
-
-export type GeminiAnalysisResult = {
+export type VideoContentAnalysisResult = {
   rawResponse: string;
+  usage?: { inputTokens?: number; outputTokens?: number };
+  usageCollectionStatus?: string;
 };

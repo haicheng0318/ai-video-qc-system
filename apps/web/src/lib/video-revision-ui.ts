@@ -1,13 +1,15 @@
+import { UploadOptions, uploadVideoDirectly, usesDirectVideoUpload } from './direct-video-upload';
+
 export async function submitVideoRevision(
   request: (path: string, init?: RequestInit) => Promise<unknown>,
   parentVideoId: string,
   formData: FormData,
   navigate: (path: string) => void,
+  options: UploadOptions = { operationId: crypto.randomUUID() },
 ) {
-  const result = await request(`/api/videos/${parentVideoId}/revisions`, {
-    method: 'POST',
-    body: formData,
-  });
+  const result = usesDirectVideoUpload()
+    ? await uploadVideoDirectly(request, formData, `/api/videos/${parentVideoId}/revisions/direct`, options)
+    : await request(`/api/videos/${parentVideoId}/revisions`, { method: 'POST', headers: { 'Idempotency-Key': options.operationId }, body: formData });
   if (!result || typeof result !== 'object' || !('id' in result) || typeof result.id !== 'string') {
     throw new Error('返修版本上传结果无效。');
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { SupervisorReviewPanel } from '../components/supervisor-review-panel';
 import { VideoVersionChain } from '../components/video-version-chain';
 import {
   canSubmitSupervisorReview,
@@ -74,4 +75,23 @@ test('version chain renders previous, current and direct revision links', () => 
   assert.match(html, /\/videos\/v2/);
   assert.match(html, /\/videos\/v3/);
   assert.match(html, /current/);
+});
+
+test('approved supervisor review renders when revision requirements are null', () => {
+  const html = renderToStaticMarkup(React.createElement(SupervisorReviewPanel, {
+    videoId: 'video-id',
+    canReview: false,
+    review: {
+      id: 'review-id',
+      decision: 'approved_for_publish',
+      comment: '同意发布',
+      revisionRequirements: null,
+      reviewedAt: '2026-08-26T09:00:00.000Z',
+      reviewer: { name: '主管', account: 'supervisor', role: 'supervisor' },
+    },
+    onCompleted: async () => undefined,
+  }));
+
+  assert.match(html, /通过发布/);
+  assert.match(html, /同意发布/);
 });

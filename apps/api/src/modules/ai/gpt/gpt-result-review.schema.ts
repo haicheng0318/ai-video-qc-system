@@ -204,7 +204,7 @@ export const resultReviewJsonSchema = {
 export function validateResultReviewOutput(value: unknown): ResultReviewOutput {
   const result = ResultReviewOutputSchema.safeParse(value);
   if (!result.success) {
-    throw new ResultReviewOutputValidationError('GPT result review output failed validation.');
+    throw new ResultReviewOutputValidationError('AI result review output failed validation.');
   }
   return result.data;
 }

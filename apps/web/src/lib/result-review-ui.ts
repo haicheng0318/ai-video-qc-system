@@ -1,6 +1,7 @@
 import { getResultMetricFieldConfig, VideoType } from '@ai-video-qc/shared';
 import { ApiRequestError, ApiUser } from './api';
 import { ResultMetricSnapshot } from './result-metrics-ui';
+import { PollingPauseReason, startStatusPolling } from './status-polling';
 
 export type ResultReview = {
   id: string;
@@ -42,7 +43,8 @@ export type ResultReview = {
   createdAt: string;
 };
 
-export type ResultReviewLatest = { videoStatus: string; review: ResultReview | null };
+export type ResultReviewLatest = { videoStatus: string; review: ResultReview | null; jobId?: string | null };
+export type ResultReviewTrigger = { reviewId: string; jobId: string; resultMetricId: string; status: 'running'; videoStatus: string };
 export type ResultReviewHistory = {
   items: Array<ResultReview & {
     isLatest: boolean;
@@ -83,22 +85,42 @@ export function resultReviewErrorMessage(error: unknown) {
   if (error instanceof ApiRequestError && error.status === 403) {
     return '当前角色没有触发数据复盘的权限。';
   }
-  return error instanceof Error ? error.message : 'GPT 数据复盘请求失败';
+  return error instanceof Error ? error.message : '千问数据复盘请求失败';
 }
 
 export async function triggerResultReview(
-  request: (path: string, init: RequestInit) => Promise<{
-    reviewId: string;
-    resultMetricId: string;
-    status: 'running';
-    videoStatus: string;
-  }>,
+  request: (path: string, init: RequestInit) => Promise<ResultReviewTrigger>,
   videoId: string,
   resultMetricId: string,
 ) {
   return request(`/api/videos/${videoId}/result-review`, {
     method: 'POST',
     body: JSON.stringify({ resultMetricId }),
+  });
+}
+
+export function startResultReviewJobPolling(options: {
+  videoId: string; jobId: string; reviewId: string;
+  request: <T>(path: string, init?: RequestInit) => Promise<T>;
+  onReview: (value: ResultReviewLatest) => void;
+  onPause: (reason: PollingPauseReason) => void;
+  onError?: () => void;
+  intervalMs?: number; maxDurationMs?: number; maxErrors?: number;
+  schedule?: (task: () => void, milliseconds: number) => ReturnType<typeof setTimeout>;
+  cancel?: (timer: ReturnType<typeof setTimeout>) => void;
+}) {
+  return startStatusPolling<{ status: string; stage: string; reviewId?: string | null }>({
+    load: (signal) => options.request(`/api/evaluation-jobs/${options.jobId}`, { signal, cache: 'no-store' }),
+    isTerminal: (job) => !['queued', 'running', 'retry_wait'].includes(job.status),
+    onValue: () => undefined,
+    onTerminal: async (job) => {
+      if (job.stage !== 'result' || job.reviewId !== options.reviewId) return options.onPause('network');
+      try { options.onReview(await options.request(`/api/videos/${options.videoId}/result-reviews/${options.reviewId}`, { cache: 'no-store' })); }
+      catch { options.onError?.(); options.onPause('network'); }
+    },
+    onPause: options.onPause, onError: options.onError,
+    intervalMs: options.intervalMs, maxDurationMs: options.maxDurationMs, maxErrors: options.maxErrors,
+    schedule: options.schedule as typeof setTimeout, cancel: options.cancel as typeof clearTimeout,
   });
 }
 

@@ -8,18 +8,19 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { AiReviewStatus, DataSufficiency, Prisma, VideoStatus } from '@prisma/client';
+import { AiReviewStatus, DataSufficiency, EvaluationJob, Prisma, VideoStatus } from '@prisma/client';
+import { EvaluationJobsService, EvaluationLeaseLostError } from '../evaluation-jobs/evaluation-jobs.service';
 import { FINAL_EVALUATION_VERSION, RecommendedBoundary, recommendedBoundaries } from '@ai-video-qc/shared';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import {
   FinalEvaluationOutputValidationError,
   FinalEvaluationSourceBindingError,
-  OpenAiConfigurationError,
-  OpenAiRefusalError,
-  OpenAiRequestError,
-  OpenAiRequestTimeoutError,
-  OpenAiResponseAudit,
-  OpenAiResponseError,
+  TextModelConfigurationError,
+  TextModelRefusalError,
+  TextModelRequestError,
+  TextModelRequestTimeoutError,
+  TextModelResponseAudit,
+  TextModelResponseError,
 } from '../ai/gpt/gpt.errors';
 import { FINAL_EVALUATION_DEVELOPER_PROMPT } from '../ai/gpt/gpt-final-evaluation.prompt';
 import { FinalEvaluationOutput } from '../ai/gpt/gpt-final-evaluation.schema';
@@ -47,6 +48,7 @@ type StartedEvaluation = {
   maxOutputTokens: number;
 };
 type AuditResponse = {
+  usageCollectionStatus?: string;
   responseId?: string;
   responseStatus?: string;
   model?: string;
@@ -65,14 +67,14 @@ function positiveInteger(value: string | undefined, fallback: number) {
 }
 
 function staleMinutes() {
-  const parsed = Number(process.env.OPENAI_FINAL_EVALUATION_RUNNING_STALE_MINUTES || 10);
+  const parsed = Number(process.env.QWEN_FINAL_EVALUATION_RUNNING_STALE_MINUTES || 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
 }
 
 export function sanitizeFinalEvaluationText(value: string | undefined, maximum = 20_000) {
   if (!value) return undefined;
   let sanitized = value;
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
   if (apiKey) sanitized = sanitized.split(apiKey).join('[redacted]');
   return sanitized
     .replace(/Bearer\s+[^"',}\]\s]+/gi, 'Bearer [redacted]')
@@ -83,14 +85,14 @@ export function sanitizeFinalEvaluationText(value: string | undefined, maximum =
 }
 
 function safeFailure(error: unknown) {
-  if (error instanceof OpenAiConfigurationError) return { type: error.code, message: 'OpenAI final evaluation is not configured.' };
-  if (error instanceof OpenAiRequestTimeoutError) return { type: error.code, message: 'OpenAI final evaluation timed out.' };
-  if (error instanceof OpenAiRequestError) return { type: error.code, message: 'OpenAI final evaluation request failed.' };
-  if (error instanceof OpenAiResponseError) return { type: error.code, message: 'OpenAI returned an incomplete final evaluation.' };
-  if (error instanceof OpenAiRefusalError) return { type: error.code, message: 'OpenAI could not complete this final evaluation.' };
-  if (error instanceof FinalEvaluationOutputValidationError) return { type: error.code, message: 'OpenAI returned an invalid final evaluation suggestion.' };
+  if (error instanceof TextModelConfigurationError) return { type: error.code, message: 'Qwen final evaluation is not configured.' };
+  if (error instanceof TextModelRequestTimeoutError) return { type: error.code, message: 'Qwen final evaluation timed out.' };
+  if (error instanceof TextModelRequestError) return { type: error.code, message: 'Qwen final evaluation request failed.' };
+  if (error instanceof TextModelResponseError) return { type: error.code, message: 'Qwen returned an incomplete final evaluation.' };
+  if (error instanceof TextModelRefusalError) return { type: error.code, message: 'Qwen could not complete this final evaluation.' };
+  if (error instanceof FinalEvaluationOutputValidationError) return { type: error.code, message: 'Qwen returned an invalid final evaluation suggestion.' };
   if (error instanceof FinalEvaluationSourceBindingError) return { type: error.code, message: 'Final evaluation sources changed during processing.' };
-  return { type: 'FINAL_EVALUATION_FAILED', message: 'GPT final evaluation failed.' };
+  return { type: 'FINAL_EVALUATION_FAILED', message: 'Qwen final evaluation failed.' };
 }
 
 @Injectable()
@@ -104,9 +106,11 @@ export class FinalEvaluationsService {
     private readonly gpt: GptService,
     @Optional() @Inject(FINAL_EVALUATION_BACKGROUND_SCHEDULER)
     private readonly scheduler?: FinalEvaluationBackgroundScheduler,
+    @Optional() private readonly jobs?: EvaluationJobsService,
   ) {}
 
   async trigger(videoId: string, dto: TriggerFinalEvaluationDto, user: AuthenticatedUser, meta: RequestMeta) {
+    if (!this.jobs && !this.scheduler) throw new Error('Persistent evaluation queue is required.');
     if (!uuidPattern.test(videoId)) throw new NotFoundException('Video not found.');
     const video = await this.prisma.video.findUnique({ where: { id: videoId } });
     if (!video) throw new NotFoundException('Video not found.');
@@ -116,12 +120,14 @@ export class FinalEvaluationsService {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const lockedVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!lockedVideo) throw new NotFoundException('Video not found.');
+      await this.jobs?.assertNoActive(transaction, videoId, 'final');
       await this.permissions.assertCanTriggerFinalEvaluation(user, lockedVideo, meta);
 
       const running = await transaction.finalVideoEvaluation.findMany({
         where: { videoId, status: AiReviewStatus.running },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });
+      if (this.jobs && running.length) throw new ConflictException('Legacy evaluation is awaiting durable recovery.');
       const staleBefore = new Date(Date.now() - staleMinutes() * 60_000);
       if (running.some((evaluation) => evaluation.createdAt > staleBefore)) {
         throw new ConflictException('A final evaluation is already running for this video.');
@@ -161,14 +167,14 @@ export class FinalEvaluationsService {
       if (succeeded) throw new ConflictException('This rule result already has a succeeded final evaluation.');
 
       const modelConfig = await transaction.aiModelConfig.findFirst({
-        where: { enabled: true, provider: 'openai', agentType: 'final_evaluation' },
+        where: { enabled: true, provider: 'aliyun_bailian', agentType: 'final_evaluation' },
         orderBy: { createdAt: 'asc' },
       });
       const modelName = modelConfig?.modelName?.trim() ||
-        process.env.OPENAI_FINAL_EVALUATION_MODEL?.trim() || 'gpt-5-mini';
+        process.env.QWEN_FINAL_EVALUATION_MODEL?.trim() || 'qwen3.5-plus';
       const maxOutputTokens = modelConfig?.maxTokens && modelConfig.maxTokens > 0
         ? modelConfig.maxTokens
-        : positiveInteger(process.env.OPENAI_FINAL_EVALUATION_MAX_OUTPUT_TOKENS, 4000);
+        : positiveInteger(process.env.QWEN_FINAL_EVALUATION_MAX_OUTPUT_TOKENS, 4000);
       const evaluation = await transaction.finalVideoEvaluation.create({
         data: {
           videoId,
@@ -178,7 +184,7 @@ export class FinalEvaluationsService {
           evaluationVersion: FINAL_EVALUATION_VERSION,
           status: AiReviewStatus.running,
           triggeredById: user.id,
-          modelProvider: 'openai',
+          modelProvider: 'aliyun_bailian',
           modelName,
           contentGrade: sources.ruleResult.contentGrade!,
           dataGrade: sources.ruleResult.dataGrade!,
@@ -200,22 +206,35 @@ export class FinalEvaluationsService {
           evaluationVersion: FINAL_EVALUATION_VERSION,
           modelName,
         },
-        comment: 'GPT final evaluation suggestion started.',
+        comment: 'Qwen final evaluation suggestion started.',
         ipAddress: meta.ipAddress, userAgent: meta.userAgent,
       }, transaction);
+      const job = await this.jobs?.enqueue(transaction, {
+        videoId, actorId: user.id, stage: 'final', finalEvaluationId: evaluation.id, maxOutputTokens,
+        inputRefs: { contentReviewId: sources.contentReview.id, resultReviewId: sources.resultReview.id,
+          resultMetricId: sources.metric.id, ruleEngineResultId: sources.ruleResult.id, supervisorReviewId: sources.supervisorReview.id },
+      });
       return {
         evaluationId: evaluation.id, videoId, ruleEngineResultId: sources.ruleResult.id,
-        modelName, maxOutputTokens,
+        modelName, maxOutputTokens, jobId: job?.id,
       };
     });
 
-    this.runInBackground(started, user, meta);
+    if (!this.jobs) this.runInBackground(started, user, meta);
     return {
       evaluationId: started.evaluationId,
       ruleEngineResultId: started.ruleEngineResultId,
       status: AiReviewStatus.running,
       videoStatus: VideoStatus.pending_final_evaluation,
+      ...(started.jobId ? { jobId: started.jobId } : {}),
     };
+  }
+
+  async executeJob(job: EvaluationJob) {
+    const evaluation = await this.prisma.finalVideoEvaluation.findUniqueOrThrow({ where: { id: job.finalEvaluationId! } });
+    const actor = await this.prisma.user.findUniqueOrThrow({ where: { id: job.actorId } });
+    await this.process({ evaluationId: evaluation.id, videoId: job.videoId, ruleEngineResultId: evaluation.ruleEngineResultId!,
+      modelName: evaluation.modelName, maxOutputTokens: job.maxOutputTokens }, actor, {});
   }
 
   private runInBackground(started: StartedEvaluation, user: AuthenticatedUser, meta: RequestMeta) {
@@ -234,12 +253,7 @@ export class FinalEvaluationsService {
       }
     };
     if (this.scheduler) return this.scheduler(task);
-    setImmediate(() => {
-      void task().catch((error) => this.logger.error('Unhandled final evaluation failure was contained.', {
-        evaluationId: started.evaluationId,
-        errorType: safeFailure(error).type,
-      }));
-    });
+    throw new Error('Persistent evaluation queue is required.');
   }
 
   private async process(started: StartedEvaluation, user: AuthenticatedUser, meta: RequestMeta) {
@@ -258,6 +272,7 @@ export class FinalEvaluationsService {
         resultReview: sources.resultReview,
         ruleResult: sources.ruleResult,
       });
+      await this.jobs?.markExternalStarted();
       const response = await this.gpt.generateFinalEvaluation({
         model: started.modelName,
         developerPrompt: FINAL_EVALUATION_DEVELOPER_PROMPT,
@@ -271,11 +286,13 @@ export class FinalEvaluationsService {
         model: response.model,
         rawText: sanitizeFinalEvaluationText(response.rawText),
         usage: response.usage,
+        usageCollectionStatus: response.usageCollectionStatus,
         parsed: response.parsedOutput,
         recommendedBoundary: boundary,
       };
       await this.complete(started, response.parsedOutput, audit, user, meta);
     } catch (error) {
+      if (error instanceof EvaluationLeaseLostError) throw error;
       audit = this.auditFromError(error, audit);
       await this.markFailed(started, error, audit, user, meta);
     }
@@ -283,7 +300,7 @@ export class FinalEvaluationsService {
 
   private auditFromError(error: unknown, fallback: AuditResponse): AuditResponse {
     const source = error && typeof error === 'object' && 'audit' in error
-      ? (error as { audit?: OpenAiResponseAudit }).audit
+      ? (error as { audit?: TextModelResponseAudit }).audit
       : undefined;
     if (!source) return fallback;
     return {
@@ -292,6 +309,7 @@ export class FinalEvaluationsService {
       model: source.model,
       rawText: sanitizeFinalEvaluationText(source.rawText),
       usage: source.usage,
+      usageCollectionStatus: source.usageCollectionStatus,
       recommendedBoundary: fallback.recommendedBoundary,
     };
   }
@@ -305,6 +323,7 @@ export class FinalEvaluationsService {
   ) {
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${started.videoId}::uuid FOR UPDATE`);
+      await this.jobs?.assertCurrent(transaction, started.videoId, started.evaluationId);
       const evaluation = await transaction.finalVideoEvaluation.findUnique({ where: { id: started.evaluationId } });
       if (!evaluation || evaluation.status !== AiReviewStatus.running) return;
       const sources = await this.loadSources(transaction, started.videoId, started.ruleEngineResultId);
@@ -337,6 +356,7 @@ export class FinalEvaluationsService {
             rawText: audit.rawText || null,
             parsed: output,
             usage: audit.usage || { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            usageCollectionStatus: audit.usageCollectionStatus || 'unknown',
             ruleEngineResultId: sources.ruleResult.id,
             recommendedBoundary: sources.ruleResult.recommendedBoundary,
           } as Prisma.InputJsonValue,
@@ -366,9 +386,10 @@ export class FinalEvaluationsService {
           recommendedIsEffective: output.recommendedIsEffective,
           recommendationConfidence: output.recommendationConfidence,
         },
-        comment: 'GPT final evaluation suggestion completed; owner confirmation is pending.',
+        comment: 'Qwen final evaluation suggestion completed; owner confirmation is pending.',
         ipAddress: meta.ipAddress, userAgent: meta.userAgent,
       }, transaction);
+      await this.jobs?.finishCurrent(transaction, 'succeeded');
     });
   }
 
@@ -383,6 +404,7 @@ export class FinalEvaluationsService {
     try {
       await this.prisma.$transaction(async (transaction) => {
         await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${started.videoId}::uuid FOR UPDATE`);
+        await this.jobs?.assertCurrent(transaction, started.videoId, started.evaluationId);
         const evaluation = await transaction.finalVideoEvaluation.findUnique({ where: { id: started.evaluationId } });
         if (!evaluation || evaluation.status !== AiReviewStatus.running) return;
         await transaction.finalVideoEvaluation.update({
@@ -399,6 +421,7 @@ export class FinalEvaluationsService {
               model: audit.model || evaluation.modelName,
               rawText: audit.rawText || null,
               usage: audit.usage || null,
+              usageCollectionStatus: audit.usageCollectionStatus || 'unknown',
               ruleEngineResultId: started.ruleEngineResultId,
               recommendedBoundary: audit.recommendedBoundary || null,
             } as Prisma.InputJsonValue : undefined,
@@ -426,6 +449,7 @@ export class FinalEvaluationsService {
           comment: failure.message,
           ipAddress: meta.ipAddress, userAgent: meta.userAgent,
         }, transaction);
+        await this.jobs?.finishCurrent(transaction, 'failed', error instanceof TextModelRequestTimeoutError || error instanceof TextModelRequestError, error);
       });
     } catch (persistenceError) {
       if (persistenceError instanceof Prisma.PrismaClientKnownRequestError && persistenceError.code === 'P2002') {
@@ -442,7 +466,21 @@ export class FinalEvaluationsService {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: { confirmer: { select: { id: true, name: true, account: true, role: true } } },
     });
-    return { videoStatus: video.status, evaluation: evaluation ? finalEvaluationResponse(evaluation) : null };
+    const job = evaluation?.status === AiReviewStatus.running
+      ? await this.prisma.evaluationJob?.findFirst({ where: { finalEvaluationId: evaluation.id }, select: { id: true } })
+      : null;
+    return { videoStatus: video.status, evaluation: evaluation ? finalEvaluationResponse(evaluation) : null, jobId: job?.id || null };
+  }
+
+  async byId(videoId: string, evaluationId: string, user: AuthenticatedUser, meta: RequestMeta) {
+    const video = await this.findAccessibleVideo(videoId, user, meta);
+    if (!uuidPattern.test(evaluationId)) throw new NotFoundException('Final evaluation not found.');
+    const evaluation = await this.prisma.finalVideoEvaluation.findFirst({
+      where: { id: evaluationId, videoId },
+      include: { confirmer: { select: { id: true, name: true, account: true, role: true } } },
+    });
+    if (!evaluation) throw new NotFoundException('Final evaluation not found.');
+    return { videoStatus: video.status, evaluation: finalEvaluationResponse(evaluation) };
   }
 
   async history(videoId: string, query: FinalEvaluationHistoryQueryDto, user: AuthenticatedUser, meta: RequestMeta) {

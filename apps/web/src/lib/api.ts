@@ -1,4 +1,12 @@
-export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+// Keep production browser requests on the same origin by default. Using a
+// localhost fallback here is unsafe for a client bundle: Next.js can fold the
+// server-side branch at build time and make every user's browser call its own
+// port 3001 instead of the deployed API reverse proxy.
+const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+
+export const apiBaseUrl = configuredApiBaseUrl
+  ? configuredApiBaseUrl.replace(/\/$/, '')
+  : '';
 
 export type ApiUser = {
   id: string;
@@ -6,6 +14,9 @@ export type ApiUser = {
   account: string;
   role: string;
   managerId?: string | null;
+  department?: string | null;
+  expiresAt?: string | null;
+  mustChangePassword?: boolean;
 };
 
 export class ApiRequestError extends Error {
@@ -18,39 +29,26 @@ export class ApiRequestError extends Error {
   }
 }
 
-export function getToken() {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem('accessToken');
-}
-
-export function setToken(token: string) {
-  window.localStorage.setItem('accessToken', token);
-}
-
-export function clearToken() {
-  window.localStorage.removeItem('accessToken');
-}
-
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers = new Headers(init.headers);
+  const method = (init.method || 'GET').toUpperCase();
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    headers.set('X-QC-CSRF', '1');
   }
 
-  if (!(init.body instanceof FormData) && !headers.has('Content-Type')) {
+  if (init.body != null && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers,
+    credentials: 'include',
   });
 
-  if (response.status === 401) {
-    clearToken();
-    window.location.href = '/login';
+  if (response.status === 401 && path.split('?')[0] !== '/api/auth/login') {
+    if (typeof window !== 'undefined') window.location.href = '/login';
   }
 
   if (!response.ok) {

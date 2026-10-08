@@ -1,39 +1,39 @@
-export class OpenAiConfigurationError extends Error {
-  readonly code = 'OPENAI_NOT_CONFIGURED';
+export class TextModelConfigurationError extends Error {
+  readonly code = 'TEXT_MODEL_NOT_CONFIGURED';
 }
 
-export class OpenAiRequestTimeoutError extends Error {
-  readonly code = 'OPENAI_REQUEST_TIMEOUT';
+export class TextModelRequestTimeoutError extends Error {
+  readonly code = 'TEXT_MODEL_REQUEST_TIMEOUT';
 }
 
-export class OpenAiRequestError extends Error {
-  readonly code = 'OPENAI_REQUEST_FAILED';
+export class TextModelRequestError extends Error {
+  readonly code = 'TEXT_MODEL_REQUEST_FAILED';
   readonly cause?: unknown;
 
   constructor(message: string, cause?: unknown) {
     super(message);
-    this.name = 'OpenAiRequestError';
+    this.name = 'TextModelRequestError';
     this.cause = cause;
   }
 }
 
-export class OpenAiResponseError extends Error {
-  readonly code = 'OPENAI_RESPONSE_FAILED';
-  constructor(message: string, readonly audit?: OpenAiResponseAudit) {
+export class TextModelResponseError extends Error {
+  readonly code = 'TEXT_MODEL_RESPONSE_FAILED';
+  constructor(message: string, readonly audit?: TextModelResponseAudit) {
     super(message);
   }
 }
 
-export class OpenAiRefusalError extends Error {
-  readonly code = 'OPENAI_RESPONSE_REFUSED';
-  constructor(message: string, readonly audit?: OpenAiResponseAudit) {
+export class TextModelRefusalError extends Error {
+  readonly code = 'TEXT_MODEL_RESPONSE_REFUSED';
+  constructor(message: string, readonly audit?: TextModelResponseAudit) {
     super(message);
   }
 }
 
 export class ResultReviewOutputValidationError extends Error {
-  readonly code = 'OPENAI_OUTPUT_INVALID';
-  constructor(message: string, readonly audit?: OpenAiResponseAudit) {
+  readonly code = 'TEXT_MODEL_OUTPUT_INVALID';
+  constructor(message: string, readonly audit?: TextModelResponseAudit) {
     super(message);
   }
 }
@@ -44,7 +44,7 @@ export class ResultReviewSnapshotBindingError extends Error {
 
 export class FinalEvaluationOutputValidationError extends Error {
   readonly code = 'FINAL_EVALUATION_OUTPUT_INVALID';
-  constructor(message: string, readonly audit?: OpenAiResponseAudit) {
+  constructor(message: string, readonly audit?: TextModelResponseAudit) {
     super(message);
   }
 }
@@ -52,7 +52,8 @@ export class FinalEvaluationOutputValidationError extends Error {
 export class FinalEvaluationSourceBindingError extends Error {
   readonly code = 'FINAL_EVALUATION_SOURCE_INVALID';
 }
-export type OpenAiResponseAudit = {
+export type TextModelResponseAudit = {
+  usageCollectionStatus?: string;
   responseId: string;
   responseStatus: string;
   model: string;

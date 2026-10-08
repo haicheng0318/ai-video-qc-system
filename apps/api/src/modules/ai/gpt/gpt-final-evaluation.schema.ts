@@ -77,7 +77,7 @@ export function validateFinalEvaluationOutput(
 ): FinalEvaluationOutput {
   const parsed = FinalEvaluationOutputSchema.safeParse(value);
   if (!parsed.success) {
-    throw new FinalEvaluationOutputValidationError('GPT final evaluation output failed validation.');
+    throw new FinalEvaluationOutputValidationError('AI final evaluation output failed validation.');
   }
   if (boundary === 'pending_data') {
     throw new FinalEvaluationOutputValidationError('Pending data cannot enter final evaluation.');

@@ -47,7 +47,7 @@ test('GPT input keeps zero and Decimal strings while excluding URLs and identity
       id: 'metric-id', dataStartDate: new Date('2026-08-01T00:00:00Z'),
       dataEndDate: new Date('2026-08-02T00:00:00Z'), impressions: 0,
       spend: new Prisma.Decimal('12.3400'), publishUrl: 'https://private.example/video?token=secret',
-      dataScreenshotUrl: 'https://private.example/screenshot', operatorNote: '  note  ',
+      dataScreenshotUrl: 'https://private.example/screenshot', deliveryNote: '  note  ',
     },
     contentReview: { contentGrade: 'A', totalScore: 85, contentSummary: 'summary', mainProblems: [], rawResponse: { secret: true } },
     supervisorReview: { decision: 'approved_for_publish', comment: 'approved', reviewerId: 'secret' },
@@ -56,7 +56,10 @@ test('GPT input keeps zero and Decimal strings while excluding URLs and identity
   const serialized = JSON.stringify(context);
   assert.equal(context.resultMetric.impressions, 0);
   assert.equal(context.resultMetric.spend, '12.34');
-  assert.equal(context.resultMetric.operatorNote, 'note');
+  assert.equal(context.resultMetric.deliveryNote, 'note');
+  assert.equal(context.resultMetric.operatorNote, undefined);
+  assert.ok(context.dataContract.applicableFields.includes('spend'));
+  assert.ok(context.dataContract.derivedFields.includes('roi'));
   assert.equal(serialized.includes('publishUrl'), false);
   assert.equal(serialized.includes('dataScreenshotUrl'), false);
   assert.equal(serialized.includes('creatorId'), false);

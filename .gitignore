@@ -18,3 +18,7 @@ storage/covers/*
 # Prisma local artifacts
 prisma/*.db
 prisma/*.db-journal
+
+# Local browser sessions and visual acceptance artifacts (may contain user data).
+.playwright-cli/
+output/playwright/

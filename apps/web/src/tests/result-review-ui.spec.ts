@@ -12,6 +12,7 @@ import {
   resultReviewErrorMessage,
   shouldDisplayResultScore,
   startResultReviewPolling,
+  startResultReviewJobPolling,
   triggerResultReview,
 } from '../lib/result-review-ui';
 import { ResultMetricSnapshot } from '../lib/result-metrics-ui';
@@ -19,7 +20,7 @@ import { ResultMetricSnapshot } from '../lib/result-metrics-ui';
 const user = (role: string) => ({ id: role, account: role, name: role, role });
 const metric = { id: 'metric-latest' } as ResultMetricSnapshot;
 const review = (status: ResultReview['status'], sufficiency: ResultReview['dataSufficiency'] = 'pending') => ({
-  id: 'review', resultMetricId: metric.id, modelProvider: 'openai', modelName: 'gpt-5-mini',
+  id: 'review', resultMetricId: metric.id, modelProvider: 'aliyun_bailian', modelName: 'qwen3.5-plus',
   dataScore: sufficiency === 'sufficient' ? 80 : null,
   dataGrade: sufficiency === 'sufficient' ? 'A' : null,
   dataSufficiency: sufficiency, isBusinessEffectiveRecommendation: sufficiency === 'sufficient' ? true : null,
@@ -59,9 +60,30 @@ test('trigger payload contains only the latest resultMetricId', async () => {
   let body = '';
   await triggerResultReview(async (_path, init) => {
     body = String(init.body);
-    return { reviewId: 'review', resultMetricId: metric.id, status: 'running', videoStatus: 'ai_result_reviewing' };
+    return { reviewId: 'review', jobId: 'job-result', resultMetricId: metric.id, status: 'running', videoStatus: 'ai_result_reviewing' };
   }, 'video', metric.id);
   assert.deepEqual(JSON.parse(body), { resultMetricId: metric.id });
+});
+
+test('result polling follows the exact returned job and exact review instead of latest', async () => {
+  const paths: string[] = [];
+  const scheduled: Array<() => void> = [];
+  let received = '';
+  startResultReviewJobPolling({
+    videoId: 'video', jobId: 'job-result', reviewId: 'review-exact',
+    request: async (path) => {
+      paths.push(path);
+      if (path === '/api/evaluation-jobs/job-result') return { id: 'job-result', stage: 'result', status: 'succeeded', reviewId: 'review-exact' } as any;
+      return { videoStatus: 'pending_rule_engine', review: { ...review('succeeded', 'sufficient'), id: 'review-exact' } } as any;
+    },
+    onReview: (value) => { received = value.review?.id || ''; },
+    onPause: () => undefined,
+    schedule: (task) => { scheduled.push(task); return 1 as never; }, cancel: () => undefined,
+  });
+  scheduled.shift()?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(paths, ['/api/evaluation-jobs/job-result', '/api/videos/video/result-reviews/review-exact']);
+  assert.equal(received, 'review-exact');
 });
 
 test('409 and 403 have clear result review messages', () => {
@@ -143,6 +165,7 @@ test('result review panel contains no final grade, performance or rule-engine co
 test('component resets data on video change, prevents duplicate submit and never renders rawResponse', async () => {
   const source = await readFile(new URL('../components/result-review-panel.tsx', import.meta.url), 'utf8');
   assert.match(source, /setLatestMetric\(null\)/);
-  assert.match(source, /if \(!latestMetric \|\| submitting\) return/);
+  assert.match(source, /if \(submitting\) return/);
+  assert.match(source, /latestMetricForTrigger\(latestMetric, latestResultMetricId\)/);
   assert.doesNotMatch(source, /review\.rawResponse|rawResponse\}/);
 });

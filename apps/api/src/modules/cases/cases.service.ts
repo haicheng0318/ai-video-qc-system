@@ -7,13 +7,34 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CaseListQueryDto } from './dto/case-list-query.dto';
 import { MarkCaseDto } from './dto/mark-case.dto';
+import { rowsToCsv } from '../videos/video-report';
 
 type RequestMeta = { ipAddress?: string; userAgent?: string };
+const exportLimit = 50;
 const finalStatuses = new Set<VideoStatus>([
   VideoStatus.final_effective, VideoStatus.final_low_effective, VideoStatus.final_invalid,
 ]);
 const htmlPattern = /<\/?[a-z][^>]*>/i;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function shanghaiDayBoundary(value: string, end: boolean) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) throw new BadRequestException('Case dates must use an ISO calendar date.');
+  const [year, month, day] = match.slice(1).map(Number);
+  const checked = new Date(Date.UTC(year, month - 1, day));
+  if (checked.getUTCFullYear() !== year || checked.getUTCMonth() !== month - 1 || checked.getUTCDate() !== day) {
+    throw new BadRequestException('Case date is invalid.');
+  }
+  return new Date(Date.UTC(year, month - 1, day + (end ? 1 : 0)) - 8 * 3_600_000 - (end ? 1 : 0));
+}
+
+function shanghaiDateTime(value: string | null) {
+  if (!value) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).format(new Date(value));
+}
 
 @Injectable()
 export class CasesService {
@@ -101,10 +122,8 @@ export class CasesService {
   }
 
   async list(query: CaseListQueryDto, user: AuthenticatedUser) {
-    const startDate = query.startDate ? new Date(query.startDate) : undefined;
-    const endDate = query.endDate ? new Date(query.endDate) : undefined;
-    if (startDate) startDate.setUTCHours(0, 0, 0, 0);
-    if (endDate) endDate.setUTCHours(23, 59, 59, 999);
+    const startDate = query.startDate ? shanghaiDayBoundary(query.startDate, false) : undefined;
+    const endDate = query.endDate ? shanghaiDayBoundary(query.endDate, true) : undefined;
     if (startDate && endDate && startDate > endDate) throw new BadRequestException('startDate must not be after endDate.');
     const cursor = query.cursor ? await this.prisma.finalVideoEvaluation.findFirst({
       where: { id: query.cursor }, select: { id: true, caseMarkedAt: true },
@@ -121,13 +140,15 @@ export class CasesService {
           { caseMarkedAt: { lt: cursor.caseMarkedAt } },
           { caseMarkedAt: cursor.caseMarkedAt, id: { lt: cursor.id } },
         ] } : {}),
-        video: {
-          ...visibility,
-          ...(query.brand ? { brand: query.brand.trim() } : {}),
-          ...(query.platform ? { platform: query.platform.trim() } : {}),
-          ...(query.videoType ? { videoType: query.videoType as VideoType } : {}),
-          ...(query.creatorId ? { creatorId: query.creatorId } : {}),
-        },
+        video: { AND: [
+          visibility,
+          {
+            ...(query.brand ? { brand: query.brand.trim() } : {}),
+            ...(query.platform ? { platform: query.platform.trim() } : {}),
+            ...(query.videoType ? { videoType: query.videoType as VideoType } : {}),
+            ...(query.creatorId ? { creatorId: query.creatorId } : {}),
+          },
+        ] },
         ...(startDate || endDate ? { caseMarkedAt: {
           ...(startDate ? { gte: startDate } : {}), ...(endDate ? { lte: endDate } : {}),
         } } : {}),
@@ -168,5 +189,21 @@ export class CasesService {
       })),
       nextCursor: hasMore ? page.at(-1)?.id || null : null,
     };
+  }
+
+  async export(query: CaseListQueryDto, user: AuthenticatedUser, meta: RequestMeta) {
+    const result = await this.list({ ...query, cursor: undefined, limit: Math.min(query.limit || exportLimit, exportLimit) }, user);
+    const rows: unknown[][] = [[
+      '视频ID', '标题', '品牌', '平台', '视频类型', '创作人', '内容等级', '数据等级', '最终等级', '案例说明', '标记人', '标记时间（北京时间）',
+    ], ...result.items.map((item) => [
+      item.videoId, item.title, item.brand, item.platform, item.videoType, item.creator.name,
+      item.contentGrade, item.dataGrade, item.finalGrade, item.caseNote, item.caseMarkedBy?.name, shanghaiDateTime(item.caseMarkedAt),
+    ])];
+    await this.operationLogs.create({
+      userId: user.id, targetType: 'case_library', actionType: OperationLogAction.CaseLibraryExported,
+      result: 'success', afterValue: { type: query.type, count: result.items.length, maximum: exportLimit },
+      comment: 'Authorized case library export.', ...meta,
+    });
+    return { filename: `${query.type}-cases.csv`, content: rowsToCsv(rows) };
   }
 }

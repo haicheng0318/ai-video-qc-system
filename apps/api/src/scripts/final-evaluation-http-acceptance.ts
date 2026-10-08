@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import '../test-support/local-http-entrypoint';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
@@ -51,7 +52,7 @@ const fakeGpt = {
     const id = context.ruleEngine.ruleEngineResultId as string;
     const count = (attempts.get(id) || 0) + 1;
     attempts.set(id, count);
-    if (context.video.brand === 'fail-once' && count === 1) throw new Error('Synthetic OpenAI failure.');
+    if (context.video.brand === 'fail-once' && count === 1) throw new Error('Synthetic Qwen failure.');
     let grade: 'effective' | 'low_effective' | 'invalid' = 'effective';
     if (recommendedBoundary === 'allow_final_effective_or_low_effective') grade = 'low_effective';
     if (recommendedBoundary === 'allow_final_low_effective_or_invalid') grade = 'low_effective';
@@ -61,7 +62,7 @@ const fakeGpt = {
       suggestion(grade, recommendedBoundary === 'require_manual_confirmation'), recommendedBoundary,
     );
     return {
-      responseId: `fake-${randomUUID()}`, responseStatus: 'completed', model: 'gpt-5-mini',
+      responseId: `fake-${randomUUID()}`, responseStatus: 'completed', model: 'qwen3.5-plus',
       rawText: JSON.stringify(parsedOutput), usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 }, parsedOutput,
     };
   },
@@ -102,7 +103,7 @@ async function createTarget(prisma: PrismaClient, ownerId: string, reviewerId: s
     creatorId: ownerId, status: VideoStatus.pending_final_evaluation,
   } });
   const content = await prisma.aiContentReview.create({ data: {
-    videoId: video.id, modelProvider: 'gemini', modelName: 'fixture', status: AiReviewStatus.succeeded,
+    videoId: video.id, modelProvider: 'aliyun_bailian', modelName: 'qwen-fixture', status: AiReviewStatus.succeeded,
     contentGrade, totalScore: 80,
   } });
   const supervisor = await prisma.supervisorReview.create({ data: {
@@ -113,7 +114,7 @@ async function createTarget(prisma: PrismaClient, ownerId: string, reviewerId: s
     dataStartDate: new Date('2026-08-01'), dataEndDate: new Date('2026-08-02'), views: 0, ctr: '2.3500',
   } });
   const resultReview = await prisma.aiResultReview.create({ data: {
-    videoId: video.id, resultMetricId: metric.id, modelProvider: 'openai', modelName: 'fixture',
+    videoId: video.id, resultMetricId: metric.id, modelProvider: 'aliyun_bailian', modelName: 'qwen-fixture',
     status: AiReviewStatus.succeeded, dataSufficiency: DataSufficiency.sufficient, dataGrade, dataScore: 80,
   } });
   const boundary = evaluateRuleBoundary({ contentGrade, dataGrade, dataSufficiency: 'sufficient' });
@@ -137,7 +138,7 @@ async function createFixture(prisma: PrismaClient): Promise<Fixture> {
   }
   await prisma.finalVideoEvaluation.create({ data: {
     videoId: targets.stale.videoId, contentReviewId: targets.stale.contentId, resultReviewId: targets.stale.resultId,
-    ruleEngineResultId: targets.stale.ruleId, triggeredById: users.admin.id, modelProvider: 'openai', modelName: 'fixture',
+    ruleEngineResultId: targets.stale.ruleId, triggeredById: users.admin.id, modelProvider: 'aliyun_bailian', modelName: 'qwen-fixture',
     contentGrade: 'A', dataGrade: 'A', status: AiReviewStatus.running,
     createdAt: new Date(Date.now() - 20 * 60_000),
   } });
@@ -154,6 +155,7 @@ async function cleanup(prisma: PrismaClient, fixture: Fixture) {
   await prisma.supervisorReview.deleteMany({ where: { videoId: { in: videoIds } } });
   await prisma.aiContentReview.deleteMany({ where: { videoId: { in: videoIds } } });
   await prisma.video.deleteMany({ where: { id: { in: videoIds } } });
+  await prisma.userSession.deleteMany({ where: { userId: { in: fixture.userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: fixture.userIds } } });
 }
 
@@ -170,13 +172,13 @@ async function main() {
     const base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
     const tokens: Record<string, string> = {};
     for (const role of Object.values(UserRole)) {
-      const response = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      const response = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', Origin: process.env.WEB_ORIGIN || 'http://localhost:3000', 'X-QC-CSRF': '1' },
         body: JSON.stringify({ account: fixture.users[role].account, password: fixture.password }) });
       assert.equal(response.status, 201);
-      tokens[role] = (await response.json() as any).accessToken;
+      tokens[role] = response.headers.get('set-cookie')!.split(';')[0];
     }
     const request = (path: string, role: UserRole, init: RequestInit = {}) => fetch(`${base}${path}`, {
-      ...init, headers: { authorization: `Bearer ${tokens[role]}`, 'content-type': 'application/json', ...init.headers },
+      ...init, headers: { Cookie: tokens[role]!, 'content-type': 'application/json', Origin: process.env.WEB_ORIGIN || 'http://localhost:3000', 'X-QC-CSRF': '1', ...init.headers },
     });
     const trigger = (key: string, role: UserRole = UserRole.admin) => request(`/api/videos/${fixture!.targets[key].videoId}/final-evaluation`, role, {
       method: 'POST', body: JSON.stringify({ ruleEngineResultId: fixture!.targets[key].ruleId }),

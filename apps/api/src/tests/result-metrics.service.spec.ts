@@ -430,6 +430,32 @@ test('zero is preserved and counts as a provided core metric', async () => {
   assert.equal(result.views, 0);
 });
 
+test('paid product card accepts delivery metrics and derives CPC, CPM and ROI', async () => {
+  const result = await createHarness({ videoType: VideoType.product_card, isForAds: true })
+    .service.createSnapshot(videoId, {
+      dataStartDate: '2026-07-31', dataEndDate: '2026-08-01',
+      impressions: 1000, clicks: 50, spend: 100, gmv: 250,
+    }, actor, {});
+  assert.equal(result.cpc, '2');
+  assert.equal(result.cpm, '100');
+  assert.equal(result.roi, '2.5');
+});
+
+test('derived delivery metrics are recalculated when a base metric changes', async () => {
+  const harness = createHarness({ videoType: VideoType.product_card, isForAds: true });
+  const first = await harness.service.createSnapshot(videoId, {
+    dataStartDate: '2026-07-31', dataEndDate: '2026-08-01',
+    impressions: 1000, clicks: 50, spend: 100, gmv: 250,
+  }, actor, {});
+  const second = await harness.service.createSnapshot(videoId, {
+    baseMetricId: first.id,
+    spend: 200,
+  }, actor, {});
+  assert.equal(second.cpc, '4');
+  assert.equal(second.cpm, '200');
+  assert.equal(second.roi, '1.25');
+});
+
 test('dataStartDate after dataEndDate returns 400', async () => {
   await assert.rejects(
     createHarness().service.createSnapshot(videoId, {

@@ -91,6 +91,7 @@ export class FinalConfirmationsService {
       if (latestRule?.id !== rule.id || latestResultReview?.id !== resultReview.id || latestMetric?.id !== metric?.id ||
         contentReview.status !== AiReviewStatus.succeeded || resultReview.status !== AiReviewStatus.succeeded ||
         supervisorReview.decision !== VideoStatus.approved_for_publish || supervisorReview.isAllowedToPublish === false ||
+        supervisorReview.updatedAt > evaluation.createdAt || supervisorReview.reviewedAt > evaluation.createdAt ||
         evaluation.contentReviewId !== rule.contentReviewId || evaluation.resultReviewId !== rule.resultReviewId ||
         evaluation.contentGrade !== rule.contentGrade || evaluation.dataGrade !== rule.dataGrade ||
         contentReview.contentGrade !== rule.contentGrade || resultReview.dataGrade !== rule.dataGrade ||
@@ -119,7 +120,7 @@ export class FinalConfirmationsService {
       const boundary = rule.recommendedBoundary as RecommendedBoundary;
       if (!evaluation.recommendedFinalGrade || !(finalGrades as readonly string[]).includes(evaluation.recommendedFinalGrade) ||
         !allowedFinalGrades(boundary).includes(evaluation.recommendedFinalGrade as FinalGrade)) {
-        throw new ConflictException('GPT final recommendation is missing or outside the rule engine boundary.');
+        throw new ConflictException('AI final recommendation is missing or outside the rule engine boundary.');
       }
       if (!allowedFinalGrades(boundary).includes(dto.finalGrade)) {
         throw new UnprocessableEntityException('Final grade is outside the rule engine boundary.');
@@ -129,7 +130,7 @@ export class FinalConfirmationsService {
         throw new BadRequestException('Manual adjustment reason must contain at least 10 characters.');
       }
       if (!adjusted && manualAdjustReason) {
-        throw new BadRequestException('Manual adjustment reason must be omitted when accepting the GPT recommendation.');
+        throw new BadRequestException('Manual adjustment reason must be omitted when accepting the AI recommendation.');
       }
       if (boundary === 'require_manual_confirmation' && (!confirmationComment || confirmationComment.length < 10)) {
         throw new BadRequestException('Confirmation comment must contain at least 10 characters for manual confirmation.');

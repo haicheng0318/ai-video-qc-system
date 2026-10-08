@@ -103,7 +103,7 @@ test('non-pending-supervisor-review video returns 409', async () => {
   );
 });
 
-test('missing succeeded Gemini review returns 409', async () => {
+test('missing succeeded content review returns 409', async () => {
   await assert.rejects(
     createHarness({ hasSucceededAi: false }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
     ConflictException,

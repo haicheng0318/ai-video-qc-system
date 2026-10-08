@@ -84,6 +84,7 @@ export class ResultMetricsService {
       }
 
       const merged = this.mergeSnapshot(latest, dto, config.fields);
+      const autoCalculatedFields = this.applyDerivedMetrics(merged, dto, config.fields);
       this.validateCompleteSnapshot(merged, config.coreFields);
       const originalStatus = lockedVideo.status;
       const created = await transaction.videoResultMetric.create({
@@ -115,7 +116,8 @@ export class ResultMetricsService {
         },
         afterValue: {
           newMetricId: created.id,
-          changedFields: suppliedFields,
+          changedFields: [...new Set([...suppliedFields, ...autoCalculatedFields])],
+          autoCalculatedFields,
           videoStatus: VideoStatus.pending_result_data,
           dataStartDate: this.dateForLog(created.dataStartDate),
           dataEndDate: this.dateForLog(created.dataEndDate),
@@ -305,6 +307,49 @@ export class ResultMetricsService {
       throw new BadRequestException(`${field} must be between 0 and 100.`);
     }
     return decimal;
+  }
+
+  private applyDerivedMetrics(
+    values: MetricValues,
+    dto: CreateResultMetricSnapshotDto,
+    allowedFields: ResultMetricField[],
+  ) {
+    const calculated: ResultMetricField[] = [];
+    const hasInput = (field: ResultMetricField) =>
+      Object.prototype.hasOwnProperty.call(dto, field) &&
+      dto[field as keyof CreateResultMetricSnapshotDto] !== undefined;
+    const asDecimal = (field: ResultMetricField) => {
+      const value = values[field];
+      if (value === null || value === undefined) return null;
+      try {
+        return value instanceof Prisma.Decimal ? value : new Prisma.Decimal(String(value));
+      } catch {
+        return null;
+      }
+    };
+    const derive = (
+      field: 'cpc' | 'cpm' | 'roi',
+      dependencies: ResultMetricField[],
+      calculate: () => Prisma.Decimal | null,
+    ) => {
+      if (!allowedFields.includes(field) || hasInput(field)) return;
+      if (values[field] !== null && values[field] !== undefined && !dependencies.some(hasInput)) return;
+      const previous = values[field];
+      const next = calculate();
+      values[field] = next;
+      const previousValue = previous === null || previous === undefined ? null : String(previous);
+      const nextValue = next === null ? null : next.toString();
+      if (previousValue !== nextValue) calculated.push(field);
+    };
+    const divide = (numerator: Prisma.Decimal | null, denominator: Prisma.Decimal | null, multiplier = 1) => {
+      if (!numerator || !denominator || denominator.isZero()) return null;
+      return numerator.dividedBy(denominator).times(multiplier).toDecimalPlaces(4);
+    };
+
+    derive('cpc', ['spend', 'clicks'], () => divide(asDecimal('spend'), asDecimal('clicks')));
+    derive('cpm', ['spend', 'impressions'], () => divide(asDecimal('spend'), asDecimal('impressions'), 1000));
+    derive('roi', ['gmv', 'spend'], () => divide(asDecimal('gmv'), asDecimal('spend')));
+    return calculated;
   }
 
   private validateCompleteSnapshot(merged: MetricValues, coreFields: ResultMetricField[]) {
