@@ -101,6 +101,17 @@ model User {
   operationLogs           OperationLog[]
   evaluationJobs          EvaluationJob[]
   evaluationInputSnapshots EvaluationInputSnapshot[]
+  v11EvaluationGroups      V11EvaluationGroup[]     @relation("V11GroupOwner")
+  v11InputRevisions        V11EvaluationInputRevision[] @relation("V11InputOwner")
+  v11WorkflowRevisions     V11WorkflowRevision[]    @relation("V11RevisionOwner")
+  v11Decisions             V11EvaluationDecision[]  @relation("V11DecisionActor")
+  v11Holds                 V11WorkflowHold[]         @relation("V11HoldActor")
+  v11Appeals               V11Appeal[]               @relation("V11AppealSubmitter")
+  v11GateDecisions         V11WorkflowGateDecision[] @relation("V11GateActor")
+  v11BenchmarkProfilesCreated V11BenchmarkProfile[] @relation("V11BenchmarkCreator")
+  v11BenchmarkProfilesApproved V11BenchmarkProfile[] @relation("V11BenchmarkApprover")
+  v11ComprehensiveDecisions V11ComprehensiveDecision[] @relation("V11ComprehensiveActor")
+  v11ComprehensiveCaseMarkings V11ComprehensiveDecision[] @relation("V11ComprehensiveCaseMarker")
 
   @@map("users")
 }
@@ -143,6 +154,14 @@ model Video {
   operationLogs         OperationLog[]
   evaluationJobs        EvaluationJob[]
   evaluationInputSnapshots EvaluationInputSnapshot[]
+  v11InputRevisions        V11EvaluationInputRevision[]
+  v11EvaluationGroups      V11EvaluationGroup[]
+  v11WorkflowRevisions     V11WorkflowRevision[]
+  v11Holds                 V11WorkflowHold[]
+  v11Appeals               V11Appeal[]
+  v11GateDecisions         V11WorkflowGateDecision[]
+  v11DataDecisions         V11DataRatingDecision[]
+  v11ComprehensiveDecisions V11ComprehensiveDecision[]
 
   @@index([creatorId])
   @@index([status])
@@ -265,6 +284,7 @@ model VideoResultMetric {
   video                 Video            @relation(fields: [videoId], references: [id])
   submitter             User?            @relation(fields: [submittedBy], references: [id])
   aiResultReviews       AiResultReview[]
+  v11DataRatingDecisions V11DataRatingDecision[]
 
   @@index([videoId])
   @@index([submittedBy])
@@ -466,6 +486,7 @@ model EvaluationJob {
   contentReviewId   String?  @unique @map("content_review_id") @db.Uuid
   resultReviewId    String?  @unique @map("result_review_id") @db.Uuid
   finalEvaluationId String? @unique @map("final_evaluation_id") @db.Uuid
+  v11RunId          String? @unique @map("v11_run_id") @db.Uuid
   inputRefs         Json     @default("{}") @map("input_refs")
   maxOutputTokens   Int      @default(4000) @map("max_output_tokens")
   attempts          Int      @default(0)
@@ -484,6 +505,7 @@ model EvaluationJob {
   contentReview     AiContentReview? @relation(fields: [contentReviewId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   resultReview      AiResultReview? @relation(fields: [resultReviewId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   finalEvaluation   FinalVideoEvaluation? @relation(fields: [finalEvaluationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  v11Run            V11EvaluationRun? @relation(fields: [v11RunId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   attemptHistory    EvaluationJobAttempt[]
   usageRecords      AiUsageRecord[]
 
@@ -589,6 +611,328 @@ model EvaluationInputSnapshot {
 
   @@index([videoId])
   @@map("evaluation_input_snapshots")
+}
+
+/// Immutable V1.1 input provenance. It is additive and never replaces legacy snapshots.
+model V11EvaluationInputRevision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  ownerId                  String   @map("owner_id") @db.Uuid
+  revision                 Int
+  fileHash                 String   @map("file_hash") @db.Char(64)
+  metadataSnapshot         Json     @map("metadata_snapshot")
+  metadataSnapshotHash     String   @map("metadata_snapshot_hash") @db.Char(64)
+  mediaManifest            Json     @map("media_manifest")
+  mediaManifestHash        String   @map("media_manifest_hash") @db.Char(64)
+  modelConfigSnapshot      Json     @map("model_config_snapshot")
+  promptVersion            String   @map("prompt_version") @db.VarChar(80)
+  schemaVersion            String   @map("schema_version") @db.VarChar(80)
+  rubricVersion            String   @map("rubric_version") @db.VarChar(80)
+  ratingVersion            String   @map("rating_version") @db.VarChar(80)
+  preprocessingVersion     String   @map("preprocessing_version") @db.VarChar(80)
+  referenceSetVersion      String   @map("reference_set_version") @db.VarChar(80)
+  evaluationFingerprint    String   @map("evaluation_fingerprint") @db.Char(64)
+  inputComplete            Boolean  @default(true) @map("input_complete")
+  incompleteReasons        Json?    @map("incomplete_reasons")
+  createdAt                DateTime @default(now()) @map("created_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  owner                    User     @relation("V11InputOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  groups                   V11EvaluationGroup[]
+
+  @@unique([videoId, revision])
+  @@index([ownerId, evaluationFingerprint])
+  @@index([videoId, createdAt])
+  @@map("v11_evaluation_input_revisions")
+}
+
+/// Revision fences async callbacks so old work can never replace a newer adopted result.
+model V11WorkflowRevision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  ownerId                  String   @map("owner_id") @db.Uuid
+  revision                 Int
+  status                   String   @default("current") @db.VarChar(30)
+  activeContentDecisionId  String?  @map("active_content_decision_id") @db.Uuid
+  policySnapshot           Json     @default("{}") @map("policy_snapshot")
+  createdAt                DateTime @default(now()) @map("created_at")
+  supersededAt             DateTime? @map("superseded_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  owner                    User     @relation("V11RevisionOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  groups                   V11EvaluationGroup[]
+  decisions                V11EvaluationDecision[]
+  holds                    V11WorkflowHold[]
+  appeals                  V11Appeal[]
+  gateDecisions            V11WorkflowGateDecision[]
+  dataDecisions            V11DataRatingDecision[]
+  comprehensiveDecisions   V11ComprehensiveDecision[]
+
+  @@unique([videoId, revision])
+  @@index([videoId, status])
+  @@map("v11_workflow_revisions")
+}
+
+model V11EvaluationGroup {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  ownerId                  String   @map("owner_id") @db.Uuid
+  inputRevisionId          String   @map("input_revision_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  stage                    String   @default("content") @db.VarChar(30)
+  status                   String   @default("queued") @db.VarChar(30)
+  triggerReason            String   @map("trigger_reason") @db.VarChar(80)
+  shadowMode               Boolean  @default(true) @map("shadow_mode")
+  validRunCount            Int      @default(0) @map("valid_run_count")
+  technicalAttemptCount    Int      @default(0) @map("technical_attempt_count")
+  parentGroupId            String?  @map("parent_group_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  owner                    User     @relation("V11GroupOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  inputRevision            V11EvaluationInputRevision @relation(fields: [inputRevisionId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  parentGroup              V11EvaluationGroup? @relation("V11GroupRerun", fields: [parentGroupId], references: [id], onDelete: Restrict)
+  rerunGroups              V11EvaluationGroup[] @relation("V11GroupRerun")
+  runs                     V11EvaluationRun[]
+  decision                 V11EvaluationDecision?
+  holds                    V11WorkflowHold[]
+  appeals                  V11Appeal[] @relation("V11AppealRerun")
+
+  @@index([videoId, createdAt])
+  @@index([ownerId, status])
+  @@index([inputRevisionId])
+  @@index([parentGroupId])
+  @@map("v11_evaluation_groups")
+}
+
+model V11WorkflowHold {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  groupId                  String?  @map("group_id") @db.Uuid
+  holdType                 String   @map("hold_type") @db.VarChar(40)
+  reason                   String   @db.VarChar(500)
+  status                   String   @default("active") @db.VarChar(20)
+  createdById              String?  @map("created_by_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at")
+  resolvedAt               DateTime? @map("resolved_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  createdBy                User?    @relation("V11HoldActor", fields: [createdById], references: [id], onDelete: Restrict)
+  group                    V11EvaluationGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  @@index([videoId, status])
+  @@index([workflowRevisionId])
+  @@map("v11_workflow_holds")
+}
+
+model V11Appeal {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  stage                    String   @db.VarChar(30)
+  resultId                 String   @map("result_id") @db.Uuid
+  reason                   String   @db.VarChar(500)
+  timestamps               Json?
+  status                   String   @default("active") @db.VarChar(20)
+  submittedById            String   @map("submitted_by_id") @db.Uuid
+  rerunGroupId             String?  @map("rerun_group_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at")
+  resolvedAt               DateTime? @map("resolved_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  submittedBy              User     @relation("V11AppealSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  rerunGroup               V11EvaluationGroup? @relation("V11AppealRerun", fields: [rerunGroupId], references: [id], onDelete: Restrict)
+
+  @@index([videoId, status])
+  @@index([resultId])
+  @@map("v11_appeals")
+}
+
+model V11WorkflowGateDecision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  stage                    String   @db.VarChar(30)
+  decision                 String   @db.VarChar(50)
+  decisionSource           String   @map("decision_source") @db.VarChar(20)
+  actorId                  String?  @map("actor_id") @db.Uuid
+  reason                   String   @db.VarChar(500)
+  performanceEligible      Boolean  @default(false) @map("performance_eligible")
+  decidedAt                DateTime @default(now()) @map("decided_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  actor                    User?    @relation("V11GateActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([workflowRevisionId, stage])
+  @@index([videoId, decidedAt])
+  @@map("v11_workflow_gate_decisions")
+}
+
+model V11BenchmarkProfile {
+  id                       String   @id @default(uuid()) @db.Uuid
+  name                     String   @db.VarChar(120)
+  version                  Int
+  platform                 String   @db.VarChar(100)
+  brand                    String?  @db.VarChar(100)
+  videoType                VideoType @map("video_type")
+  primaryMetric            String   @map("primary_metric") @db.VarChar(100)
+  requiredMetrics          String[] @map("required_metrics")
+  minimumSampleMetric      String   @map("minimum_sample_metric") @db.VarChar(100)
+  minimumSampleValue       Decimal  @map("minimum_sample_value") @db.Decimal(18, 4)
+  observationWindowDays    Int      @map("observation_window_days")
+  guardRules               Json     @default("[]") @map("guard_rules")
+  status                   String   @default("draft") @db.VarChar(20)
+  enabled                  Boolean  @default(false)
+  createdById              String   @map("created_by_id") @db.Uuid
+  approvedById             String?  @map("approved_by_id") @db.Uuid
+  approvedAt               DateTime? @map("approved_at")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  createdBy                User     @relation("V11BenchmarkCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy               User?    @relation("V11BenchmarkApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  thresholds               V11BenchmarkThreshold[]
+  dataDecisions            V11DataRatingDecision[]
+
+  @@unique([platform, brand, videoType, version])
+  @@index([platform, brand, videoType, status, enabled])
+  @@map("v11_benchmark_profiles")
+}
+
+model V11BenchmarkThreshold {
+  id                       String   @id @default(uuid()) @db.Uuid
+  profileId                String   @map("profile_id") @db.Uuid
+  metricName               String   @map("metric_name") @db.VarChar(100)
+  direction                String   @db.VarChar(20)
+  sThreshold               Decimal  @map("s_threshold") @db.Decimal(18, 4)
+  aPlusThreshold           Decimal  @map("a_plus_threshold") @db.Decimal(18, 4)
+  aThreshold               Decimal  @map("a_threshold") @db.Decimal(18, 4)
+  bThreshold               Decimal  @map("b_threshold") @db.Decimal(18, 4)
+  bMinusThreshold          Decimal  @map("b_minus_threshold") @db.Decimal(18, 4)
+  cThreshold               Decimal  @map("c_threshold") @db.Decimal(18, 4)
+  profile                  V11BenchmarkProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+
+  @@unique([profileId, metricName])
+  @@map("v11_benchmark_thresholds")
+}
+
+model V11DataRatingDecision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  resultMetricId           String   @map("result_metric_id") @db.Uuid
+  benchmarkProfileId       String?  @map("benchmark_profile_id") @db.Uuid
+  dataRating               String?  @map("data_rating") @db.VarChar(10)
+  dataSufficiency          String   @map("data_sufficiency") @db.VarChar(20)
+  ratingVersion            String   @map("rating_version") @db.VarChar(80)
+  primaryMetric            String?  @map("primary_metric") @db.VarChar(100)
+  primaryMetricValue       Decimal? @map("primary_metric_value") @db.Decimal(18, 4)
+  guardApplications        Json     @default("[]") @map("guard_applications")
+  explanationReviewId      String?  @map("explanation_review_id") @db.Uuid
+  decidedAt                DateTime @default(now()) @map("decided_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  resultMetric             VideoResultMetric @relation(fields: [resultMetricId], references: [id], onDelete: Restrict)
+  benchmarkProfile         V11BenchmarkProfile? @relation(fields: [benchmarkProfileId], references: [id], onDelete: Restrict)
+  comprehensiveDecisions   V11ComprehensiveDecision[]
+
+  @@unique([workflowRevisionId, resultMetricId])
+  @@index([videoId, decidedAt])
+  @@map("v11_data_rating_decisions")
+}
+
+model V11ComprehensiveDecision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  videoId                  String   @map("video_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  contentDecisionId        String   @map("content_decision_id") @db.Uuid
+  dataDecisionId           String   @map("data_decision_id") @db.Uuid
+  decisionRevision         Int      @default(1) @map("decision_revision")
+  comprehensiveRating      String?  @map("comprehensive_rating") @db.VarChar(10)
+  matrixVersion            String   @map("matrix_version") @db.VarChar(80)
+  requiresAdminReview      Boolean  @default(false) @map("requires_admin_review")
+  businessConclusion       String?  @map("business_conclusion") @db.VarChar(30)
+  finalStatus              String?  @map("final_status") @db.VarChar(50)
+  isEffectiveFinal         Boolean? @map("is_effective_final")
+  performanceEligible      Boolean  @default(false) @map("performance_eligible")
+  decisionSource           String?  @map("decision_source") @db.VarChar(20)
+  decisionActorId          String?  @map("decision_actor_id") @db.Uuid
+  isExcellentCase          Boolean  @default(false) @map("is_excellent_case")
+  isNegativeCase           Boolean  @default(false) @map("is_negative_case")
+  caseMarkedById           String?  @map("case_marked_by_id") @db.Uuid
+  caseMarkedAt             DateTime? @map("case_marked_at")
+  caseNote                 String?  @map("case_note") @db.VarChar(500)
+  explanation              Json?
+  decidedAt                DateTime @default(now()) @map("decided_at")
+  video                    Video    @relation(fields: [videoId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  contentDecision          V11EvaluationDecision @relation(fields: [contentDecisionId], references: [id], onDelete: Restrict)
+  dataDecision             V11DataRatingDecision @relation(fields: [dataDecisionId], references: [id], onDelete: Restrict)
+  decisionActor            User?    @relation("V11ComprehensiveActor", fields: [decisionActorId], references: [id], onDelete: Restrict)
+  caseMarkedBy             User?    @relation("V11ComprehensiveCaseMarker", fields: [caseMarkedById], references: [id], onDelete: Restrict)
+
+  @@unique([workflowRevisionId, contentDecisionId, dataDecisionId, matrixVersion, decisionRevision])
+  @@index([videoId, decidedAt])
+  @@index([comprehensiveRating])
+  @@map("v11_comprehensive_decisions")
+}
+
+model V11EvaluationRun {
+  id                       String   @id @default(uuid()) @db.Uuid
+  groupId                  String   @map("group_id") @db.Uuid
+  runNumber                Int      @map("run_number")
+  runRole                  String   @map("run_role") @db.VarChar(30)
+  status                   String   @default("pending") @db.VarChar(30)
+  blindContextHash         String   @map("blind_context_hash") @db.Char(64)
+  modelProvider            String   @map("model_provider") @db.VarChar(50)
+  modelName                String   @map("model_name") @db.VarChar(100)
+  modelConfigSnapshot      Json     @map("model_config_snapshot")
+  promptVersion            String   @map("prompt_version") @db.VarChar(80)
+  schemaVersion            String   @map("schema_version") @db.VarChar(80)
+  rubricVersion            String   @map("rubric_version") @db.VarChar(80)
+  ratingVersion            String   @map("rating_version") @db.VarChar(80)
+  preprocessingVersion     String   @map("preprocessing_version") @db.VarChar(80)
+  referenceSetVersion      String   @map("reference_set_version") @db.VarChar(80)
+  structuredOutput         Json?    @map("structured_output")
+  rawResponse              Json?    @map("raw_response")
+  totalScore               Decimal? @map("total_score") @db.Decimal(5, 1)
+  contentRating            String?  @map("content_rating") @db.VarChar(10)
+  complianceStatus         String?  @map("compliance_status") @db.VarChar(20)
+  factsHash                String?  @map("facts_hash") @db.Char(64)
+  technicalAttempts        Int      @default(0) @map("technical_attempts")
+  errorMessage             String?  @map("error_message") @db.Text
+  stale                    Boolean  @default(false)
+  createdAt                DateTime @default(now()) @map("created_at")
+  completedAt              DateTime? @map("completed_at")
+  group                    V11EvaluationGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  evaluationJob            EvaluationJob?
+
+  @@unique([groupId, runNumber])
+  @@index([groupId, status])
+  @@map("v11_evaluation_runs")
+}
+
+model V11EvaluationDecision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  groupId                  String   @unique @map("group_id") @db.Uuid
+  workflowRevisionId       String   @map("workflow_revision_id") @db.Uuid
+  sourceRunIds             String[] @map("source_run_ids") @db.Uuid
+  adoptedDimensions        Json     @map("adopted_dimensions")
+  totalScore               Decimal? @map("total_score") @db.Decimal(5, 1)
+  contentRating            String?  @map("content_rating") @db.VarChar(10)
+  complianceStatus         String   @map("compliance_status") @db.VarChar(20)
+  inputComplete            Boolean  @map("input_complete")
+  stable                   Boolean
+  decisionSource           String   @default("system") @map("decision_source") @db.VarChar(20)
+  adoptionMethod           String   @map("adoption_method") @db.VarChar(50)
+  actorId                  String?  @map("actor_id") @db.Uuid
+  decidedAt                DateTime @default(now()) @map("decided_at")
+  group                    V11EvaluationGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
+  actor                    User?    @relation("V11DecisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  comprehensiveDecisions   V11ComprehensiveDecision[]
+
+  @@index([workflowRevisionId])
+  @@map("v11_evaluation_decisions")
 }
 
 model UserSession {
