@@ -31,15 +31,15 @@ test('admin can review any video', async () => {
   await assert.doesNotReject(service().permissions.assertCanSubmitSupervisorReview(user(UserRole.admin), video));
 });
 
-test('content owner can review any video', async () => {
-  await assert.doesNotReject(service().permissions.assertCanSubmitSupervisorReview(user(UserRole.content_owner), video));
+test('content owner can review own video', async () => {
+  await assert.doesNotReject(service().permissions.assertCanSubmitSupervisorReview(user(UserRole.content_owner, 'director-id'), video));
 });
 
-test('supervisor can review a direct report video', async () => {
-  await assert.doesNotReject(service().permissions.assertCanSubmitSupervisorReview(user(UserRole.supervisor), video));
+test('supervisor can review own video', async () => {
+  await assert.doesNotReject(service().permissions.assertCanSubmitSupervisorReview(user(UserRole.supervisor, 'director-id'), video));
 });
 
-test('supervisor cannot review a non-direct-report video', async () => {
+test('supervisor cannot review another user video even when it was formerly a direct report', async () => {
   const harness = service();
   await assert.rejects(
     harness.permissions.assertCanSubmitSupervisorReview(

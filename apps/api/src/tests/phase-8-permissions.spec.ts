@@ -12,7 +12,7 @@ for (const method of ['assertCanConfirmFinalEvaluation', 'assertCanMarkCase'] as
   for (const role of Object.values(UserRole)) {
     test(`${role} ${method} permission`, async () => {
       const value = harness();
-      const action = value.service[method]({ id: 'user', role, account: role, name: role, managerId: null }, { id: 'video' } as any);
+      const action = value.service[method]({ id: 'user', role, account: role, name: role, managerId: null }, { id: 'video', creatorId: role === UserRole.content_owner ? 'user' : 'another-user' } as any);
       if ([UserRole.admin, UserRole.content_owner].includes(role as any)) {
         await action; assert.equal(value.logs.length, 0);
       } else {

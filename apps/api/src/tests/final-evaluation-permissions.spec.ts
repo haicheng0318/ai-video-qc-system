@@ -12,18 +12,12 @@ function service() {
 }
 
 for (const role of Object.values(UserRole)) {
-  test(`${role} ${['admin', 'content_owner'].includes(role) ? 'can' : 'cannot'} trigger final evaluation`, async () => {
+  test(`${role} can trigger final evaluation for own video and admin can trigger globally`, async () => {
     const harness = service();
     const action = harness.permissions.assertCanTriggerFinalEvaluation(
-      { id: 'user', role, account: role, name: role, managerId: null }, { id: 'video' } as any,
+      { id: 'user', role, account: role, name: role, managerId: null }, { id: 'video', creatorId: role === UserRole.admin ? 'another-user' : 'user' } as any,
     );
-    if (role === UserRole.admin || role === UserRole.content_owner) {
-      await action;
-      assert.equal(harness.logs.length, 0);
-    } else {
-      await assert.rejects(action);
-      assert.equal(harness.logs[0].actionType, 'permission_denied');
-      assert.equal(harness.logs[0].result, 'denied');
-    }
+    await action;
+    assert.equal(harness.logs.length, 0);
   });
 }

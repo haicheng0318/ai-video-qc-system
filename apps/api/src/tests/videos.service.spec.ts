@@ -57,6 +57,11 @@ test('video list applies bounded pagination and returns metadata while preservin
   const result = await service.list(testUser, { page: 3, pageSize: 20, search: 'summer' });
   assert.equal(findArgs?.skip, 40);
   assert.equal(findArgs?.take, 20);
+  const include = findArgs?.include as Record<string, any>;
+  assert.deepEqual(include.v11DataDecisions.where, { workflowRevision: { status: 'current' } });
+  assert.deepEqual(include.v11ComprehensiveDecisions.where, { workflowRevision: { status: 'current' } });
+  assert.equal(include.v11DataDecisions.take, 1);
+  assert.equal(include.v11ComprehensiveDecisions.take, 1);
   assert.deepEqual(result, { items: [{ id: 'video-1' }], total: 41, page: 3, pageSize: 20 });
 });
 
