@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ai_video_qc
       POSTGRES_USER: video_qc
-      POSTGRES_PASSWORD: video_qc_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in local untracked configuration}
     ports:
       - "5432:5432"
     volumes:
