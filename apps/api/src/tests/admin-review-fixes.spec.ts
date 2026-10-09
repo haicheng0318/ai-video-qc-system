@@ -9,7 +9,7 @@ import { firstValueFrom, throwError } from 'rxjs';
 test('worker process heartbeat continues while long maintenance blocks claiming', async ctx => {
   ctx.mock.timers.enable({ apis: ['setInterval', 'Date'], now: new Date('2026-09-10T00:00:00Z') });
   let release!: () => void; let heartbeats = 0;
-  const worker = new EvaluationWorker({ recordWorkerHeartbeat: async () => { heartbeats++; }, recoverExpired: async () => {}, recoverOrphans: async () => {}, claim: async () => null } as any, {} as any, {} as any, {} as any, { sweep: () => new Promise<void>(r => { release = r; }) } as any);
+  const worker = new EvaluationWorker({ recordWorkerHeartbeat: async () => { heartbeats++; }, recoverExpired: async () => {}, recoverOrphans: async () => {}, claim: async () => null } as any, {} as any, {} as any, {} as any, {} as any, { sweep: () => new Promise<void>(r => { release = r; }) } as any);
   const running = worker.runOnce(); await Promise.resolve(); await Promise.resolve();
   ctx.mock.timers.tick(125000); await Promise.resolve(); await Promise.resolve();
   assert.ok(heartbeats >= 2, 'maintenance must not stop process heartbeat');

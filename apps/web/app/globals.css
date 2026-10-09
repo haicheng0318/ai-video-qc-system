@@ -196,6 +196,22 @@ td { font-variant-numeric: tabular-nums; }
 .upload-progress { align-items: center; background: var(--primary-soft); border-radius: 8px; display: grid; gap: 8px; grid-template-columns: minmax(150px, auto) minmax(120px, 1fr) auto; padding: 12px; }
 .upload-progress progress { accent-color: var(--primary); width: 100%; }
 .filter-grid { align-items: flex-end; display: grid; gap: 12px; grid-template-columns: minmax(180px, 1.5fr) repeat(3, minmax(130px, 1fr)) auto; margin-bottom: 20px; }
+.v11-filter-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.list-toolbar { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.segmented { border: 1px solid var(--line); border-radius: 8px; display: inline-flex; overflow: hidden; }
+.segmented button { background: #fff; border: 0; border-right: 1px solid var(--line); color: #344054; cursor: pointer; min-height: 40px; padding: 8px 14px; }
+.segmented button:last-child { border-right: 0; }
+.segmented button.active { background: var(--primary-soft); color: var(--primary); font-weight: 700; }
+.video-card-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.video-card { border: 1px solid var(--line); border-radius: 8px; min-width: 0; overflow: hidden; }
+.video-card-cover { align-items: center; aspect-ratio: 16 / 9; background: #eef0f4 center / cover no-repeat; color: var(--muted); display: flex; justify-content: center; }
+.video-card-body { display: grid; gap: 12px; padding: 14px; }
+.video-card-body p { margin: 3px 0 0; }
+.video-card-body dl { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.video-card-body dl div { min-width: 0; }
+.video-card-body dt, .video-card-body small { color: var(--muted); font-size: 12px; }
+.video-card-body dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.cell-subline { color: var(--muted); display: block; margin-top: 4px; }
 .pagination { align-items: center; color: var(--muted); display: flex; justify-content: space-between; margin-top: 18px; }
 .pagination div { display: flex; gap: 8px; }
 .trial-badge { background: #fff4e6; border-radius: 999px; color: var(--warning); font-size: 12px; font-weight: 700; margin-left: 8px; padding: 3px 7px; }

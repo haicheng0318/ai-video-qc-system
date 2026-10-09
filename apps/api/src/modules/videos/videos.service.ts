@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { allowedVideoActions } from './video-actions';
 import { rowsToCsv, videoReportRows } from './video-report';
 
-const adminListFilterRoles: UserRole[] = [UserRole.admin, UserRole.content_owner];
+const adminListFilterRoles: UserRole[] = [UserRole.admin];
 const activeRevisionStatuses: VideoStatus[] = [
   VideoStatus.submitted,
   VideoStatus.ai_content_reviewing,
@@ -40,6 +40,12 @@ function storageDir() {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function shanghaiDate(value: string, nextDay = false) {
+  const [year, month, day] = value.split('-').map(Number);
+  const timestamp = Date.UTC(year, month - 1, day + (nextDay ? 1 : 0)) - 8 * 60 * 60 * 1000;
+  return new Date(timestamp);
 }
 
 @Injectable()
@@ -327,6 +333,15 @@ export class VideosService {
     if (query.creatorId && adminListFilterRoles.includes(user.role)) {
       where.creatorId = query.creatorId;
     }
+    if (query.month) {
+      const [year, month] = query.month.split('-').map(Number);
+      where.createdAt = { gte: new Date(Date.UTC(year, month - 1, 1) - 8 * 60 * 60 * 1000), lt: new Date(Date.UTC(year, month, 1) - 8 * 60 * 60 * 1000) };
+    } else if (query.dateFrom || query.dateTo) {
+      where.createdAt = { ...(query.dateFrom ? { gte: shanghaiDate(query.dateFrom) } : {}), ...(query.dateTo ? { lt: shanghaiDate(query.dateTo, true) } : {}) };
+    }
+    if (query.contentRating) {
+      where.v11EvaluationGroups = { some: { decision: { contentRating: query.contentRating }, workflowRevision: { status: 'current' } } };
+    }
 
     const [videos, total] = await this.prisma.$transaction([this.prisma.video.findMany({
       where,
@@ -348,6 +363,29 @@ export class VideosService {
         finalVideoEvaluations: {
           orderBy: { createdAt: 'desc' },
           take: 1,
+        },
+        v11EvaluationGroups: {
+          where: { workflowRevision: { status: 'current' } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            decision: { select: { totalScore: true, contentRating: true, decisionSource: true } },
+            workflowRevision: { select: { revision: true } },
+            holds: { where: { status: 'active' }, select: { id: true, holdType: true } },
+            appeals: { where: { status: 'active' }, select: { id: true, stage: true } },
+          },
+        },
+        v11DataDecisions: {
+          where: { workflowRevision: { status: 'current' } },
+          orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+          select: { dataRating: true, dataSufficiency: true },
+        },
+        v11ComprehensiveDecisions: {
+          where: { workflowRevision: { status: 'current' } },
+          orderBy: [{ decisionRevision: 'desc' }, { decidedAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+          select: { comprehensiveRating: true, decisionSource: true, requiresAdminReview: true },
         },
       },
     }), this.prisma.video.count({ where })]);
