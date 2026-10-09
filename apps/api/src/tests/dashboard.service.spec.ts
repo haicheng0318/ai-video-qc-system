@@ -19,7 +19,7 @@ test('summary maps aggregate counts and null-safe rates', async () => {
   const result = await service.summary({}, user(UserRole.admin));
   assert.equal(result.finalizedCount, 10); assert.equal(result.finalEffectiveRate, 40); assert.equal(result.effectiveOutputRate, 70);
   assert.equal(result.lowEffectiveRate, 30); assert.equal(result.gptMatchRate, 80); assert.equal(result.manualAdjustmentRate, 20);
-  assert.equal(result.pipeline.pendingFinalConfirmationCount, 4); assert.equal(calls.length, 2);
+  assert.equal(result.pipeline.pendingFinalConfirmationCount, 4); assert.equal(calls.length, 3);
 });
 
 test('zero finalized denominator returns null rates', async () => {
@@ -34,9 +34,8 @@ for (const role of Object.values(UserRole)) {
     const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);
     await service.summary({}, user(role));
     const query = sqlText(calls[0]);
-    if (role === UserRole.supervisor) assert.match(query, /manager_id/);
-    else if (role === UserRole.director) assert.match(query, /creator_id/);
-    else assert.doesNotMatch(query, /manager_id/);
+    if (role === UserRole.admin) assert.doesNotMatch(query, /AND v\.creator_id =/);
+    else assert.match(query, /AND v\.creator_id =/);
   });
 }
 
@@ -83,6 +82,15 @@ test('summary query only counts confirmed formal evaluations', async () => {
   assert.match(sqlText(calls.find((query) => sqlText(query).includes('final_video_evaluations'))), /final_grade IS NOT NULL/);
 });
 
+test('V1.1 dashboard only counts finalized decisions from the current workflow revision', async () => {
+  const calls: any[] = [];
+  const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);
+  await service.summary({}, user(UserRole.admin));
+  const query = calls.find((item) => sqlText(item).includes('v11_comprehensive_decisions'));
+  assert.match(sqlText(query), /JOIN v11_workflow_revisions/);
+  assert.match(sqlText(query), /w\.status = 'current'/);
+});
+
 test('dashboard date-only boundaries represent complete Asia/Shanghai calendar days', async () => {
   const calls: any[] = [];
   const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);
@@ -108,7 +116,7 @@ test('pipeline query is separate from finalized denominator', async () => {
   assert.equal(calls.filter((query) => sqlText(query).includes('FROM videos v')).length, 1);
 });
 
-test('supervisor summary aggregates own and direct-report videos through the SQL visibility scope', async () => {
+test('supervisor summary aggregates only own videos through the SQL visibility scope', async () => {
   const calls: any[] = [];
   const service = new DashboardService({ $queryRaw: async (query: any) => {
     calls.push(query);
@@ -118,27 +126,27 @@ test('supervisor summary aggregates own and direct-report videos through the SQL
   } } as any);
   const result = await service.summary({}, user(UserRole.supervisor));
   const formalQuery = calls.find((query) => sqlText(query).includes('FROM final_video_evaluations'));
-  assert.match(sqlText(formalQuery), /v\.creator_id = .* OR creator\.manager_id =/);
-  assert.equal(formalQuery.values.filter((value: unknown) => value === user(UserRole.supervisor).id).length, 2);
+  assert.match(sqlText(formalQuery), /AND v\.creator_id =/);
+  assert.equal(formalQuery.values.filter((value: unknown) => value === user(UserRole.supervisor).id).length, 1);
   assert.equal(result.finalizedCount, 3);
   assert.equal(result.effectiveOutputCount, 2);
   assert.equal(result.effectiveOutputRate, 66.67);
 });
 
-test('supervisor breakdown excludes users outside the SQL visibility scope', async () => {
+test('supervisor breakdown excludes every other user through the SQL visibility scope', async () => {
   const calls: any[] = [];
   const service = new DashboardService({ $queryRaw: async (query: any) => {
     calls.push(query);
     return [{
-      group_key: 'direct-report-id', group_label: '直属编导', finalized: 2n,
+      group_key: user(UserRole.supervisor).id, group_label: '本人', finalized: 2n,
       effective: 1n, low_effective: 0n, invalid: 1n, performance_eligible: 1n,
       excellent_cases: 0n, negative_cases: 1n, manually_adjusted: 0n,
     }];
   } } as any);
   const result = await service.breakdown({ groupBy: 'creator' }, user(UserRole.supervisor));
-  assert.match(sqlText(calls[0]), /v\.creator_id = .* OR creator\.manager_id =/);
+  assert.match(sqlText(calls[0]), /AND v\.creator_id =/);
   assert.doesNotMatch(JSON.stringify(result), /管辖范围外编导/);
-  assert.deepEqual(result.items.map((item) => item.groupLabel), ['直属编导']);
+  assert.deepEqual(result.items.map((item) => item.groupLabel), ['本人']);
   assert.equal(result.items[0].finalizedCount, 2);
   assert.equal(result.items[0].effectiveOutputRate, 50);
 });

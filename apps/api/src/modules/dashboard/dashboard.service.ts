@@ -41,16 +41,7 @@ export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
   private visibility(user: AuthenticatedUser) {
-    const fullVisibility = new Set<UserRole>([
-      UserRole.admin, UserRole.content_owner, UserRole.operator, UserRole.advertiser,
-    ]);
-    if (fullVisibility.has(user.role)) {
-      return Prisma.empty;
-    }
-    if (user.role === UserRole.supervisor) {
-      return Prisma.sql`AND (v.creator_id = ${user.id}::uuid OR creator.manager_id = ${user.id}::uuid)`;
-    }
-    return Prisma.sql`AND v.creator_id = ${user.id}::uuid`;
+    return user.role === UserRole.admin ? Prisma.empty : Prisma.sql`AND v.creator_id = ${user.id}::uuid`;
   }
 
   private filters(query: DashboardQueryDto, user: AuthenticatedUser) {
@@ -66,7 +57,7 @@ export class DashboardService {
   async summary(query: DashboardQueryDto, user: AuthenticatedUser) {
     const selectedPeriod = period(query);
     const filters = this.filters(query, user);
-    const [rows, pipeline = {}] = await Promise.all([
+    const [rows, pipeline = {}, v11Rows] = await Promise.all([
       this.prisma.$queryRaw<AggregateRow[]>(Prisma.sql`
         SELECT
           COUNT(*) AS finalized,
@@ -99,6 +90,28 @@ export class DashboardService {
         JOIN users creator ON creator.id = v.creator_id
         WHERE v.is_trial = false ${filters}
       `).then((rows) => rows[0] || {}),
+      this.prisma.$queryRaw<AggregateRow[]>(Prisma.sql`
+        WITH latest AS (
+          SELECT DISTINCT ON (c.video_id) c.*
+          FROM v11_comprehensive_decisions c
+          JOIN v11_workflow_revisions w ON w.id = c.workflow_revision_id
+          WHERE c.final_status IS NOT NULL
+            AND w.status = 'current'
+          ORDER BY c.video_id, c.decision_revision DESC, c.decided_at DESC, c.id DESC
+        )
+        SELECT COUNT(*) AS finalized,
+          COUNT(*) FILTER (WHERE comprehensive_rating IN ('S', 'A+', 'A', 'B')) AS effective,
+          COUNT(*) FILTER (WHERE comprehensive_rating IN ('B-', 'C')) AS low_effective,
+          COUNT(*) FILTER (WHERE comprehensive_rating = 'D') AS invalid,
+          COUNT(*) FILTER (WHERE performance_eligible) AS performance_eligible,
+          COUNT(*) FILTER (WHERE is_excellent_case) AS excellent_cases,
+          COUNT(*) FILTER (WHERE is_negative_case) AS negative_cases
+        FROM latest c
+        JOIN videos v ON v.id = c.video_id
+        JOIN users creator ON creator.id = v.creator_id
+        WHERE c.decided_at BETWEEN ${selectedPeriod.startDate} AND ${selectedPeriod.endDate}
+          AND v.is_trial = false ${filters}
+      `),
     ]);
     const row: AggregateRow = rows[0] || {};
     const finalized = count(row.finalized);
@@ -108,6 +121,7 @@ export class DashboardService {
     const effectiveOutput = count(row.effective_output);
     const performanceEligible = count(row.performance_eligible);
     const gptMatched = count(row.gpt_matched);
+    const v11 = v11Rows[0] || {};
     return {
       period: { startDate: selectedPeriod.startDate.toISOString(), endDate: selectedPeriod.endDate.toISOString() },
       finalizedCount: finalized,
@@ -132,6 +146,15 @@ export class DashboardService {
         pendingFinalEvaluationCount: count(pipeline.pending_final_evaluation),
         finalEvaluationFailedCount: count(pipeline.final_evaluation_failed),
         pendingFinalConfirmationCount: count(pipeline.pending_final_confirmation),
+      },
+      v11: {
+        finalizedCount: count(v11.finalized),
+        effectiveCount: count(v11.effective),
+        lowEffectiveCount: count(v11.low_effective),
+        invalidCount: count(v11.invalid),
+        performanceEligibleCount: count(v11.performance_eligible),
+        excellentCaseCount: count(v11.excellent_cases),
+        negativeCaseCount: count(v11.negative_cases),
       },
     };
   }
