@@ -23,6 +23,7 @@ import { PlatformBenchmarksModule } from './modules/platform-benchmarks/platform
 import { StorageModule } from './modules/storage/storage.module';
 import { QuotasModule } from './modules/quotas/quotas.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { V11Module } from './modules/v11/v11.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AdminModule } from './modules/admin/admin.module';
     CasesModule,
     DashboardModule,
     PlatformBenchmarksModule,
+    V11Module,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ManagementDenialInterceptor }],

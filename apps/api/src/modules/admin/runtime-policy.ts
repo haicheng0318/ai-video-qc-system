@@ -11,6 +11,8 @@ export const settingSchemas: Record<string, z.ZodType> = {
   retention: z.object({ temporaryHours: z.number().int().min(1).max(720), auditDays: z.number().int().min(90).max(3650) }).strict(),
   alerts: z.object({ workerStaleSeconds: z.number().int().min(60).max(600), queueWaitSeconds: z.number().int().min(30).max(86400), expiryWarningDays: z.number().int().min(1).max(90) }).strict(),
   evaluation_parameters: z.object({ stage: z.enum(['result', 'final']), modelName: model, maxOutputTokens: z.number().int().min(256).max(16000) }).strict(),
+  v11_content_shadow: z.object({ enabled: z.boolean(), shadowMode: z.boolean() }).strict(),
+  v11_workflow_gates: z.object({ manualContentReviewEnabled: z.boolean(), manualFinalConfirmationEnabled: z.boolean() }).strict(),
 };
 export const settingDefaults = {
   site: { name: 'AI短视频质检', notice: '' },
@@ -18,6 +20,8 @@ export const settingDefaults = {
   visitor_defaults: { validDays: 7, uploadCount: 5, storageBytes: 1073741824, contentEvaluations: 3 },
   retention: { temporaryHours: 24, auditDays: 365 },
   alerts: { workerStaleSeconds: 120, queueWaitSeconds: 600, expiryWarningDays: 7 },
+  v11_content_shadow: { enabled: false, shadowMode: true },
+  v11_workflow_gates: { manualContentReviewEnabled: true, manualFinalConfirmationEnabled: true },
 };
 export async function readPolicy<K extends keyof typeof settingDefaults>(db: any, key: K): Promise<typeof settingDefaults[K]> {
   const row = await db.runtimeSetting.findUnique({ where: { key } });

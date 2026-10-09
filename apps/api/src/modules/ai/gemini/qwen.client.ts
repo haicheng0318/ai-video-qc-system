@@ -104,6 +104,10 @@ export class QwenClient {
     mimeType: string,
     modelName: string,
     prompt: string,
+    structuredOutput: { name: string; schema: Record<string, unknown> } = {
+      name: 'video_content_review',
+      schema: contentReviewResponseJsonSchema as unknown as Record<string, unknown>,
+    },
   ): Promise<VideoContentAnalysisResult> {
     let dependencies: QwenClientDependencies | undefined;
     let objectName: string | undefined;
@@ -142,9 +146,9 @@ export class QwenClient {
         response_format: {
           type: 'json_schema',
           json_schema: {
-            name: 'video_content_review',
+            name: structuredOutput.name,
             strict: true,
-            schema: contentReviewResponseJsonSchema,
+            schema: structuredOutput.schema,
           },
         },
       });
