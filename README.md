@@ -147,7 +147,8 @@ cp .env.example .env
 确认 `.env` 至少包含：
 
 ```bash
-DATABASE_URL="postgresql://DB_USER:DB_PASSWORD@localhost:5432/DB_NAME?schema=public"
+POSTGRES_PASSWORD="<local-random-password>"
+DATABASE_URL="postgresql://video_qc:<same-password>@localhost:5432/ai_video_qc?schema=public"
 JWT_SECRET="replace-with-a-random-secret-at-least-32-characters"
 JWT_EXPIRES_IN="2h"
 DEFAULT_ADMIN_USERNAME="admin"
@@ -177,6 +178,8 @@ QWEN_FINAL_EVALUATION_MODEL="qwen3.5-plus"
 QWEN_FINAL_EVALUATION_MAX_OUTPUT_TOKENS="4000"
 QWEN_FINAL_EVALUATION_RUNNING_STALE_MINUTES="10"
 ```
+
+`POSTGRES_PASSWORD` 用于 PostgreSQL 容器首次初始化，`DATABASE_URL` 用于应用连接数据库；两处密码必须一致。对于已经存在的 PostgreSQL 数据卷，仅修改 `POSTGRES_PASSWORD` 不会自动修改数据库中已有 `video_qc` 角色的密码。已有数据卷需要轮换数据库角色密码时，必须单独执行受控密码轮换，不能依赖 Compose 环境变量完成。
 
 Qwen 视频评估以及两个文本评定环节需要配置百炼；只有视频内容评估需要私有 OSS：
 
