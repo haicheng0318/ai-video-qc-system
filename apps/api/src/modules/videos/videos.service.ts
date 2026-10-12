@@ -342,6 +342,12 @@ export class VideosService {
     if (query.contentRating) {
       where.v11EvaluationGroups = { some: { decision: { contentRating: query.contentRating }, workflowRevision: { status: 'current' } } };
     }
+    if (query.dataRating) {
+      where.v11DataDecisions = { some: { dataRating: query.dataRating, workflowRevision: { status: 'current' } } };
+    }
+    if (query.comprehensiveRating) {
+      where.v11ComprehensiveDecisions = { some: { comprehensiveRating: query.comprehensiveRating, workflowRevision: { status: 'current' } } };
+    }
 
     const [videos, total] = await this.prisma.$transaction([this.prisma.video.findMany({
       where,

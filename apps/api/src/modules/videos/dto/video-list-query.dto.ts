@@ -64,4 +64,12 @@ export class VideoListQueryDto {
   @IsOptional()
   @IsIn(['A+', 'A', 'B', 'B-', 'C', 'D'])
   contentRating?: string;
+
+  @IsOptional()
+  @IsIn(['S', 'A+', 'A', 'B', 'B-', 'C', 'D'])
+  dataRating?: string;
+
+  @IsOptional()
+  @IsIn(['S', 'A+', 'A', 'B', 'B-', 'C', 'D'])
+  comprehensiveRating?: string;
 }
