@@ -33,7 +33,7 @@ CREATE TABLE "v11_appeals" (
 CREATE INDEX "v11_evaluation_groups_parent_group_id_idx" ON "v11_evaluation_groups"("parent_group_id");
 CREATE INDEX "v11_workflow_holds_video_id_status_idx" ON "v11_workflow_holds"("video_id", "status");
 CREATE INDEX "v11_workflow_holds_workflow_revision_id_idx" ON "v11_workflow_holds"("workflow_revision_id");
-CREATE UNIQUE INDEX "v11_workflow_holds_one_active_per_revision" ON "v11_workflow_holds"("workflow_revision_id") WHERE "status" = 'active';
+CREATE UNIQUE INDEX "v11_workflow_holds_one_active_type_per_revision" ON "v11_workflow_holds"("workflow_revision_id", "hold_type") WHERE "status" = 'active';
 CREATE INDEX "v11_appeals_video_id_status_idx" ON "v11_appeals"("video_id", "status");
 CREATE INDEX "v11_appeals_result_id_idx" ON "v11_appeals"("result_id");
 CREATE UNIQUE INDEX "v11_appeals_one_active_per_result" ON "v11_appeals"("result_id") WHERE "status" = 'active';
