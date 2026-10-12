@@ -138,6 +138,11 @@ export class V11RatingsService {
       if (!video) throw new NotFoundException('Video not found.');
       const workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!workflow?.activeContentDecisionId) throw new ConflictException('A current V1.1 content decision is required.');
+      const content = await tx.v11EvaluationDecision.findUnique({
+        where: { id: workflow.activeContentDecisionId },
+        include: { group: { select: { shadowMode: true } } },
+      });
+      if (!content) throw new ConflictException('A current V1.1 content decision is required.');
       const metric = await tx.videoResultMetric.findFirst({ where: { videoId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
       if (!metric) throw new ConflictException('A result metric snapshot is required.');
       const existing = await tx.v11DataRatingDecision.findUnique({ where: { workflowRevisionId_resultMetricId: { workflowRevisionId: workflow.id, resultMetricId: metric.id } } });
@@ -169,8 +174,10 @@ export class V11RatingsService {
         guardApplications: json(calculated.guardApplications), explanationReviewId: explanation?.id ?? null,
       } });
       const nextStatus = calculated.dataSufficiency === 'sufficient' ? VideoStatus.pending_rule_engine : VideoStatus.pending_data;
-      await tx.video.update({ where: { id: videoId }, data: { status: nextStatus } });
-      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_data_rating_decision', targetId: decision.id, actionType: 'v11_data_rating_decided', result: 'success', afterValue: json({ dataSufficiency: decision.dataSufficiency, dataRating: decision.dataRating, ratingVersion: decision.ratingVersion, reason: calculated.reason }) }, tx);
+      if (!content.group.shadowMode) {
+        await tx.video.update({ where: { id: videoId }, data: { status: nextStatus } });
+      }
+      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_data_rating_decision', targetId: decision.id, actionType: 'v11_data_rating_decided', result: 'success', afterValue: json({ dataSufficiency: decision.dataSufficiency, dataRating: decision.dataRating, ratingVersion: decision.ratingVersion, reason: calculated.reason, shadowMode: content.group.shadowMode }) }, tx);
       return decision;
     });
   }
@@ -182,11 +189,18 @@ export class V11RatingsService {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!workflow?.activeContentDecisionId) throw new ConflictException('A current V1.1 content decision is required.');
-      const content = await tx.v11EvaluationDecision.findUnique({ where: { id: workflow.activeContentDecisionId } });
+      const content = await tx.v11EvaluationDecision.findUnique({
+        where: { id: workflow.activeContentDecisionId },
+        include: { group: { select: { shadowMode: true } } },
+      });
       const data = await tx.v11DataRatingDecision.findFirst({ where: { videoId, workflowRevisionId: workflow.id }, orderBy: { decidedAt: 'desc' } });
       if (!content || !data) throw new ConflictException('Current content and data decisions are required.');
       if (data.dataSufficiency !== 'sufficient' || !data.dataRating) throw new ConflictException('Insufficient data cannot produce a comprehensive rating.');
       if (!content.inputComplete || !content.contentRating) throw new ConflictException('Incomplete content input cannot produce a comprehensive rating.');
+      const latestMetric = await tx.videoResultMetric.findFirst({ where: { videoId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true } });
+      if (!latestMetric || latestMetric.id !== data.resultMetricId) {
+        throw new ConflictException('The data rating source is stale. Recalculate data rating from the latest metric snapshot.');
+      }
       const existing = await tx.v11ComprehensiveDecision.findFirst({ where: { workflowRevisionId: workflow.id, contentDecisionId: content.id, dataDecisionId: data.id, matrixVersion: V11_COMPREHENSIVE_MATRIX_VERSION }, orderBy: { decisionRevision: 'desc' } });
       if (existing) return existing;
       assertContentRating(content.contentRating);
@@ -206,17 +220,21 @@ export class V11RatingsService {
         finalStatus: result.finalStatus,
       }) : { decision: 'hold' as const, decisionSource: null, actorId: null, performanceEligible: false };
       const autoFinal = gate.decision === 'final_effective' || gate.decision === 'final_low_effective' || gate.decision === 'final_invalid';
+      const shadowMode = content.group.shadowMode;
+      const effectiveAutoFinal = !shadowMode && autoFinal;
       const decision = await tx.v11ComprehensiveDecision.create({ data: {
         videoId, workflowRevisionId: workflow.id, contentDecisionId: content.id, dataDecisionId: data.id,
         comprehensiveRating: result.comprehensiveRating, matrixVersion: V11_COMPREHENSIVE_MATRIX_VERSION,
-        requiresAdminReview: result.requiresAdminReview, businessConclusion: autoFinal ? result.businessConclusion : null,
-        finalStatus: autoFinal ? result.finalStatus : null, isEffectiveFinal: autoFinal ? result.isEffectiveFinal : null,
-        performanceEligible: false, decisionSource: autoFinal ? 'system' : null,
-        explanation: json({ contentRating: content.contentRating, dataRating: data.dataRating, automated: autoFinal, gateDecision: gate.decision }),
+        requiresAdminReview: result.requiresAdminReview, businessConclusion: effectiveAutoFinal ? result.businessConclusion : null,
+        finalStatus: effectiveAutoFinal ? result.finalStatus : null, isEffectiveFinal: effectiveAutoFinal ? result.isEffectiveFinal : null,
+        performanceEligible: false, decisionSource: effectiveAutoFinal ? 'system' : null,
+        explanation: json({ contentRating: content.contentRating, dataRating: data.dataRating, automated: effectiveAutoFinal, gateDecision: gate.decision, shadowMode }),
       } });
-      await tx.video.update({ where: { id: videoId }, data: { status: autoFinal ? FINAL_STATUS[result.finalStatus as keyof typeof FINAL_STATUS] : VideoStatus.pending_final_confirmation } });
-      if (autoFinal) await tx.v11WorkflowGateDecision.create({ data: { videoId, workflowRevisionId: workflow.id, stage: 'final_confirmation', decision: result.businessConclusion!, decisionSource: 'system', reason: 'V1.1 automatic final gate passed.', performanceEligible: false } });
-      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_comprehensive_decision', targetId: decision.id, actionType: 'v11_comprehensive_rating_decided', result: 'success', afterValue: json({ rating: decision.comprehensiveRating, requiresAdminReview: decision.requiresAdminReview, autoFinal }) }, tx);
+      if (!shadowMode && gate.decision !== 'hold') {
+        await tx.video.update({ where: { id: videoId }, data: { status: autoFinal ? FINAL_STATUS[result.finalStatus as keyof typeof FINAL_STATUS] : VideoStatus.pending_final_confirmation } });
+      }
+      if (effectiveAutoFinal) await tx.v11WorkflowGateDecision.create({ data: { videoId, workflowRevisionId: workflow.id, stage: 'final_confirmation', decision: result.businessConclusion!, decisionSource: 'system', reason: 'V1.1 automatic final gate passed.', performanceEligible: false } });
+      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_comprehensive_decision', targetId: decision.id, actionType: 'v11_comprehensive_rating_decided', result: 'success', afterValue: json({ rating: decision.comprehensiveRating, requiresAdminReview: decision.requiresAdminReview, autoFinal: !shadowMode && autoFinal, shadowMode }) }, tx);
       return decision;
     });
   }
@@ -229,8 +247,26 @@ export class V11RatingsService {
       const previous = await tx.v11ComprehensiveDecision.findFirst({
         where: { videoId, workflowRevision: { status: 'current' } },
         orderBy: [{ decisionRevision: 'desc' }, { decidedAt: 'desc' }, { id: 'desc' }],
+        include: {
+          workflowRevision: { select: { status: true } },
+          contentDecision: { include: { group: { select: { shadowMode: true } } } },
+          dataDecision: true,
+        },
       });
       if (!previous?.requiresAdminReview) throw new ConflictException('No R decision is awaiting administrator review.');
+      if (previous.workflowRevision.status !== 'current' || previous.contentDecision.group.shadowMode) {
+        throw new ConflictException('Shadow or stale workflow decisions cannot produce a formal final result.');
+      }
+      if (!previous.contentDecision.inputComplete || !previous.contentDecision.stable || previous.contentDecision.complianceStatus !== 'clear') {
+        throw new ConflictException('Content safety checks block administrator resolution.');
+      }
+      if (previous.dataDecision.dataSufficiency !== 'sufficient' || !previous.dataDecision.dataRating) {
+        throw new ConflictException('Sufficient current data is required for administrator resolution.');
+      }
+      const latestMetric = await tx.videoResultMetric.findFirst({ where: { videoId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true } });
+      if (!latestMetric || latestMetric.id !== previous.dataDecision.resultMetricId) {
+        throw new ConflictException('The data rating source is stale. Recalculate data rating from the latest metric snapshot.');
+      }
       const [holds, appeals] = await Promise.all([
         tx.v11WorkflowHold.count({ where: { workflowRevisionId: previous.workflowRevisionId, status: 'active' } }),
         tx.v11Appeal.count({ where: { workflowRevisionId: previous.workflowRevisionId, status: 'active' } }),
@@ -238,18 +274,27 @@ export class V11RatingsService {
       if (holds || appeals) throw new ConflictException('Unresolved workflow safety gates block administrator resolution.');
       const outcome = businessOutcomeFor(rating);
       const gates = await readPolicy(tx, 'v11_workflow_gates');
+      const finalGate = evaluateFinalGate({
+        manualEnabled: gates.manualFinalConfirmationEnabled,
+        dataSufficient: true,
+        deterministicRuleClear: true,
+        comprehensiveConsistent: true,
+        hasSafetyGate: false,
+        finalStatus: outcome.finalStatus,
+      });
+      const autoFinal = finalGate.decision === 'final_effective' || finalGate.decision === 'final_low_effective' || finalGate.decision === 'final_invalid';
       const decision = await tx.v11ComprehensiveDecision.create({ data: {
         videoId, workflowRevisionId: previous.workflowRevisionId, contentDecisionId: previous.contentDecisionId,
         dataDecisionId: previous.dataDecisionId, decisionRevision: previous.decisionRevision + 1,
         comprehensiveRating: rating, matrixVersion: previous.matrixVersion, requiresAdminReview: false,
-        businessConclusion: gates.manualFinalConfirmationEnabled ? null : outcome.businessConclusion,
-        finalStatus: gates.manualFinalConfirmationEnabled ? null : outcome.finalStatus,
-        isEffectiveFinal: gates.manualFinalConfirmationEnabled ? null : outcome.isEffectiveFinal,
+        businessConclusion: autoFinal ? outcome.businessConclusion : null,
+        finalStatus: autoFinal ? outcome.finalStatus : null,
+        isEffectiveFinal: autoFinal ? outcome.isEffectiveFinal : null,
         performanceEligible: false, decisionSource: 'human', decisionActorId: user.id,
         explanation: json({ manualReason: input.reason, resolvedFromDecisionId: previous.id }),
       } });
-      await tx.video.update({ where: { id: videoId }, data: { status: gates.manualFinalConfirmationEnabled ? VideoStatus.pending_final_confirmation : FINAL_STATUS[outcome.finalStatus as keyof typeof FINAL_STATUS] } });
-      if (!gates.manualFinalConfirmationEnabled) {
+      await tx.video.update({ where: { id: videoId }, data: { status: autoFinal ? FINAL_STATUS[outcome.finalStatus as keyof typeof FINAL_STATUS] : VideoStatus.pending_final_confirmation } });
+      if (autoFinal) {
         await tx.v11WorkflowGateDecision.create({ data: {
           videoId, workflowRevisionId: previous.workflowRevisionId, stage: 'final_confirmation',
           decision: outcome.businessConclusion, decisionSource: 'system',
@@ -271,12 +316,30 @@ export class V11RatingsService {
       const previous = await tx.v11ComprehensiveDecision.findFirst({
         where: { videoId, workflowRevision: { status: 'current' } },
         orderBy: [{ decisionRevision: 'desc' }, { decidedAt: 'desc' }, { id: 'desc' }],
+        include: {
+          workflowRevision: { select: { status: true } },
+          contentDecision: { include: { group: { select: { shadowMode: true } } } },
+          dataDecision: true,
+        },
       });
       if (!previous || previous.id !== input.decisionId) throw new ConflictException('The comprehensive decision is no longer current.');
       if (!previous.comprehensiveRating || previous.requiresAdminReview) throw new ConflictException('The comprehensive rating requires administrator resolution first.');
       if (previous.finalStatus || previous.businessConclusion || previous.isEffectiveFinal !== null) throw new ConflictException('The comprehensive decision is already final.');
       const policy = await readPolicy(tx, 'v11_workflow_gates');
       if (!policy.manualFinalConfirmationEnabled) throw new ConflictException('Manual final confirmation is disabled.');
+      if (previous.workflowRevision.status !== 'current' || previous.contentDecision.group.shadowMode) {
+        throw new ConflictException('Shadow or stale workflow decisions cannot be formally confirmed.');
+      }
+      if (!previous.contentDecision.inputComplete || !previous.contentDecision.stable || previous.contentDecision.complianceStatus !== 'clear') {
+        throw new ConflictException('Content safety checks block final confirmation.');
+      }
+      if (previous.dataDecision.dataSufficiency !== 'sufficient' || !previous.dataDecision.dataRating) {
+        throw new ConflictException('Sufficient current data is required for final confirmation.');
+      }
+      const latestMetric = await tx.videoResultMetric.findFirst({ where: { videoId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true } });
+      if (!latestMetric || latestMetric.id !== previous.dataDecision.resultMetricId) {
+        throw new ConflictException('The data rating source is stale. Recalculate data rating from the latest metric snapshot.');
+      }
       const [holds, appeals] = await Promise.all([
         tx.v11WorkflowHold.count({ where: { workflowRevisionId: previous.workflowRevisionId, status: 'active' } }),
         tx.v11Appeal.count({ where: { workflowRevisionId: previous.workflowRevisionId, status: 'active' } }),
@@ -312,10 +375,14 @@ export class V11RatingsService {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM v11_comprehensive_decisions WHERE id = ${id}::uuid FOR UPDATE`);
       const decision = await tx.v11ComprehensiveDecision.findUnique({
         where: { id },
-        include: { workflowRevision: { select: { id: true, status: true } } },
+        include: {
+          workflowRevision: { select: { id: true, status: true } },
+          contentDecision: { include: { group: { select: { shadowMode: true } } } },
+        },
       });
       if (!decision?.finalStatus || !decision.comprehensiveRating) throw new ConflictException('Only a finalized V1.1 decision can be marked as a case.');
       if (decision.workflowRevision.status !== 'current') throw new ConflictException('Only the current workflow decision can be marked as a case.');
+      if (decision.contentDecision.group.shadowMode) throw new ConflictException('Shadow decisions cannot be marked as cases.');
       const [holds, appeals] = await Promise.all([
         tx.v11WorkflowHold.count({ where: { workflowRevisionId: decision.workflowRevision.id, status: 'active' } }),
         tx.v11Appeal.count({ where: { workflowRevisionId: decision.workflowRevision.id, status: 'active' } }),
@@ -341,6 +408,7 @@ export class V11RatingsService {
           holds: { none: { status: 'active' } },
           appeals: { none: { status: 'active' } },
         },
+        contentDecision: { group: { shadowMode: false } },
         video: visibility,
       },
       orderBy: [{ caseMarkedAt: 'desc' }, { id: 'desc' }],

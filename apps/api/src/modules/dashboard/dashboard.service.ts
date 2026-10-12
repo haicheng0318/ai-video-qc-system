@@ -95,8 +95,19 @@ export class DashboardService {
           SELECT DISTINCT ON (c.video_id) c.*
           FROM v11_comprehensive_decisions c
           JOIN v11_workflow_revisions w ON w.id = c.workflow_revision_id
+          JOIN v11_evaluation_decisions content_decision ON content_decision.id = c.content_decision_id
+          JOIN v11_evaluation_groups content_group ON content_group.id = content_decision.group_id
           WHERE c.final_status IS NOT NULL
             AND w.status = 'current'
+            AND content_group.shadow_mode = false
+            AND NOT EXISTS (
+              SELECT 1 FROM v11_workflow_holds h
+              WHERE h.workflow_revision_id = w.id AND h.status = 'active'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM v11_appeals a
+              WHERE a.workflow_revision_id = w.id AND a.status = 'active'
+            )
           ORDER BY c.video_id, c.decision_revision DESC, c.decided_at DESC, c.id DESC
         )
         SELECT COUNT(*) AS finalized,

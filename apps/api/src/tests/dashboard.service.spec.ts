@@ -89,6 +89,11 @@ test('V1.1 dashboard only counts finalized decisions from the current workflow r
   const query = calls.find((item) => sqlText(item).includes('v11_comprehensive_decisions'));
   assert.match(sqlText(query), /JOIN v11_workflow_revisions/);
   assert.match(sqlText(query), /w\.status = 'current'/);
+  assert.match(sqlText(query), /content_group\.shadow_mode = false/);
+  assert.match(sqlText(query), /v11_workflow_holds/);
+  assert.match(sqlText(query), /h\.status = 'active'/);
+  assert.match(sqlText(query), /v11_appeals/);
+  assert.match(sqlText(query), /a\.status = 'active'/);
 });
 
 test('dashboard date-only boundaries represent complete Asia/Shanghai calendar days', async () => {
