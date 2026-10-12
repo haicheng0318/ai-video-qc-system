@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { QwenClient } from '../modules/ai/gemini/qwen.client';
+import { effectiveQwenModelConfig, QwenClient } from '../modules/ai/gemini/qwen.client';
 import {
   ContentReviewFileProcessingError,
   ContentReviewRequestError,
@@ -88,6 +88,39 @@ test('Qwen client applies configured OSS upload timeout', async () => {
     if (originalTimeout === undefined) delete process.env.OSS_REQUEST_TIMEOUT_MS;
     else process.env.OSS_REQUEST_TIMEOUT_MS = originalTimeout;
   }
+});
+
+test('effective model config snapshot is exactly applied to the provider request', async () => {
+  let request: Record<string, unknown> | undefined;
+  let requestOptions: { timeout?: number } | undefined;
+  const config = effectiveQwenModelConfig({
+    modelName: 'qwen-audit-model',
+    temperature: 0.15,
+    maxTokens: 3210,
+    timeoutMs: 123_000,
+    region: 'cn',
+  });
+  const client = new QwenClient(() => ({
+    oss: {
+      put: async () => undefined,
+      signatureUrlV4: async () => 'https://private.example.test/video',
+      delete: async () => undefined,
+    },
+    qwen: { chat: { completions: { create: async (input, options) => {
+      request = input;
+      requestOptions = options;
+      return chunks([rawResponse]);
+    } } } },
+  }));
+
+  await client.analyzeVideo('/safe/video.mp4', 'video/mp4', config, 'evaluate');
+
+  assert.equal(request?.model, config.modelName);
+  assert.equal(request?.temperature, config.temperature);
+  assert.equal(request?.max_tokens, config.maxTokens);
+  assert.equal(requestOptions?.timeout, config.timeoutMs);
+  assert.equal(config.thinking, 'unsupported');
+  assert.equal(config.seed, 'unsupported');
 });
 
 test('Qwen client deletes the temporary object after a model request failure', async () => {

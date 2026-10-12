@@ -6,6 +6,11 @@ export type ReviewRun = {
   rating: V11ContentRating;
   anchors: Record<V11ContentDimension, number>;
   factsHash: string;
+  factClaims: Array<{
+    dimension: V11ContentDimension;
+    key: string;
+    state: 'present' | 'absent' | 'uncertain';
+  }>;
   complianceStatus: 'clear' | 'suspected' | 'confirmed';
 };
 
@@ -41,8 +46,35 @@ function majorComplianceConflict(runs: ReviewRun[]) {
   return statuses.has('clear') && statuses.has('confirmed');
 }
 
+function factSignature(run: ReviewRun) {
+  return run.factClaims
+    .filter((claim) => claim.state !== 'uncertain')
+    .map((claim) => `${claim.dimension}:${claim.key}:${claim.state}`)
+    .sort()
+    .join('|');
+}
+
 function factsAgree(runs: ReviewRun[]) {
-  return new Set(runs.map((run) => run.factsHash)).size === 1;
+  const counts = new Map<string, number>();
+  for (const run of runs) {
+    const signature = factSignature(run);
+    counts.set(signature, (counts.get(signature) ?? 0) + 1);
+  }
+  return Math.max(...counts.values()) >= Math.ceil(runs.length / 2);
+}
+
+function hasExplicitFactContradiction(runs: ReviewRun[]) {
+  const states = new Map<string, Set<string>>();
+  for (const run of runs) {
+    for (const claim of run.factClaims) {
+      if (claim.state === 'uncertain') continue;
+      const key = `${claim.dimension}:${claim.key}`;
+      const values = states.get(key) ?? new Set<string>();
+      values.add(claim.state);
+      states.set(key, values);
+    }
+  }
+  return [...states.values()].some((values) => values.has('present') && values.has('absent'));
 }
 
 function hold(reason: string) {
@@ -60,13 +92,13 @@ export function decideReviewProgress(runs: ReviewRun[]) {
   const scores = runs.map((run) => run.score);
   if (Math.max(...scores) - Math.min(...scores) > 10) return hold('score_difference_over_ten');
   if (Math.max(...runs.flatMap((left) => runs.map((right) => ratingDistance(left.rating, right.rating)))) >= 2) return hold('rating_difference_two_levels');
-  if (!factsAgree(runs)) return hold('major_fact_conflict');
+  if (hasExplicitFactContradiction(runs)) return hold('major_fact_conflict');
   if (majorComplianceConflict(runs)) return hold('major_compliance_conflict');
 
   if (runs.length === 2) {
     const [left, right] = runs;
     const maxAnchorDifference = Math.max(...V11_CONTENT_DIMENSIONS.map((item) => Math.abs(left.anchors[item.code] - right.anchors[item.code])));
-    if (left.rating === right.rating && Math.abs(left.score - right.score) <= 5 && maxAnchorDifference <= 1) {
+    if (left.rating === right.rating && Math.abs(left.score - right.score) <= 5 && maxAnchorDifference <= 1 && factsAgree(runs)) {
       const anchors = Object.fromEntries(V11_CONTENT_DIMENSIONS.map((item) => [item.code, (left.anchors[item.code] + right.anchors[item.code]) / 2])) as Record<V11ContentDimension, number>;
       return adopted(anchors, 'double_average');
     }
@@ -77,6 +109,7 @@ export function decideReviewProgress(runs: ReviewRun[]) {
   for (const run of runs) ratingCounts.set(run.rating, (ratingCounts.get(run.rating) || 0) + 1);
   const majority = [...ratingCounts.entries()].find(([, count]) => count >= 2)?.[0];
   if (!majority) return hold('no_rating_majority');
+  if (!factsAgree(runs)) return hold('facts_not_agreed_after_third');
   const anchors = {} as Record<V11ContentDimension, number>;
   for (const item of V11_CONTENT_DIMENSIONS) {
     const values = runs.map((run) => run.anchors[item.code]).sort((a, b) => a - b);

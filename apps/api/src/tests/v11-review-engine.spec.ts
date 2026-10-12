@@ -3,11 +3,19 @@ import { test } from 'node:test';
 import { V11_CONTENT_DIMENSIONS, V11ContentRating } from '../modules/v11/content-scoring';
 import { decideReviewProgress, requiresIndependentReview, ReviewRun } from '../modules/v11/review-engine';
 
-const run = (score: number, rating: V11ContentRating, anchor = 3, factsHash = 'facts', complianceStatus: 'clear' | 'suspected' | 'confirmed' = 'clear'): ReviewRun => ({
+const run = (
+  score: number,
+  rating: V11ContentRating,
+  anchor = 3,
+  factsHash = 'facts',
+  complianceStatus: 'clear' | 'suspected' | 'confirmed' = 'clear',
+  factState: 'present' | 'absent' | 'uncertain' = 'present',
+): ReviewRun => ({
   score,
   rating,
   anchors: Object.fromEntries(V11_CONTENT_DIMENSIONS.map((item) => [item.code, anchor])) as ReviewRun['anchors'],
   factsHash,
+  factClaims: [{ dimension: 'selling_point', key: 'product_visible', state: factState }],
   complianceStatus,
 });
 
@@ -41,8 +49,17 @@ test('anchor difference of two requests a third blind review when no direct hold
   assert.equal(result.action, 'third_review');
 });
 
-test('major fact or compliance conflict goes directly to hold', () => {
-  assert.equal(decideReviewProgress([run(75, 'B', 3, 'a'), run(76, 'B', 3, 'b')]).action, 'hold');
+test('free-text paraphrases do not create a major conflict while explicit mutually exclusive facts do', () => {
+  assert.equal(decideReviewProgress([run(75, 'B', 3, 'wording-a'), run(76, 'B', 3, 'wording-b')]).action, 'adopt');
+  const conflict = decideReviewProgress([
+    run(75, 'B', 3, 'a', 'clear', 'present'),
+    run(76, 'B', 3, 'b', 'clear', 'absent'),
+  ]);
+  assert.equal(conflict.action, 'hold');
+  assert.equal('reason' in conflict ? conflict.reason : null, 'major_fact_conflict');
+});
+
+test('major compliance conflict goes directly to hold', () => {
   assert.equal(decideReviewProgress([run(75, 'B', 3, 'a', 'clear'), run(76, 'B', 3, 'a', 'confirmed')]).action, 'hold');
 });
 
