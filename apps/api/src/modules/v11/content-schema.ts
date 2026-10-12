@@ -17,11 +17,18 @@ const evidenceSchema = z.object({
   }
 });
 
+const factClaimSchema = z.object({
+  key: z.string().trim().regex(/^[a-z][a-z0-9_]{1,79}$/),
+  state: z.enum(['present', 'absent', 'uncertain']),
+  evidenceReferences: z.array(z.string().trim().min(1).max(100)).max(20),
+}).strict();
+
 const observedDimensionSchema = z.object({
   dimension: z.enum(dimensionCodes),
   observationStatus: z.literal('observed'),
   anchor: z.number().int().min(0).max(4),
   facts: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
+  factClaims: z.array(factClaimSchema).min(1).max(20),
   evidence: z.array(evidenceSchema).min(1).max(20),
   observation: z.string().trim().min(1).max(1500),
 }).strict();
@@ -31,6 +38,7 @@ const unknownDimensionSchema = z.object({
   observationStatus: z.literal('unknown'),
   anchor: z.null(),
   facts: z.array(z.string().trim().min(1).max(500)).max(20),
+  factClaims: z.array(factClaimSchema).max(20),
   evidence: z.array(evidenceSchema).max(20),
   observation: z.string().trim().min(1).max(1500),
 }).strict();
@@ -65,6 +73,17 @@ const evidenceJsonSchema = {
   additionalProperties: false,
 } as const;
 
+const factClaimJsonSchema = {
+  type: 'object',
+  required: ['key', 'state', 'evidenceReferences'],
+  properties: {
+    key: { type: 'string', pattern: '^[a-z][a-z0-9_]{1,79}$' },
+    state: { type: 'string', enum: ['present', 'absent', 'uncertain'] },
+    evidenceReferences: { type: 'array', maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 100 } },
+  },
+  additionalProperties: false,
+} as const;
+
 export const v11ContentResponseJsonSchema = {
   type: 'object',
   required: ['dimensions', 'compliance'],
@@ -75,12 +94,13 @@ export const v11ContentResponseJsonSchema = {
       maxItems: V11_CONTENT_DIMENSIONS.length,
       items: {
         type: 'object',
-        required: ['dimension', 'observationStatus', 'anchor', 'facts', 'evidence', 'observation'],
+        required: ['dimension', 'observationStatus', 'anchor', 'facts', 'factClaims', 'evidence', 'observation'],
         properties: {
           dimension: { type: 'string', enum: dimensionCodes },
           observationStatus: { type: 'string', enum: ['observed', 'unknown'] },
           anchor: { anyOf: [{ type: 'integer', minimum: 0, maximum: 4 }, { type: 'null' }] },
           facts: { type: 'array', items: { type: 'string' } },
+          factClaims: { type: 'array', maxItems: 20, items: factClaimJsonSchema },
           evidence: { type: 'array', items: evidenceJsonSchema },
           observation: { type: 'string' },
         },

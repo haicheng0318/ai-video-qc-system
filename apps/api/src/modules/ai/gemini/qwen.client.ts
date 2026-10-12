@@ -21,10 +21,45 @@ type QwenChunk = {
 export type QwenSdk = {
   chat: {
     completions: {
-      create(input: Record<string, unknown>): Promise<AsyncIterable<QwenChunk>>;
+      create(input: Record<string, unknown>, options?: { timeout?: number }): Promise<AsyncIterable<QwenChunk>>;
     };
   };
 };
+
+export type QwenEffectiveModelConfig = {
+  provider: 'aliyun_bailian';
+  modelName: string;
+  temperature: number | 'provider_default';
+  maxTokens: number | 'provider_default';
+  timeoutMs: number;
+  thinking: 'unsupported';
+  seed: 'unsupported';
+  region: string;
+  protocol: 'openai-compatible-chat-completions';
+};
+
+export function effectiveQwenModelConfig(input: {
+  modelName: string;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  timeoutMs?: number | null;
+  region?: string | null;
+}): QwenEffectiveModelConfig {
+  const timeoutMs = input.timeoutMs && Number.isInteger(input.timeoutMs) && input.timeoutMs > 0
+    ? input.timeoutMs
+    : positiveInteger(process.env.QWEN_REQUEST_TIMEOUT_MS, 300_000);
+  return {
+    provider: 'aliyun_bailian',
+    modelName: input.modelName,
+    temperature: input.temperature ?? 'provider_default',
+    maxTokens: input.maxTokens ?? 'provider_default',
+    timeoutMs,
+    thinking: 'unsupported',
+    seed: 'unsupported',
+    region: input.region?.trim() || process.env.QWEN_REGION?.trim() || 'cn',
+    protocol: 'openai-compatible-chat-completions',
+  };
+}
 
 export type QwenOssClient = {
   put(name: string, filePath: string, options?: Record<string, unknown>): Promise<unknown>;
@@ -102,9 +137,12 @@ export class QwenClient {
   async analyzeVideo(
     filePath: string,
     mimeType: string,
-    modelName: string,
+    model: string | QwenEffectiveModelConfig,
     prompt: string,
   ): Promise<VideoContentAnalysisResult> {
+    const effectiveConfig = typeof model === 'string'
+      ? effectiveQwenModelConfig({ modelName: model })
+      : model;
     let dependencies: QwenClientDependencies | undefined;
     let objectName: string | undefined;
     let rawResponse: string | undefined;
@@ -127,8 +165,8 @@ export class QwenClient {
       });
       await this.observer?.storage(objectName, 'uploaded');
       const videoUrl = await this.createSignedUrl(dependencies.oss, objectName);
-      const stream = await dependencies.qwen.chat.completions.create({
-        model: modelName,
+      const request: Record<string, unknown> = {
+        model: effectiveConfig.modelName,
         stream: true,
         stream_options: { include_usage: true },
         modalities: ['text'],
@@ -147,7 +185,10 @@ export class QwenClient {
             schema: contentReviewResponseJsonSchema,
           },
         },
-      });
+      };
+      if (typeof effectiveConfig.temperature === 'number') request.temperature = effectiveConfig.temperature;
+      if (typeof effectiveConfig.maxTokens === 'number') request.max_tokens = effectiveConfig.maxTokens;
+      const stream = await dependencies.qwen.chat.completions.create(request, { timeout: effectiveConfig.timeoutMs });
       for await (const chunk of stream) {
         text += extractChunkText(chunk);
         if (chunk.usage) usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens };
