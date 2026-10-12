@@ -12,7 +12,8 @@ export function buildV11ContentPrompt(metadata: Record<string, unknown>) {
 八个维度：
 ${dimensionText}
 
-你只输出事实、证据、0-4 anchor、观察说明和独立合规状态。证据必须提供可核验的起止秒数或 frame/segment reference；全片判断说明已检查片段与缺失事实。
+你只输出事实、结构化事实声明、证据、0-4 anchor、观察说明和独立合规状态。证据必须提供可核验的起止秒数或 frame/segment reference；全片判断说明已检查片段与缺失事实。
+每个已观察维度的 factClaims 必须使用稳定的英文 snake_case key、present/absent/uncertain state，并用 evidenceReferences 指向本次输出中的时间或片段证据。相同客观事实必须使用相同 key；不要把自然语言措辞当成事实标识。
 无法可靠观察的维度必须使用 observationStatus=unknown 且 anchor=null；不能用0代替未知。
 品牌叙事或自然流不强制前三秒出现产品；无口播的设计不因“没有口播”扣分。只按声明的平台、用途与受众评价，不虚构平台政策或流量结果。
 不要计算总分，不要输出内容等级，不要评价运营数据、ROI、CTR、CVR、绩效或最终有效性。

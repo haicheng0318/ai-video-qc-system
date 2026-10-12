@@ -14,6 +14,7 @@ const observed = (anchor: number): V11DimensionObservation[] => V11_CONTENT_DIME
   observationStatus: 'observed' as const,
   anchor,
   facts: [`fact:${code}`],
+  factClaims: [{ key: `${code}_observed`, state: 'present' as const, evidenceReferences: ['00:00-00:01'] }],
   evidence: [{ startSeconds: 1, endSeconds: 2, reference: `segment:${code}`, description: code }],
   observation: `${code} observed`,
 }));

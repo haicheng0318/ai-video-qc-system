@@ -32,6 +32,7 @@ export type V11DimensionObservation = {
   observationStatus: 'observed' | 'unknown';
   anchor?: number | null;
   facts: string[];
+  factClaims?: Array<{ key: string; state: 'present' | 'absent' | 'uncertain'; evidenceReferences: string[] }>;
   evidence: Array<{ startSeconds: number | null; endSeconds: number | null; reference: string | null; description: string }>;
   observation: string;
 };
