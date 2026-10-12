@@ -1,7 +1,7 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { EvaluationJob, Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { EvaluationJob, Prisma, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
-import { QwenClient, QWEN_CLIENT } from '../ai/gemini/qwen.client';
+import { effectiveQwenModelConfig, QwenClient, QWEN_CLIENT, QwenEffectiveModelConfig } from '../ai/gemini/qwen.client';
 import { sanitizeContentReviewText } from '../ai/gemini/gemini.service';
 import { readPolicy } from '../admin/runtime-policy';
 import { EvaluationJobsService } from '../evaluation-jobs/evaluation-jobs.service';
@@ -27,6 +27,7 @@ import {
 } from './provenance';
 
 type RequestMeta = { ipAddress?: string; userAgent?: string };
+type TriggerOptions = { independent: boolean; pilotRun: boolean; bypassReason: string | null };
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -41,6 +42,21 @@ function worstCompliance(statuses: string[]) {
   if (statuses.includes('confirmed')) return 'confirmed';
   if (statuses.includes('suspected')) return 'suspected';
   return 'clear';
+}
+
+export async function countQualifiedInitialPilotSamples(tx: Pick<Prisma.TransactionClient, '$queryRaw'>) {
+  const rows = await tx.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+    SELECT COUNT(DISTINCT g.video_id) AS count
+    FROM v11_evaluation_decisions d
+    JOIN v11_evaluation_groups g ON g.id = d.group_id
+    WHERE d.input_complete = true
+      AND d.stable = true
+      AND g.parent_group_id IS NULL
+      AND g.independent = false
+      AND g.pilot_run = false
+      AND g.trigger_reason <> 'appeal'
+  `);
+  return Number(rows[0]?.count ?? 0);
 }
 
 export function assertEvidenceWithinDuration(
@@ -70,6 +86,21 @@ export class V11ContentService {
   ) {}
 
   async trigger(videoId: string, user: AuthenticatedUser, meta: RequestMeta) {
+    return this.triggerInternal(videoId, user, meta, { independent: false, pilotRun: false, bypassReason: null });
+  }
+
+  async triggerPilot(videoId: string, body: unknown, user: AuthenticatedUser, meta: RequestMeta) {
+    if (user.role !== UserRole.admin) throw new ForbiddenException('Administrator required.');
+    const reason = typeof (body as { bypassReason?: unknown })?.bypassReason === 'string'
+      ? (body as { bypassReason: string }).bypassReason.trim()
+      : '';
+    if (reason.length < 10 || reason.length > 500) {
+      throw new BadRequestException('Pilot bypass reason must be 10-500 characters.');
+    }
+    return this.triggerInternal(videoId, user, meta, { independent: true, pilotRun: true, bypassReason: reason });
+  }
+
+  private async triggerInternal(videoId: string, user: AuthenticatedUser, meta: RequestMeta, options: TriggerOptions) {
     if (!isUuid(videoId)) throw new NotFoundException('Video not found.');
     const feature = await readPolicy(this.db, 'v11_content_shadow');
     if (!feature.enabled) throw new ConflictException('V1.1 content scoring shadow mode is disabled.');
@@ -104,14 +135,12 @@ export class V11ContentService {
       where: { enabled: true, provider: 'aliyun_bailian', agentType: { in: ['content_review_v11', 'content_review'] } },
       orderBy: [{ agentType: 'asc' }, { createdAt: 'asc' }],
     });
-    const modelConfigSnapshot = {
-      provider: 'aliyun_bailian',
+    const modelConfigSnapshot = effectiveQwenModelConfig({
       modelName: model?.modelName || process.env.QWEN_MODEL || 'qwen3.5-omni-plus',
-      temperature: model?.temperature?.toString() ?? null,
+      temperature: model?.temperature === null || model?.temperature === undefined ? null : Number(model.temperature),
       maxTokens: model?.maxTokens ?? null,
       region: process.env.QWEN_REGION?.trim() || 'cn',
-      protocol: 'openai-compatible-chat-completions',
-    };
+    });
     const fingerprint = buildEvaluationFingerprint({
       ownerId: video.creatorId,
       fileHash: media.manifest.fileHash,
@@ -128,7 +157,7 @@ export class V11ContentService {
 
     const created = await this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
-      const duplicate = await tx.v11EvaluationGroup.findFirst({
+      const duplicate = options.independent ? null : await tx.v11EvaluationGroup.findFirst({
         where: {
           ownerId: video.creatorId,
           stage: 'content',
@@ -167,7 +196,17 @@ export class V11ContentService {
         workflow = await tx.v11WorkflowRevision.create({ data: { videoId, ownerId: video.creatorId, revision: 1, policySnapshot: { shadowMode: feature.shadowMode } } });
       }
       const group = await tx.v11EvaluationGroup.create({
-        data: { videoId, ownerId: video.creatorId, inputRevisionId: inputRevision.id, workflowRevisionId: workflow.id, triggerReason: feature.shadowMode ? 'shadow_manual' : 'formal_manual', shadowMode: feature.shadowMode },
+        data: {
+          videoId,
+          ownerId: video.creatorId,
+          inputRevisionId: inputRevision.id,
+          workflowRevisionId: workflow.id,
+          triggerReason: options.pilotRun ? 'pilot_independent' : feature.shadowMode ? 'shadow_manual' : 'formal_manual',
+          shadowMode: feature.shadowMode,
+          independent: options.independent,
+          pilotRun: options.pilotRun,
+          bypassReason: options.bypassReason,
+        },
       });
       const blindContextHash = sha256(canonicalize({ metadataSnapshot, mediaManifest: media.manifest, rubricVersion: V11_RUBRIC_VERSION }));
       const run = await tx.v11EvaluationRun.create({ data: {
@@ -194,7 +233,7 @@ export class V11ContentService {
         inputRefs: { workflowRevisionId: workflow.id, inputRevisionId: inputRevision.id },
         maxAttempts: 2,
       });
-      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_evaluation_group', targetId: group.id, actionType: 'v11_content_shadow_started', result: 'started', afterValue: { fingerprint, inputRevisionId: inputRevision.id, workflowRevision: workflow.revision }, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, tx);
+      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_evaluation_group', targetId: group.id, actionType: options.pilotRun ? 'v11_content_pilot_started' : 'v11_content_shadow_started', result: 'started', comment: options.bypassReason ?? undefined, afterValue: { fingerprint, inputRevisionId: inputRevision.id, workflowRevision: workflow.revision, independent: options.independent, pilotRun: options.pilotRun }, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, tx);
       return { duplicate: false, group: { ...group, runs: [run] }, job };
     });
     return { groupId: created.group.id, runId: created.group.runs[0]?.id, status: created.group.status, shadowMode: created.group.shadowMode, duplicate: created.duplicate, ...(created.job ? { jobId: created.job.id } : {}) };
@@ -222,7 +261,7 @@ export class V11ContentService {
         const response = await this.qwen.analyzeVideo(
           materialized.path,
           video.mimeType,
-          run.modelName,
+          run.modelConfigSnapshot as unknown as QwenEffectiveModelConfig,
           buildV11ContentPrompt(run.group.inputRevision.metadataSnapshot as Record<string, unknown>),
           { name: 'v11_video_content_review', schema: v11ContentResponseJsonSchema as unknown as Record<string, unknown> },
         );
@@ -257,12 +296,23 @@ export class V11ContentService {
           return;
         }
         const reviewRuns = succeeded.map((item) => {
-          const output = item.structuredOutput as { dimensions: Array<{ dimension: string; anchor: number }> };
+          const output = item.structuredOutput as {
+            dimensions: Array<{
+              dimension: string;
+              anchor: number;
+              factClaims: Array<{ key: string; state: 'present' | 'absent' | 'uncertain' }>;
+            }>;
+          };
           return {
             score: Number(item.totalScore),
             rating: item.contentRating!,
             anchors: Object.fromEntries(output.dimensions.map((dimension) => [dimension.dimension, dimension.anchor])),
             factsHash: item.factsHash!,
+            factClaims: output.dimensions.flatMap((dimension) => dimension.factClaims.map((claim) => ({
+              dimension: dimension.dimension,
+              key: claim.key,
+              state: claim.state,
+            }))),
             complianceStatus: item.complianceStatus!,
           } as ReviewRun;
         });
@@ -274,7 +324,7 @@ export class V11ContentService {
           contentRating: ReviewRun['rating'];
         };
         if (reviewRuns.length === 1) {
-          const eligiblePilotCount = await tx.v11EvaluationDecision.count({ where: { inputComplete: true } });
+          const eligiblePilotCount = await countQualifiedInitialPilotSamples(tx);
           const comparableHistory = await tx.v11EvaluationDecision.findFirst({
             where: {
               groupId: { not: run.groupId },
@@ -291,7 +341,7 @@ export class V11ContentService {
             orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
             select: { totalScore: true },
           });
-          progress = requiresIndependentReview({ eligiblePilotCount, fingerprint: run.group.inputRevision.evaluationFingerprint, score: calculated.totalScore!, rating: calculated.contentRating!, comparableHistoricalScore: comparableHistory ? Number(comparableHistory.totalScore) : null })
+          progress = requiresIndependentReview({ eligiblePilotCount, fingerprint: run.group.inputRevision.evaluationFingerprint, score: calculated.totalScore!, rating: calculated.contentRating!, comparableHistoricalScore: comparableHistory ? Number(comparableHistory.totalScore) : null, appeal: run.group.triggerReason === 'appeal' })
             ? { action: 'second_review' }
             : { action: 'adopt', method: 'single_after_pilot', anchors: reviewRuns[0].anchors, totalScore: reviewRuns[0].score, contentRating: reviewRuns[0].rating };
         } else {

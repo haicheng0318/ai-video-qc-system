@@ -14,6 +14,15 @@ test('manual content gate and every frozen safety gate prevent automatic approva
   for (const patch of [{ stable: false }, { inputComplete: false }, { complianceStatus: 'suspected' as const }, { hasHold: true }, { hasAppeal: true }, { stale: true }]) {
     assert.equal(evaluateContentGate({ ...content, ...patch }).decision, 'hold');
   }
+  assert.equal(evaluateContentGate({ ...content, manualEnabled: true, complianceStatus: 'suspected' }).decision, 'hold');
+  assert.equal(evaluateContentGate({ ...content, manualEnabled: true, hasHold: true }).decision, 'hold');
+});
+
+test('manual final confirmation cannot bypass a safety gate', () => {
+  const manual = { manualEnabled: true, dataSufficient: true, deterministicRuleClear: true, comprehensiveConsistent: true, hasSafetyGate: false, finalStatus: 'final_effective' as const };
+  assert.equal(evaluateFinalGate(manual).decision, 'manual_confirmation');
+  assert.equal(evaluateFinalGate({ ...manual, hasSafetyGate: true }).decision, 'hold');
+  assert.equal(evaluateFinalGate({ ...manual, dataSufficient: false }).decision, 'hold');
 });
 
 test('automatic final gate requires sufficient data, clear deterministic rules and consistent comprehensive result', () => {

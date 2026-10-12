@@ -681,6 +681,9 @@ model V11EvaluationGroup {
   status                   String   @default("queued") @db.VarChar(30)
   triggerReason            String   @map("trigger_reason") @db.VarChar(80)
   shadowMode               Boolean  @default(true) @map("shadow_mode")
+  independent              Boolean  @default(false)
+  pilotRun                 Boolean  @default(false) @map("pilot_run")
+  bypassReason             String?  @map("bypass_reason") @db.VarChar(500)
   validRunCount            Int      @default(0) @map("valid_run_count")
   technicalAttemptCount    Int      @default(0) @map("technical_attempt_count")
   parentGroupId            String?  @map("parent_group_id") @db.Uuid

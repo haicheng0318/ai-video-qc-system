@@ -25,7 +25,7 @@ function VideoListPage() {
   const [result, setResult] = useState<Required<VideoList>>({ items: [], total: 0, page: 1, pageSize: 20 });
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [user, setUser] = useState<ApiUser | null>(null), [viewMode, setViewMode] = useState<ViewMode>('list');
-  const names = ['search', 'status', 'platform', 'videoType', 'month', 'dateFrom', 'dateTo', 'contentRating', 'creatorId'] as const;
+  const names = ['search', 'status', 'platform', 'videoType', 'month', 'dateFrom', 'dateTo', 'contentRating', 'dataRating', 'comprehensiveRating', 'creatorId'] as const;
   const values = Object.fromEntries(names.map((name) => [name, params.get(name) || (name === 'month' ? currentShanghaiMonth() : '')])) as Record<(typeof names)[number], string>;
   const page = Math.max(1, Math.min(10000, Number(params.get('page')) || 1)), pageSize = 20;
   const queryString = new URLSearchParams({ ...Object.fromEntries(names.filter((name) => values[name]).map((name) => [name, values[name]])), page: String(page), pageSize: String(pageSize) }).toString();
@@ -63,6 +63,8 @@ function VideoListPage() {
         <Field label="平台"><input name="platform" defaultValue={values.platform} /></Field>
         <Field label="视频类型"><select name="videoType" defaultValue={values.videoType}><option value="">全部类型</option><option value="product_card">商品卡</option><option value="qianchuan_ad">千川投放</option><option value="live_room_traffic">直播引流</option><option value="organic">自然流</option><option value="brand_seeding">品牌种草</option><option value="other">其他</option></select></Field>
         <Field label="内容等级"><select name="contentRating" defaultValue={values.contentRating}><option value="">全部等级</option>{['A+', 'A', 'B', 'B-', 'C', 'D'].map((value) => <option key={value}>{value}</option>)}</select></Field>
+        <Field label="数据等级"><select name="dataRating" defaultValue={values.dataRating}><option value="">全部等级</option>{['S', 'A+', 'A', 'B', 'B-', 'C', 'D'].map((value) => <option key={value}>{value}</option>)}</select></Field>
+        <Field label="综合等级"><select name="comprehensiveRating" defaultValue={values.comprehensiveRating}><option value="">全部等级</option>{['S', 'A+', 'A', 'B', 'B-', 'C', 'D'].map((value) => <option key={value}>{value}</option>)}</select></Field>
         <Field label="上传月份"><input name="month" type="month" defaultValue={values.month} /></Field>
         <Field label="开始日期"><input name="dateFrom" type="date" defaultValue={values.dateFrom} /></Field>
         <Field label="结束日期"><input name="dateTo" type="date" defaultValue={values.dateTo} /></Field>

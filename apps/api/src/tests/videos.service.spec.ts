@@ -100,6 +100,35 @@ test('video list search preserves supervisor team visibility scope', async () =>
   });
 });
 
+test('video list applies V1.1 data and comprehensive filters inside the existing owner scope', async () => {
+  let findArgs: Record<string, any> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, any>) => { findArgs = args; return []; },
+      count: async () => 0,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const visibility = { creatorId: testUser.id };
+  const permissions = { buildVideoVisibilityWhere: () => visibility };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+
+  await service.list(testUser, {
+    page: 1,
+    pageSize: 20,
+    dataRating: 'A',
+    comprehensiveRating: 'B',
+  });
+
+  assert.equal(findArgs?.where.creatorId, testUser.id);
+  assert.deepEqual(findArgs?.where.v11DataDecisions, {
+    some: { dataRating: 'A', workflowRevision: { status: 'current' } },
+  });
+  assert.deepEqual(findArgs?.where.v11ComprehensiveDecisions, {
+    some: { comprehensiveRating: 'B', workflowRevision: { status: 'current' } },
+  });
+});
+
 function videoFile(filePath: string, size: number): Video {
   return {
     isTrial: false,
