@@ -30,7 +30,7 @@ test('canonical fact vocabulary is versioned and dimension-scoped across schema 
   assert.match(V11_FACT_CLAIM_VERSION, /^fact-claims-v/);
   assert.deepEqual(Object.keys(V11_FACT_CLAIMS), V11_CONTENT_DIMENSIONS.map(({ code }) => code));
 
-  const prompt = buildV11ContentPrompt({ platform: 'douyin' });
+  const prompt = buildV11ContentPrompt({ platform: 'douyin' }, v11ContentResponseJsonSchema);
   for (const [dimension, keys] of Object.entries(V11_FACT_CLAIMS)) {
     assert.match(prompt, new RegExp(`- ${dimension}（`));
     for (const key of keys) assert.match(prompt, new RegExp(`\\b${key}\\b`));

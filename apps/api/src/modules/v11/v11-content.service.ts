@@ -247,7 +247,10 @@ export class V11ContentService {
           materialized.path,
           video.mimeType,
           run.modelConfigSnapshot as unknown as QwenEffectiveModelConfig,
-          buildV11ContentPrompt(run.group.inputRevision.metadataSnapshot as Record<string, unknown>),
+          buildV11ContentPrompt(
+            run.group.inputRevision.metadataSnapshot as Record<string, unknown>,
+            v11ContentResponseJsonSchema as unknown as Record<string, unknown>,
+          ),
           { name: 'v11_video_content_review', schema: v11ContentResponseJsonSchema as unknown as Record<string, unknown> },
         );
         rawText = response.rawResponse;
