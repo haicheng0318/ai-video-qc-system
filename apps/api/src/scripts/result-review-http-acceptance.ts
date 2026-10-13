@@ -125,7 +125,7 @@ async function createFixtures(prisma: PrismaClient): Promise<Fixture> {
   ];
   const videos = {} as Record<ScenarioKey, { id: string; metricId: string }>;
   for (const scenario of scenarios) {
-    const owner = byRole[UserRole.admin];
+    const owner = scenario.key === 'denied' ? byRole[UserRole.admin] : byRole[scenario.role];
     const video = await prisma.video.create({
       data: {
         title: `HTTP acceptance ${scenario.key}`,

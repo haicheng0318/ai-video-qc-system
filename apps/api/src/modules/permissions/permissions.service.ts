@@ -5,23 +5,8 @@ import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-const fullDataAccessRoles: UserRole[] = [
-  UserRole.admin,
-  UserRole.content_owner,
-  UserRole.operator,
-  UserRole.advertiser,
-];
-
 export function canManageResultData(user: AuthenticatedUser, video: Video) {
-  if (user.role === UserRole.admin || user.role === UserRole.content_owner) return true;
-  const responsibleRole =
-    video.videoType === 'qianchuan_ad' ||
-    video.videoType === 'live_room_traffic' ||
-    (video.videoType === 'product_card' && video.isForAds) ||
-    (video.videoType === 'other' && video.isForAds)
-      ? UserRole.advertiser
-      : UserRole.operator;
-  return user.role === responsibleRole;
+  return user.role === UserRole.admin || video.creatorId === user.id;
 }
 
 @Injectable()
@@ -32,23 +17,9 @@ export class PermissionsService {
   ) {}
 
   buildVideoVisibilityWhere(user: AuthenticatedUser) {
-    if (fullDataAccessRoles.includes(user.role)) {
+    if (user.role === UserRole.admin) {
       return {};
     }
-
-    if (user.role === UserRole.supervisor) {
-      return {
-        OR: [
-          { creatorId: user.id },
-          {
-            creator: {
-              managerId: user.id,
-            },
-          },
-        ],
-      };
-    }
-
     return { creatorId: user.id };
   }
 
@@ -58,9 +29,7 @@ export class PermissionsService {
     requestMeta?: { ipAddress?: string; userAgent?: string; action?: string },
   ) {
     const allowed =
-      fullDataAccessRoles.includes(user.role) ||
-      video.creatorId === user.id ||
-      (user.role === UserRole.supervisor && video.creator?.managerId === user.id);
+      user.role === UserRole.admin || video.creatorId === user.id;
 
     if (!allowed) {
       await this.operationLogsService.create({
@@ -84,9 +53,7 @@ export class PermissionsService {
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
     const allowed =
-      user.role === UserRole.admin ||
-      user.role === UserRole.content_owner ||
-      ([UserRole.director, UserRole.visitor].includes(user.role as 'director' | 'visitor') && video.creatorId === user.id);
+      user.role === UserRole.admin || video.creatorId === user.id;
 
     if (!allowed) {
       await this.operationLogsService.create({
@@ -111,9 +78,9 @@ export class PermissionsService {
   ) {
     const allowed =
       user.role === UserRole.admin ||
-      user.role === UserRole.content_owner ||
       (user.role === UserRole.supervisor &&
-        (video.creatorId === user.id || video.creator?.managerId === user.id));
+        video.creatorId === user.id) ||
+      (user.role === UserRole.content_owner && video.creatorId === user.id);
 
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Supervisor review submission denied.', requestMeta);
@@ -127,9 +94,7 @@ export class PermissionsService {
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
     const allowed =
-      video.creatorId === user.id ||
-      user.role === UserRole.admin ||
-      user.role === UserRole.content_owner;
+      video.creatorId === user.id || user.role === UserRole.admin;
 
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Video revision upload denied.', requestMeta);
@@ -174,7 +139,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
-    const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
+    const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Rule engine execution denied.', requestMeta);
       throw new ForbiddenException('You do not have permission to execute the rule engine.');
@@ -186,7 +151,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
-    const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
+    const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'AI final evaluation trigger denied.', requestMeta);
       throw new ForbiddenException('You do not have permission to trigger final evaluation.');
@@ -198,7 +163,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
-    const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
+    const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Final confirmation denied.', requestMeta);
       throw new ForbiddenException('You do not have permission to confirm the final evaluation.');
@@ -210,7 +175,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
-    const allowed = user.role === UserRole.admin || user.role === UserRole.content_owner;
+    const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Case marking denied.', requestMeta);
       throw new ForbiddenException('You do not have permission to mark this case.');

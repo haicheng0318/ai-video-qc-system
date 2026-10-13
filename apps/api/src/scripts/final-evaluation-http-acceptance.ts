@@ -134,7 +134,8 @@ async function createFixture(prisma: PrismaClient): Promise<Fixture> {
   const users = Object.fromEntries(created.map((item) => [item.role, { id: item.id, account: item.account }]));
   const targets: Record<string, Target> = {};
   for (const [key, content, data, brand] of scenarios) {
-    targets[key] = await createTarget(prisma, users.admin.id, users.content_owner.id, key, content, data, brand);
+    const ownerId = key === 'content-owner' ? users.content_owner.id : users.admin.id;
+    targets[key] = await createTarget(prisma, ownerId, users.content_owner.id, key, content, data, brand);
   }
   await prisma.finalVideoEvaluation.create({ data: {
     videoId: targets.stale.videoId, contentReviewId: targets.stale.contentId, resultReviewId: targets.stale.resultId,

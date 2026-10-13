@@ -57,6 +57,11 @@ test('video list applies bounded pagination and returns metadata while preservin
   const result = await service.list(testUser, { page: 3, pageSize: 20, search: 'summer' });
   assert.equal(findArgs?.skip, 40);
   assert.equal(findArgs?.take, 20);
+  const include = findArgs?.include as Record<string, any>;
+  assert.deepEqual(include.v11DataDecisions.where, { workflowRevision: { status: 'current' } });
+  assert.deepEqual(include.v11ComprehensiveDecisions.where, { workflowRevision: { status: 'current' } });
+  assert.equal(include.v11DataDecisions.take, 1);
+  assert.equal(include.v11ComprehensiveDecisions.take, 1);
   assert.deepEqual(result, { items: [{ id: 'video-1' }], total: 41, page: 3, pageSize: 20 });
 });
 
@@ -92,6 +97,64 @@ test('video list search preserves supervisor team visibility scope', async () =>
         ],
       },
     ],
+  });
+});
+
+test('video list applies V1.1 data and comprehensive filters inside the existing owner scope', async () => {
+  let findArgs: Record<string, any> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, any>) => { findArgs = args; return []; },
+      count: async () => 0,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const visibility = { creatorId: testUser.id };
+  const permissions = { buildVideoVisibilityWhere: () => visibility };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+
+  await service.list(testUser, {
+    page: 1,
+    pageSize: 20,
+    dataRating: 'A',
+    comprehensiveRating: 'B',
+  });
+
+  assert.equal(findArgs?.where.creatorId, testUser.id);
+  assert.deepEqual(findArgs?.where.v11DataDecisions, {
+    some: { dataRating: 'A', workflowRevision: { status: 'current' } },
+  });
+  assert.deepEqual(findArgs?.where.v11ComprehensiveDecisions, {
+    some: { comprehensiveRating: 'B', workflowRevision: { status: 'current' } },
+  });
+});
+
+test('video list and content rating filter exclude pilot and independent evaluation groups', async () => {
+  let findArgs: Record<string, any> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, any>) => { findArgs = args; return []; },
+      count: async () => 0,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const permissions = { buildVideoVisibilityWhere: () => ({ creatorId: testUser.id }) };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+
+  await service.list(testUser, { page: 1, pageSize: 20, contentRating: 'B' });
+
+  assert.deepEqual(findArgs?.where.v11EvaluationGroups, {
+    some: {
+      pilotRun: false,
+      independent: false,
+      decision: { contentRating: 'B' },
+      workflowRevision: { status: 'current' },
+    },
+  });
+  assert.deepEqual(findArgs?.include.v11EvaluationGroups.where, {
+    pilotRun: false,
+    independent: false,
+    workflowRevision: { status: 'current' },
   });
 });
 

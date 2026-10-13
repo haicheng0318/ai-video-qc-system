@@ -79,9 +79,9 @@ async function createFixture(prisma: PrismaClient): Promise<Fixture> {
   const users = Object.fromEntries(created.map((item) => [item.role, { id: item.id, account: item.account }]));
   const targets = {
     effective: await createTarget(prisma, users.admin.id, users.content_owner.id, 'effective', 'A', 'A', 'effective'),
-    low: await createTarget(prisma, users.admin.id, users.content_owner.id, 'low', 'A', 'C', 'low_effective'),
-    invalid: await createTarget(prisma, users.admin.id, users.content_owner.id, 'invalid', 'C', 'C', 'invalid'),
-    manual: await createTarget(prisma, users.admin.id, users.content_owner.id, 'manual', 'C', 'A', 'effective'),
+    low: await createTarget(prisma, users.content_owner.id, users.content_owner.id, 'low', 'A', 'C', 'low_effective'),
+    invalid: await createTarget(prisma, users.content_owner.id, users.content_owner.id, 'invalid', 'C', 'C', 'invalid'),
+    manual: await createTarget(prisma, users.content_owner.id, users.content_owner.id, 'manual', 'C', 'A', 'effective'),
     denied: await createTarget(prisma, users.admin.id, users.content_owner.id, 'denied', 'A', 'A', 'effective'),
     duplicate: await createTarget(prisma, users.admin.id, users.content_owner.id, 'duplicate', 'A', 'A', 'effective'),
   };

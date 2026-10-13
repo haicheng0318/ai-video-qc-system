@@ -147,7 +147,8 @@ async function createFixtures(prisma: PrismaClient): Promise<Fixture> {
   const targets: Record<string, Target> = {};
   const supervisorReviewIds: string[] = [];
   for (const scenario of allScenarios) {
-    const target = await createTarget(prisma, owner.id, reviewer.id, suffix, scenario) as Target & { supervisorReviewId: string };
+    const scenarioOwner = scenario.key === 'content-owner' ? users[UserRole.content_owner]! : owner;
+    const target = await createTarget(prisma, scenarioOwner.id, reviewer.id, suffix, scenario) as Target & { supervisorReviewId: string };
     targets[scenario.key] = target;
     supervisorReviewIds.push(target.supervisorReviewId);
   }

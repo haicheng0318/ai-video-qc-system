@@ -109,24 +109,24 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
     assert.equal(status.status, contentFailure ? 'failed' : 'succeeded');
     return queued.reviewId;
   };
-  const approve = async (id: string, decision = 'approved_for_publish') => json(await req(`/videos/${id}/supervisor-review`, 'supervisor', 'POST', {
+  const approve = async (id: string, decision = 'approved_for_publish') => json(await req(`/videos/${id}/supervisor-review`, 'admin', 'POST', {
     decision, comment: '本地主管验收', ...(decision === 'revision_required' ? { revisionRequirements: ['调整开场'] } : {}),
   }), 201);
-  const metrics = async (id: string, role = 'operator', baseMetricId: string | null = null) => json(await req(`/videos/${id}/result-metrics`, role, 'POST', {
+  const metrics = async (id: string, role = 'director', baseMetricId: string | null = null, ads = false) => json(await req(`/videos/${id}/result-metrics`, role, 'POST', {
     baseMetricId, dataStartDate: '2026-09-01', dataEndDate: '2026-09-02', views: insufficient ? 2 : 1000,
-    ...(role === 'advertiser' ? { impressions: 1000, spend: '100.00' } : {}),
+    ...(ads ? { impressions: 1000, spend: '100.00' } : {}),
   }), 201);
-  const review = async (id: string, metricId: string, role = 'operator') => {
+  const review = async (id: string, metricId: string, role = 'director') => {
     const queued = await json(await req(`/videos/${id}/result-review`, role, 'POST', { resultMetricId: metricId }), 202);
     await worker().runOnce();
     return queued.reviewId;
   };
-  const rule = async (id: string, reviewId: string) => (await json(await req(`/videos/${id}/rule-engine`, 'content_owner', 'POST', { resultReviewId: reviewId }), 201)).ruleEngineResult;
+  const rule = async (id: string, reviewId: string) => (await json(await req(`/videos/${id}/rule-engine`, 'director', 'POST', { resultReviewId: reviewId }), 201)).ruleEngineResult;
   const final = async (id: string, ruleId: string) => {
-    const queued = await json(await req(`/videos/${id}/final-evaluation`, 'content_owner', 'POST', { ruleEngineResultId: ruleId }), 202);
+    const queued = await json(await req(`/videos/${id}/final-evaluation`, 'director', 'POST', { ruleEngineResultId: ruleId }), 202);
     await worker().runOnce(); return queued.evaluationId;
   };
-  const confirm = (id: string, evaluationId: string, grade = 'effective', role = 'content_owner', extra = {}) => req(`/videos/${id}/final-confirmation`, role, 'POST', {
+  const confirm = (id: string, evaluationId: string, grade = 'effective', role = 'admin', extra = {}) => req(`/videos/${id}/final-confirmation`, role, 'POST', {
     evaluationId, finalGrade: grade, canBeUsedForPerformance: false, ...extra,
   });
   const readyFinal = async (title: string) => {
@@ -156,9 +156,9 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
       assert.deepEqual(attempts.map(r => r.status).sort(), [200, 409]);
       const saved = await db.finalVideoEvaluation.findUniqueOrThrow({ where: { id: f.f } });
       assert.equal(saved.contentGrade, 'A'); assert.equal(saved.dataGrade, 'A'); assert.equal(saved.finalGrade, 'effective');
-      assert.equal(saved.confirmedBy, users.content_owner.id); assert.ok(saved.confirmedAt);
+      assert.equal(saved.confirmedBy, users.admin.id); assert.ok(saved.confirmedAt);
       assert.equal(await videoState(f.v.id), 'final_effective');
-      await json(await req(`/videos/${f.v.id}/case-marking`, 'content_owner', 'PUT', { evaluationId: f.f, caseType: 'excellent', reason: '可复用本地验收案例' }));
+      await json(await req(`/videos/${f.v.id}/case-marking`, 'admin', 'PUT', { evaluationId: f.f, caseType: 'excellent', reason: '可复用本地验收案例' }));
       const cases = await json(await req('/cases?type=excellent')); assert.ok(JSON.stringify(cases).includes(f.v.id));
       const day = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
       const summary = await json(await req(`/dashboard/summary?startDate=${day}&endDate=${day}`)); assert.ok(summary.finalizedCount >= 1);
@@ -216,7 +216,7 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
       assert.equal(child.parentVideoId, parent.id); assert.equal(child.version, 2); assert.equal(await videoState(parent.id), 'revision_required');
       assert.equal((await db.aiContentReview.findUniqueOrThrow({ where: { id: originalReview } })).status, 'succeeded');
       await content(child.id); await approve(child.id, 'invalid_content');
-      assert.equal((await req(`/videos/${child.id}/result-metrics`, 'operator', 'POST', { baseMetricId: null })).status, 409);
+      assert.equal((await req(`/videos/${child.id}/result-metrics`, 'director', 'POST', { baseMetricId: null })).status, 409);
       assert.equal(await db.videoResultMetric.count({ where: { videoId: child.id } }), 0);
     });
 
@@ -225,10 +225,10 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
       const v = await upload('样本不足'); await content(v.id); await approve(v.id);
       const m = await metrics(v.id); const r = await review(v.id, m.id); const boundary = await rule(v.id, r);
       assert.equal(boundary.ruleResult, 'pending_data'); assert.equal(boundary.dataGrade, null); assert.equal(await videoState(v.id), 'pending_data');
-      assert.equal((await req(`/videos/${v.id}/final-evaluation`, 'content_owner', 'POST', { ruleEngineResultId: boundary.id })).status, 409);
+      assert.equal((await req(`/videos/${v.id}/final-evaluation`, 'director', 'POST', { ruleEngineResultId: boundary.id })).status, 409);
       assert.equal(await db.finalVideoEvaluation.count({ where: { videoId: v.id } }), 0);
       insufficient = false;
-      const newer = await metrics(v.id, 'operator', m.id); const rr = await review(v.id, newer.id); const rb = await rule(v.id, rr);
+      const newer = await metrics(v.id, 'director', m.id); const rr = await review(v.id, newer.id); const rb = await rule(v.id, rr);
       assert.equal(rb.dataGrade, 'A'); assert.notEqual(rb.id, boundary.id);
       assert.equal((await db.aiResultReview.findUniqueOrThrow({ where: { id: r } })).dataGrade, null);
     });
@@ -237,20 +237,20 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
       const v = await upload('权限矩阵');
       for (const role of ['supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/content-review`, role, 'POST')).status, 403, role);
       await content(v.id);
-      for (const role of ['director', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/supervisor-review`, role, 'POST', { decision: 'approved_for_publish' })).status, 403, role);
+      for (const role of ['supervisor', 'director', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/supervisor-review`, role, 'POST', { decision: 'approved_for_publish' })).status, 403, role);
       await approve(v.id);
-      for (const role of ['director', 'supervisor', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/result-metrics`, role, 'POST', { baseMetricId: null })).status, 403, role);
+      for (const role of ['content_owner', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/result-metrics`, role, 'POST', { baseMetricId: null })).status, 403, role);
       const m = await metrics(v.id); const r = await review(v.id, m.id);
-      for (const role of ['director', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/rule-engine`, role, 'POST', { resultReviewId: r })).status, 403, role);
+      for (const role of ['content_owner', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await req(`/videos/${v.id}/rule-engine`, role, 'POST', { resultReviewId: r })).status, 403, role);
       const b = await rule(v.id, r); const f = await final(v.id, b.id);
-      for (const role of ['director', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await confirm(v.id, f, 'effective', role)).status, 403, role);
+      for (const role of ['content_owner', 'director', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await confirm(v.id, f, 'effective', role)).status, 403, role);
       for (const role of ['content_owner', 'director', 'supervisor', 'operator', 'advertiser', 'visitor']) assert.equal((await req('/admin/operations/overview', role)).status, 403, role);
       const own = await upload('访客自己的试用视频', 'visitor'); assert.equal(own.isTrial, true); await content(own.id, 'visitor');
       for (const suffix of ['/result-metrics/latest', '/result-review/latest', '/final-evaluation/latest']) assert.equal((await req(`/videos/${own.id}${suffix}`, 'visitor')).status, 403);
       for (const suffix of ['', '/file-url', '/report']) assert.equal((await req(`/videos/${v.id}${suffix}`, 'visitor')).status, 403);
       const ad = await upload('投放类型', 'director', undefined, 'qianchuan_ad'); await content(ad.id); await approve(ad.id);
       assert.equal((await req(`/videos/${ad.id}/result-metrics`, 'operator', 'POST', { baseMetricId: null })).status, 403);
-      await metrics(ad.id, 'advertiser');
+      await metrics(ad.id, 'director', null, true);
     });
 
     await t.test('new metric evidence makes a prior recommendation unconfirmable', async () => {
@@ -267,9 +267,9 @@ test('V1.01 real local HTTP, database and worker acceptance (synthetic providers
         const manual = c === 'C' && r === 'A';
         if (manual) assert.equal((await confirm(f.v.id, f.f, 'effective')).status, 400, 'conflicting evidence needs a human explanation');
         const extra = manual ? { confirmationComment: '负责人已逐项核对本地模拟业务证据', manualAdjustReason: '结合模拟线下证据保守调整为低有效' } : {};
-        await json(await confirm(f.v.id, f.f, expected, 'content_owner', extra));
+        await json(await confirm(f.v.id, f.f, expected, 'admin', extra));
         assert.equal(await videoState(f.v.id), `final_${expected}`);
-        if (expected === 'invalid') await json(await req(`/videos/${f.v.id}/case-marking`, 'content_owner', 'PUT', { evaluationId: f.f, caseType: 'negative', reason: '本地反面案例证据完整' }));
+        if (expected === 'invalid') await json(await req(`/videos/${f.v.id}/case-marking`, 'admin', 'PUT', { evaluationId: f.f, caseType: 'negative', reason: '本地反面案例证据完整' }));
         if (manual) assert.equal(await db.operationLog.count({ where: { videoId: f.v.id, actionType: 'final_grade_adjusted' } }), 1);
       }
       contentGrade = 'A'; resultGrade = 'A';

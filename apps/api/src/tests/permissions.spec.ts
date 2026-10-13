@@ -15,7 +15,7 @@ const user = (role: UserRole, id = 'director-id'): AuthenticatedUser => ({
   managerId: null,
 });
 
-test('phase 1 video visibility keeps role ownership rules', () => {
+test('V1.1 video visibility gives admin all data and every non-admin only own data', () => {
   const service = new PermissionsService({} as PrismaService, {} as OperationLogsService);
 
   assert.deepEqual(service.buildVideoVisibilityWhere(user(UserRole.admin)), {});
@@ -23,11 +23,9 @@ test('phase 1 video visibility keeps role ownership rules', () => {
     creatorId: 'director-id',
   });
   assert.deepEqual(service.buildVideoVisibilityWhere(user(UserRole.supervisor)), {
-    OR: [
-      { creatorId: 'director-id' },
-      { creator: { managerId: 'director-id' } },
-    ],
+    creatorId: 'director-id',
   });
+  assert.deepEqual(service.buildVideoVisibilityWhere(user(UserRole.content_owner)), { creatorId: 'director-id' });
 });
 
 test('denied video access is logged and rejected', async () => {
