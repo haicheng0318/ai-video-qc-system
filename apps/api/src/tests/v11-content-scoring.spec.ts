@@ -6,15 +6,15 @@ import {
   V11_CONTENT_DIMENSIONS,
   V11DimensionObservation,
 } from '../modules/v11/content-scoring';
-import { V11ContentModelOutputSchema } from '../modules/v11/content-schema';
-import { assertEvidenceWithinDuration } from '../modules/v11/v11-content.service';
+import { assertEvidenceWithinDuration, V11ContentModelOutputSchema } from '../modules/v11/content-schema';
+import { V11_FACT_CLAIMS } from '../modules/v11/fact-claims';
 
 const observed = (anchor: number): V11DimensionObservation[] => V11_CONTENT_DIMENSIONS.map(({ code }) => ({
   dimension: code,
   observationStatus: 'observed' as const,
   anchor,
   facts: [`fact:${code}`],
-  factClaims: [{ key: `${code}_observed`, state: 'present' as const, evidenceReferences: ['00:00-00:01'] }],
+  factClaims: [{ key: V11_FACT_CLAIMS[code][0], state: 'present' as const, evidenceReferences: ['00:00-00:01'] }],
   evidence: [{ startSeconds: 1, endSeconds: 2, reference: `segment:${code}`, description: code }],
   observation: `${code} observed`,
 }));
