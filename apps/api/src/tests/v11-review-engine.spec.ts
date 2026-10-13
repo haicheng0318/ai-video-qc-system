@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { V11_CONTENT_DIMENSIONS, V11ContentRating } from '../modules/v11/content-scoring';
-import { decideReviewProgress, requiresIndependentReview, ReviewRun } from '../modules/v11/review-engine';
+import {
+  decideFirstRunReview,
+  decideReviewProgress,
+  detectFirstRunFactualContradiction,
+  requiresIndependentReview,
+  ReviewRun,
+} from '../modules/v11/review-engine';
 
 const run = (
   score: number,
@@ -15,7 +21,7 @@ const run = (
   rating,
   anchors: Object.fromEntries(V11_CONTENT_DIMENSIONS.map((item) => [item.code, anchor])) as ReviewRun['anchors'],
   factsHash,
-  factClaims: [{ dimension: 'selling_point', key: 'product_visible', state: factState }],
+  factClaims: [{ dimension: 'selling_point', key: 'core_subject_identifiable', state: factState }],
   complianceStatus,
 });
 
@@ -57,6 +63,33 @@ test('free-text paraphrases do not create a major conflict while explicit mutual
   ]);
   assert.equal(conflict.action, 'hold');
   assert.equal('reason' in conflict ? conflict.reason : null, 'major_fact_conflict');
+});
+
+test('missing or uncertain canonical claims remain compatible instead of causing a major conflict', () => {
+  const complete = run(75, 'B');
+  complete.factClaims.push({ dimension: 'selling_point', key: 'selling_point_present', state: 'present' });
+  const missing = run(76, 'B');
+  assert.equal(decideReviewProgress([complete, missing]).action, 'adopt');
+
+  const uncertain = run(76, 'B', 3, 'facts', 'clear', 'uncertain');
+  assert.equal(decideReviewProgress([run(75, 'B'), uncertain]).action, 'adopt');
+});
+
+test('first run contradiction compares canonical audio claim with the frozen media manifest', () => {
+  const contradicted = run(77.5, 'B');
+  contradicted.factClaims = [{ dimension: 'subtitle_audio', key: 'audio_present', state: 'absent' }];
+  assert.equal(detectFirstRunFactualContradiction(contradicted, { hasAudio: true }), true);
+  assert.equal(decideFirstRunReview({
+    run: contradicted,
+    mediaManifest: { hasAudio: true },
+    eligiblePilotCount: 50,
+    fingerprint: 'not-a-boundary-sample',
+    comparableHistoricalScore: null,
+    appeal: false,
+  }), true);
+
+  contradicted.factClaims[0].state = 'uncertain';
+  assert.equal(detectFirstRunFactualContradiction(contradicted, { hasAudio: true }), false);
 });
 
 test('major compliance conflict goes directly to hold', () => {

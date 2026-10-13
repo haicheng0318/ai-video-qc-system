@@ -11,9 +11,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VideoStorageService } from '../storage/video-storage.service';
 import { calculateV11ContentScore, V11_CONTENT_RATING_VERSION } from './content-scoring';
 import { buildV11ContentPrompt } from './content-prompt';
-import { V11ContentModelOutputSchema, v11ContentResponseJsonSchema } from './content-schema';
+import { assertEvidenceWithinDuration, V11ContentModelOutputSchema, v11ContentResponseJsonSchema } from './content-schema';
 import { createMediaManifest } from './media-manifest';
-import { decideReviewProgress, requiresIndependentReview, ReviewRun } from './review-engine';
+import { decideFirstRunReview, decideReviewProgress, ReviewRun } from './review-engine';
 import { evaluateContentGate } from './gate-engine';
 import {
   buildEvaluationFingerprint,
@@ -57,21 +57,6 @@ export async function countQualifiedInitialPilotSamples(tx: Pick<Prisma.Transact
       AND g.trigger_reason <> 'appeal'
   `);
   return Number(rows[0]?.count ?? 0);
-}
-
-export function assertEvidenceWithinDuration(
-  output: ReturnType<typeof V11ContentModelOutputSchema.parse>,
-  durationSeconds: number | null,
-) {
-  if (durationSeconds === null) return;
-  for (const dimension of output.dimensions) {
-    for (const evidence of dimension.evidence) {
-      if ((evidence.startSeconds !== null && evidence.startSeconds > durationSeconds)
-        || (evidence.endSeconds !== null && evidence.endSeconds > durationSeconds)) {
-        throw new Error('Model evidence timestamp exceeds the frozen media duration.');
-      }
-    }
-  }
 }
 
 @Injectable()
@@ -231,7 +216,7 @@ export class V11ContentService {
         stage: 'v11_content',
         v11RunId: run.id,
         inputRefs: { workflowRevisionId: workflow.id, inputRevisionId: inputRevision.id },
-        maxAttempts: 2,
+        maxAttempts: options.pilotRun ? 1 : 2,
       });
       await this.logs.create({ userId: user.id, videoId, targetType: 'v11_evaluation_group', targetId: group.id, actionType: options.pilotRun ? 'v11_content_pilot_started' : 'v11_content_shadow_started', result: 'started', comment: options.bypassReason ?? undefined, afterValue: { fingerprint, inputRevisionId: inputRevision.id, workflowRevision: workflow.revision, independent: options.independent, pilotRun: options.pilotRun }, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, tx);
       return { duplicate: false, group: { ...group, runs: [run] }, job };
@@ -270,14 +255,15 @@ export class V11ContentService {
         await materialized.cleanup();
       }
       const parsed = V11ContentModelOutputSchema.parse(JSON.parse(rawText!));
-      const manifest = run.group.inputRevision.mediaManifest as { durationSeconds?: number | null };
+      const manifest = run.group.inputRevision.mediaManifest as { durationSeconds?: number | null; hasAudio?: boolean | null };
       assertEvidenceWithinDuration(parsed, manifest.durationSeconds ?? null);
       const calculated = calculateV11ContentScore({ dimensions: parsed.dimensions, compliance: parsed.compliance });
       const factsHash = sha256(canonicalize(parsed.dimensions.map((item) => ({ dimension: item.dimension, facts: item.facts }))));
       await this.db.$transaction(async (tx) => {
         await this.jobs.assertCurrent(tx, job.videoId, run.id);
+        const pilot = run.group.pilotRun || run.group.independent;
         const currentWorkflow = await tx.v11WorkflowRevision.findUniqueOrThrow({ where: { id: run.group.workflowRevisionId } });
-        if (currentWorkflow.status !== 'current') {
+        if (!pilot && currentWorkflow.status !== 'current') {
           await tx.v11EvaluationRun.update({ where: { id: run.id }, data: { status: 'stale', stale: true, completedAt: new Date() } });
           await tx.v11EvaluationGroup.updateMany({ where: { id: run.groupId, status: { in: ['queued', 'running', 'review_required'] } }, data: { status: 'superseded' } });
           await this.jobs.finishCurrent(tx, 'failed', false, new Error('Workflow revision is stale.'));
@@ -289,6 +275,20 @@ export class V11ContentService {
         const succeeded = await tx.v11EvaluationRun.findMany({ where: { groupId: run.groupId, status: 'succeeded' }, orderBy: { runNumber: 'asc' } });
         await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { validRunCount: succeeded.length } });
         const inputComplete = run.group.inputRevision.inputComplete && calculated.complete;
+        if (pilot) {
+          await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { status: inputComplete ? 'pilot_completed' : 'pilot_incomplete' } });
+          await this.logs.create({
+            userId: job.actorId,
+            videoId: job.videoId,
+            targetType: 'v11_evaluation_run',
+            targetId: run.id,
+            actionType: 'v11_content_pilot_completed',
+            result: inputComplete ? 'success' : 'incomplete',
+            afterValue: { totalScore: calculated.totalScore, contentRating: calculated.contentRating, inputComplete },
+          }, tx);
+          await this.jobs.finishCurrent(tx, 'succeeded');
+          return;
+        }
         if (!inputComplete) {
           await tx.v11WorkflowHold.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, groupId: run.groupId, holdType: 'input_incomplete', reason: '关键媒体或评分维度不可观察，不能形成正式评分。' } });
           await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { status: 'hold' } });
@@ -341,7 +341,7 @@ export class V11ContentService {
             orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
             select: { totalScore: true },
           });
-          progress = requiresIndependentReview({ eligiblePilotCount, fingerprint: run.group.inputRevision.evaluationFingerprint, score: calculated.totalScore!, rating: calculated.contentRating!, comparableHistoricalScore: comparableHistory ? Number(comparableHistory.totalScore) : null, appeal: run.group.triggerReason === 'appeal' })
+          progress = decideFirstRunReview({ run: reviewRuns[0], mediaManifest: manifest, eligiblePilotCount, fingerprint: run.group.inputRevision.evaluationFingerprint, comparableHistoricalScore: comparableHistory ? Number(comparableHistory.totalScore) : null, appeal: run.group.triggerReason === 'appeal' })
             ? { action: 'second_review' }
             : { action: 'adopt', method: 'single_after_pilot', anchors: reviewRuns[0].anchors, totalScore: reviewRuns[0].score, contentRating: reviewRuns[0].rating };
         } else {

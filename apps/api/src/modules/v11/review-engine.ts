@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { contentRatingFromScore, V11_CONTENT_DIMENSIONS, V11ContentDimension, V11ContentRating } from './content-scoring';
+import type { V11FactClaimKey } from './fact-claims';
 
 export type ReviewRun = {
   score: number;
@@ -8,7 +9,7 @@ export type ReviewRun = {
   factsHash: string;
   factClaims: Array<{
     dimension: V11ContentDimension;
-    key: string;
+    key: V11FactClaimKey;
     state: 'present' | 'absent' | 'uncertain';
   }>;
   complianceStatus: 'clear' | 'suspected' | 'confirmed';
@@ -46,21 +47,8 @@ function majorComplianceConflict(runs: ReviewRun[]) {
   return statuses.has('clear') && statuses.has('confirmed');
 }
 
-function factSignature(run: ReviewRun) {
-  return run.factClaims
-    .filter((claim) => claim.state !== 'uncertain')
-    .map((claim) => `${claim.dimension}:${claim.key}:${claim.state}`)
-    .sort()
-    .join('|');
-}
-
 function factsAgree(runs: ReviewRun[]) {
-  const counts = new Map<string, number>();
-  for (const run of runs) {
-    const signature = factSignature(run);
-    counts.set(signature, (counts.get(signature) ?? 0) + 1);
-  }
-  return Math.max(...counts.values()) >= Math.ceil(runs.length / 2);
+  return !hasExplicitFactContradiction(runs);
 }
 
 function hasExplicitFactContradiction(runs: ReviewRun[]) {
@@ -75,6 +63,37 @@ function hasExplicitFactContradiction(runs: ReviewRun[]) {
     }
   }
   return [...states.values()].some((values) => values.has('present') && values.has('absent'));
+}
+
+export function detectFirstRunFactualContradiction(
+  run: Pick<ReviewRun, 'factClaims'>,
+  mediaManifest: { hasAudio?: boolean | null },
+) {
+  if (hasExplicitFactContradiction([run as ReviewRun])) return true;
+  if (typeof mediaManifest.hasAudio !== 'boolean') return false;
+  const audioClaim = run.factClaims.find((claim) => claim.dimension === 'subtitle_audio' && claim.key === 'audio_present');
+  if (!audioClaim || audioClaim.state === 'uncertain') return false;
+  return (mediaManifest.hasAudio && audioClaim.state === 'absent')
+    || (!mediaManifest.hasAudio && audioClaim.state === 'present');
+}
+
+export function decideFirstRunReview(input: {
+  run: ReviewRun;
+  mediaManifest: { hasAudio?: boolean | null };
+  eligiblePilotCount: number;
+  fingerprint: string;
+  comparableHistoricalScore?: number | null;
+  appeal?: boolean;
+}) {
+  return requiresIndependentReview({
+    eligiblePilotCount: input.eligiblePilotCount,
+    fingerprint: input.fingerprint,
+    score: input.run.score,
+    rating: input.run.rating,
+    comparableHistoricalScore: input.comparableHistoricalScore,
+    appeal: input.appeal,
+    factualContradiction: detectFirstRunFactualContradiction(input.run, input.mediaManifest),
+  });
 }
 
 function hold(reason: string) {
