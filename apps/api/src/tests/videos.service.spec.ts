@@ -129,6 +129,35 @@ test('video list applies V1.1 data and comprehensive filters inside the existing
   });
 });
 
+test('video list and content rating filter exclude pilot and independent evaluation groups', async () => {
+  let findArgs: Record<string, any> | undefined;
+  const prisma = {
+    video: {
+      findMany: async (args: Record<string, any>) => { findArgs = args; return []; },
+      count: async () => 0,
+    },
+    $transaction: async (operations: Array<Promise<unknown>>) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const permissions = { buildVideoVisibilityWhere: () => ({ creatorId: testUser.id }) };
+  const service = new VideosService(prisma, permissions as never, {} as never);
+
+  await service.list(testUser, { page: 1, pageSize: 20, contentRating: 'B' });
+
+  assert.deepEqual(findArgs?.where.v11EvaluationGroups, {
+    some: {
+      pilotRun: false,
+      independent: false,
+      decision: { contentRating: 'B' },
+      workflowRevision: { status: 'current' },
+    },
+  });
+  assert.deepEqual(findArgs?.include.v11EvaluationGroups.where, {
+    pilotRun: false,
+    independent: false,
+    workflowRevision: { status: 'current' },
+  });
+});
+
 function videoFile(filePath: string, size: number): Video {
   return {
     isTrial: false,
