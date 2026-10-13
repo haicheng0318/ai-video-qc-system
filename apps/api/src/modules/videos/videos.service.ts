@@ -340,7 +340,14 @@ export class VideosService {
       where.createdAt = { ...(query.dateFrom ? { gte: shanghaiDate(query.dateFrom) } : {}), ...(query.dateTo ? { lt: shanghaiDate(query.dateTo, true) } : {}) };
     }
     if (query.contentRating) {
-      where.v11EvaluationGroups = { some: { decision: { contentRating: query.contentRating }, workflowRevision: { status: 'current' } } };
+      where.v11EvaluationGroups = {
+        some: {
+          pilotRun: false,
+          independent: false,
+          decision: { contentRating: query.contentRating },
+          workflowRevision: { status: 'current' },
+        },
+      };
     }
     if (query.dataRating) {
       where.v11DataDecisions = { some: { dataRating: query.dataRating, workflowRevision: { status: 'current' } } };
@@ -371,7 +378,11 @@ export class VideosService {
           take: 1,
         },
         v11EvaluationGroups: {
-          where: { workflowRevision: { status: 'current' } },
+          where: {
+            pilotRun: false,
+            independent: false,
+            workflowRevision: { status: 'current' },
+          },
           orderBy: { createdAt: 'desc' },
           take: 1,
           include: {

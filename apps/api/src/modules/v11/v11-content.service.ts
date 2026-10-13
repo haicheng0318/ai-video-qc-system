@@ -428,9 +428,17 @@ export class V11ContentService {
     if (!isUuid(videoId)) throw new NotFoundException('Video not found.');
     const video = await this.permissions.findVideoVisibleToUser(videoId, user);
     if (!video) throw new NotFoundException('Video not found.');
+    const workflow = await this.db.v11WorkflowRevision.findFirst({
+      where: { videoId, status: 'current' },
+      orderBy: { revision: 'desc' },
+      select: { activeContentDecisionId: true },
+    });
+    const businessWhere = { videoId, pilotRun: false, independent: false } as const;
     const group = await this.db.v11EvaluationGroup.findFirst({
-      where: { videoId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      where: workflow?.activeContentDecisionId
+        ? { ...businessWhere, decision: { is: { id: workflow.activeContentDecisionId } } }
+        : businessWhere,
+      ...(workflow?.activeContentDecisionId ? {} : { orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }] }),
       include: { runs: { orderBy: { runNumber: 'asc' }, select: { id: true, runNumber: true, runRole: true, status: true, totalScore: true, contentRating: true, complianceStatus: true, stale: true, completedAt: true } }, decision: { select: { id: true, totalScore: true, contentRating: true, complianceStatus: true, inputComplete: true, stable: true, decisionSource: true, adoptionMethod: true, decidedAt: true } }, workflowRevision: { select: { revision: true, status: true } } },
     });
     return { shadowMode: group?.shadowMode ?? true, group };
