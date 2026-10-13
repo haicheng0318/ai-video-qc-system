@@ -137,6 +137,7 @@ test('normal V1.1 triggers deduplicate while admin pilot triggers create indepen
     const pilotFingerprints = pilotGroups.map((group) => harness.inputs.find((input) => input.id === group.inputRevisionId).evaluationFingerprint);
     assert.equal(new Set(pilotFingerprints).size, 1);
     assert.equal(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).length, 3);
+    assert.ok(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).every((job) => job.maxAttempts === 1));
   } finally {
     await harness.cleanup();
   }
