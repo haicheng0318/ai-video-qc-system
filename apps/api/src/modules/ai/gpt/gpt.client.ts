@@ -58,6 +58,27 @@ export interface StructuredTextClient {
   createFinalEvaluation(request: StructuredTextRequest): Promise<StructuredTextResponse>;
 }
 
+export type QwenTextStructuredOutputMode = 'json_object' | 'json_schema';
+
+const QWEN_TEXT_STRUCTURED_OUTPUT_CAPABILITIES: Readonly<Record<string, QwenTextStructuredOutputMode>> = {
+  'qwen3.5-plus': 'json_object',
+  'qwen3.5-omni-plus': 'json_object',
+};
+
+export function qwenTextStructuredOutputMode(model: string): QwenTextStructuredOutputMode {
+  return QWEN_TEXT_STRUCTURED_OUTPUT_CAPABILITIES[model.trim().toLowerCase()] ?? 'json_object';
+}
+
+function qwenTextResponseFormat(
+  model: string,
+  schemaName: 'video_result_review' | 'video_final_evaluation',
+  jsonSchema: Record<string, unknown>,
+) {
+  return qwenTextStructuredOutputMode(model) === 'json_schema'
+    ? { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema: jsonSchema } }
+    : { type: 'json_object' };
+}
+
 function requestTimeoutMs() {
   const value = Number(process.env.QWEN_TEXT_REQUEST_TIMEOUT_MS || 120_000);
   return Number.isInteger(value) && value > 0 ? value : 120_000;
@@ -102,14 +123,7 @@ export class QwenStructuredTextClient implements StructuredTextClient {
           },
           { role: 'user', content: JSON.stringify(request.inputContext) },
         ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: schemaName,
-            strict: true,
-            schema: request.jsonSchema,
-          },
-        },
+        response_format: qwenTextResponseFormat(request.model, schemaName, request.jsonSchema),
         max_tokens: request.maxOutputTokens,
         temperature: 0.2,
         // DashScope's Node.js OpenAI-compatible API expects this non-standard

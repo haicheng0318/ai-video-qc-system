@@ -30,7 +30,7 @@ function withKey(run: () => Promise<void>) {
   });
 }
 
-test('final evaluation client uses Qwen Chat Completions strict schema', async () => {
+test('qwen3.5-plus final evaluation uses JSON object mode without a provider JSON Schema', async () => {
   await withKey(async () => {
     let captured: Record<string, any> = {};
     const client = new QwenStructuredTextClient(() => ({ chat: { completions: { create: async (input: any) => {
@@ -41,9 +41,8 @@ test('final evaluation client uses Qwen Chat Completions strict schema', async (
       model: 'qwen3.5-plus', developerPrompt: 'safe', inputContext: { video: { videoType: 'organic' } },
       jsonSchema: { type: 'object' }, maxOutputTokens: 4000,
     });
-    assert.equal(captured.response_format.json_schema.name, 'video_final_evaluation');
-    assert.equal(captured.response_format.json_schema.strict, true);
-    assert.equal(captured.response_format.type, 'json_schema');
+    assert.deepEqual(captured.response_format, { type: 'json_object' });
+    assert.equal('json_schema' in captured.response_format, false);
     assert.equal(captured.enable_thinking, false);
     assert.equal('extra_body' in captured, false);
     assert.equal('tools' in captured, false);

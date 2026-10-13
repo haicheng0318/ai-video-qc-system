@@ -39,7 +39,7 @@ async function withApiKey(run: () => Promise<void>) {
   }
 }
 
-test('Qwen client uses Chat Completions with strict JSON Schema and thinking disabled', async () => {
+test('qwen3.5-plus result review uses JSON object mode and keeps schema instructions in the prompt', async () => {
   await withApiKey(async () => {
     let captured: Record<string, any> | undefined;
     let timeout = 0;
@@ -61,9 +61,8 @@ test('Qwen client uses Chat Completions with strict JSON Schema and thinking dis
     const response = await client.createResultReview(request);
     assert.equal(captured?.model, 'qwen3.5-plus');
     assert.equal(captured?.max_tokens, 4000);
-    assert.equal(captured?.response_format.type, 'json_schema');
-    assert.equal(captured?.response_format.json_schema.strict, true);
-    assert.equal(captured?.response_format.json_schema.name, 'video_result_review');
+    assert.deepEqual(captured?.response_format, { type: 'json_object' });
+    assert.equal('json_schema' in (captured?.response_format || {}), false);
     assert.equal(captured?.enable_thinking, false);
     assert.equal('extra_body' in (captured || {}), false);
     assert.equal(captured?.temperature, 0.2);
@@ -76,6 +75,27 @@ test('Qwen client uses Chat Completions with strict JSON Schema and thinking dis
     assert.deepEqual(response.usage, { inputTokens: 10, outputTokens: 20, totalTokens: 30 });
   });
 });
+
+for (const model of ['qwen3.5-omni-plus', 'qwen-future-model']) {
+  test(`${model} defaults to JSON object mode without a provider JSON Schema`, async () => {
+    await withApiKey(async () => {
+      let captured: Record<string, any> | undefined;
+      const client = new QwenStructuredTextClient(() => ({
+        chat: { completions: { create: async (input: Record<string, any>) => {
+          captured = input;
+          return {
+            id: 'resp-capability', model,
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          };
+        } } },
+      }));
+      await client.createResultReview({ ...request, model });
+      assert.deepEqual(captured?.response_format, { type: 'json_object' });
+      assert.equal('json_schema' in (captured?.response_format || {}), false);
+    });
+  });
+}
 
 test('Qwen API key missing fails at request time without exposing a secret', async () => {
   const original = process.env.DASHSCOPE_API_KEY;
@@ -148,6 +168,12 @@ test('invalid JSON output fails backend validation', async () => {
 test('missing structured output field fails backend validation', async () => {
   const { resultSummary: _removed, ...missing } = output;
   await assert.rejects(gptHarness({ rawText: JSON.stringify(missing) }).reviewResultData({
+    model: 'qwen3.5-plus', developerPrompt: 'safe', inputContext: {}, maxOutputTokens: 4000,
+  }), ResultReviewOutputValidationError);
+});
+
+test('invalid result-review enum still fails backend validation in JSON object mode', async () => {
+  await assert.rejects(gptHarness({ rawText: JSON.stringify({ ...output, dataGrade: 'excellent' }) }).reviewResultData({
     model: 'qwen3.5-plus', developerPrompt: 'safe', inputContext: {}, maxOutputTokens: 4000,
   }), ResultReviewOutputValidationError);
 });
