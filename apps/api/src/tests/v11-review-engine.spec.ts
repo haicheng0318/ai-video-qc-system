@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { V11_CONTENT_DIMENSIONS, V11ContentRating } from '../modules/v11/content-scoring';
+import { V11_FACT_CLAIMS } from '../modules/v11/fact-claims';
 import {
   decideFirstRunReview,
   decideReviewProgress,
@@ -21,7 +22,11 @@ const run = (
   rating,
   anchors: Object.fromEntries(V11_CONTENT_DIMENSIONS.map((item) => [item.code, anchor])) as ReviewRun['anchors'],
   factsHash,
-  factClaims: [{ dimension: 'selling_point', key: 'core_subject_identifiable', state: factState }],
+  factClaims: V11_CONTENT_DIMENSIONS.map(({ code }) => ({
+    dimension: code,
+    key: V11_FACT_CLAIMS[code][0],
+    state: factState,
+  })),
   complianceStatus,
 });
 
@@ -67,12 +72,20 @@ test('free-text paraphrases do not create a major conflict while explicit mutual
 
 test('missing or uncertain canonical claims remain compatible instead of causing a major conflict', () => {
   const complete = run(75, 'B');
-  complete.factClaims.push({ dimension: 'selling_point', key: 'selling_point_present', state: 'present' });
   const missing = run(76, 'B');
-  assert.equal(decideReviewProgress([complete, missing]).action, 'adopt');
+  missing.factClaims = missing.factClaims.filter((claim) => claim.dimension !== 'opening_hook');
+  assert.equal(decideReviewProgress([complete, missing]).action, 'third_review');
 
-  const uncertain = run(76, 'B', 3, 'facts', 'clear', 'uncertain');
-  assert.equal(decideReviewProgress([run(75, 'B'), uncertain]).action, 'adopt');
+  const uncertain = run(76, 'B');
+  uncertain.factClaims.find((claim) => claim.dimension === 'opening_hook')!.state = 'uncertain';
+  assert.equal(decideReviewProgress([run(75, 'B'), uncertain]).action, 'third_review');
+});
+
+test('double review without any shared canonical claims requests a third review', () => {
+  const left = run(75, 'B');
+  const right = run(76, 'B');
+  right.factClaims = [];
+  assert.equal(decideReviewProgress([left, right]).action, 'third_review');
 });
 
 test('first run contradiction compares canonical audio claim with the frozen media manifest', () => {
@@ -101,6 +114,17 @@ test('three reviews adopt median anchors only when majority rating matches backe
   assert.equal(result.action, 'adopt');
   assert.equal(result.method, 'triple_median');
   assert.equal(result.contentRating, 'B');
+});
+
+test('three reviews hold when one dimension has no two-run definite fact majority', () => {
+  const first = run(75, 'B', 3);
+  const second = run(77, 'B', 3);
+  const third = run(78, 'B', 3);
+  second.factClaims.find((claim) => claim.dimension === 'opening_hook')!.state = 'uncertain';
+  third.factClaims = third.factClaims.filter((claim) => claim.dimension !== 'opening_hook');
+  const result = decideReviewProgress([first, second, third]);
+  assert.equal(result.action, 'hold');
+  assert.equal('reason' in result ? result.reason : null, 'facts_not_agreed_after_third');
 });
 
 test('52 81 79 severe instability is held rather than averaged or median adopted', () => {
