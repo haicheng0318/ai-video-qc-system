@@ -7,6 +7,7 @@ import {
   VideoType,
 } from '@ai-video-qc/shared';
 import { apiFetch, ApiUser } from '@/lib/api';
+import { V11BenchmarkPanel } from '@/components/v11-benchmark-panel';
 
 type Direction = 'higher_is_better' | 'lower_is_better';
 type Benchmark = {
@@ -114,6 +115,7 @@ export default function PlatformBenchmarksPage() {
   return <main className="page">
     <div className="page-title"><div><h1>平台基准配置</h1><p className="muted">用于千问数据复盘的相对表现判断；品牌留空表示平台通用基准。</p></div></div>
     {error ? <p className="error">{error}</p> : null}
+    <V11BenchmarkPanel user={user} />
     {canManage ? <section className="panel section-gap">
       <h2>{editingId ? '编辑基准' : '新增基准'}</h2>
       <form onSubmit={save}>

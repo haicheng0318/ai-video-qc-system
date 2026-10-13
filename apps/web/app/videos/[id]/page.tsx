@@ -16,6 +16,7 @@ import { ResultReviewPanel } from '@/components/result-review-panel';
 import { RuleEnginePanel } from '@/components/rule-engine-panel';
 import { FinalEvaluationPanel } from '@/components/final-evaluation-panel';
 import { FinalConfirmationPanel } from '@/components/final-confirmation-panel';
+import { V11EvaluationPanel } from '@/components/v11-evaluation-panel';
 import {
   displayLabel,
   contentDimensionLabels,
@@ -270,6 +271,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         {detailTabs.map(([value, label]) => <button key={value} type="button" role="tab" className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} onClick={() => setActiveTab(value)}>{label}</button>)}
       </nav>
       <div hidden={activeTab !== 'content'}>
+      <V11EvaluationPanel videoId={video.id} />
       <section className="panel" style={{ marginTop: 20 }}>
         <div className="page-title">
           <div>

@@ -1,5 +1,21 @@
 # AI短视频质检评估系统 V1.0
 
+> V1.1 pilot implementation follows frozen product baseline `AIQC-PRD-V1.1-R1`. It is additive: legacy model results and `content-score-v2` remain readable and are never overwritten.
+
+## V1.1 评估稳定性试运行
+
+- `v11_content_shadow` is disabled by default. When enabled in Shadow mode, the new eight-dimension result does not change video status, performance eligibility, cases, or formal dashboard figures.
+- Qwen only emits observable facts, evidence, 0-4 anchors, observations and an independent compliance status. The backend calculates the weighted score and A+/A/B/B-/C/D content rating.
+- Every evaluation freezes file SHA256, metadata, media manifest, model settings and prompt/schema/rubric/rating/preprocessing/reference versions into an owner-scoped fingerprint.
+- The first 50 eligible samples, boundary scores, first A+, deterministic 10% sample, fact conflicts, history drift and appeals use independent blind review. Severe disagreement enters Hold rather than being averaged away.
+- Every non-admin account can access only videos whose `creatorId` equals its own user id. Admin retains global access.
+- `manualContentReviewEnabled` and `manualFinalConfirmationEnabled` are admin-only, versioned runtime policies. Safety gates cannot be bypassed.
+- Data ratings use an approved V1.1 Benchmark Profile plus the latest immutable metric snapshot. Qwen may explain data but cannot decide the rating.
+- Comprehensive ratings use the frozen 42-cell matrix. `R` requires administrator resolution and cannot be manually resolved to S or A+.
+- V1.1 migrations are four additive migrations after the 13-migration formal baseline. They have no destructive rebuild or historical re-rating step.
+
+Real Qwen stability and accuracy experiments are not part of automated development tests. See [REAL_QWEN_PILOT_PLAN](docs/REAL_QWEN_PILOT_PLAN.md); paid calls require separate authorization.
+
 内容中台内部使用的 AI 短视频质检与有效产出评定系统。
 
 V1.01 本地实现、集成与发布准备见 [本地验收与发布手册](docs/V1.01-本地验收与发布手册.md) 和 [用户与管理员说明](docs/V1.01-用户与管理员说明.md)。本地通过不表示已经上线；真实云存储、付费模型、生产维护与会话切换仍需单独完成门禁。
