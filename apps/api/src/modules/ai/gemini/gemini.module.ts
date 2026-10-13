@@ -15,6 +15,6 @@ import { EvaluationJobsService } from '../../evaluation-jobs/evaluation-jobs.ser
     },
     ContentReviewService,
   ],
-  exports: [ContentReviewService],
+  exports: [ContentReviewService, QWEN_CLIENT],
 })
 export class ContentReviewModule {}

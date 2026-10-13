@@ -6,6 +6,7 @@ import { ResultReviewsService } from '../result-reviews/result-reviews.service';
 import { FinalEvaluationsService } from '../final-evaluations/final-evaluations.service';
 import { EvaluationJobsService } from './evaluation-jobs.service';
 import { UploadTicketMaintenance } from '../quotas/upload-ticket-maintenance';
+import { V11ContentService } from '../v11/v11-content.service';
 
 @Injectable()
 export class EvaluationWorker {
@@ -16,6 +17,7 @@ export class EvaluationWorker {
     private readonly content: ContentReviewService,
     private readonly result: ResultReviewsService,
     private readonly final: FinalEvaluationsService,
+    private readonly v11: V11ContentService,
     @Optional() private readonly uploadTickets?: UploadTicketMaintenance) {}
 
   async runOnce() {
@@ -55,6 +57,7 @@ export class EvaluationWorker {
         if (lease.job.stage === 'content') await this.content.executeJob(lease.job);
         else if (lease.job.stage === 'result') await this.result.executeJob(lease.job);
         else if (lease.job.stage === 'final') await this.final.executeJob(lease.job);
+        else if (lease.job.stage === 'v11_content') await this.v11.executeJob(lease.job);
         else throw new Error('Unsupported evaluation stage.');
       });
       // No-op for a terminal job; recovers missing/changed input if a stage returned early.

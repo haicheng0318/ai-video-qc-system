@@ -7,12 +7,12 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService, assertIdentityActive } from '../quotas/quotas.service';
 
-export type JobStage = 'content' | 'result' | 'final';
+export type JobStage = 'content' | 'result' | 'final' | 'v11_content';
 export type EvaluationLease = { job: EvaluationJob; token: string };
 export type JobInput = {
   videoId: string; actorId: string; stage: JobStage;
-  contentReviewId?: string; resultReviewId?: string; finalEvaluationId?: string;
-  inputRefs?: Record<string, string | null>; maxOutputTokens?: number;
+  contentReviewId?: string; resultReviewId?: string; finalEvaluationId?: string; v11RunId?: string;
+  inputRefs?: Record<string, string | null>; maxOutputTokens?: number; maxAttempts?: number;
 };
 export class EvaluationLeaseLostError extends Error {
   constructor() { super('Evaluation lease or source binding is no longer valid.'); }
@@ -77,7 +77,7 @@ export class EvaluationJobsService {
       if (this.quotas) assertIdentityActive(await this.quotas.lock(tx, original.actorId));
     }
     await this.assertNoActive(tx, input.videoId, input.stage);
-    const allowedRefs = ['resultMetricId', 'contentReviewId', 'supervisorReviewId', 'benchmarkSnapshotId', 'resultReviewId', 'ruleEngineResultId'];
+    const allowedRefs = ['resultMetricId', 'contentReviewId', 'supervisorReviewId', 'benchmarkSnapshotId', 'resultReviewId', 'ruleEngineResultId', 'workflowRevisionId', 'inputRevisionId'];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     for (const [key, value] of Object.entries(input.inputRefs || {})) {
       if (!allowedRefs.includes(key) || (value !== null && (Array.isArray(value) || !uuid.test(value)))) {
@@ -86,11 +86,13 @@ export class EvaluationJobsService {
     }
     const target = input.stage === 'content' && input.contentReviewId ? await tx.aiContentReview.findUnique({ where: { id: input.contentReviewId } })
       : input.stage === 'result' && input.resultReviewId ? await tx.aiResultReview.findUnique({ where: { id: input.resultReviewId } })
-        : input.stage === 'final' && input.finalEvaluationId ? await tx.finalVideoEvaluation.findUnique({ where: { id: input.finalEvaluationId } }) : null;
-    if (!target || target.videoId !== input.videoId || target.status !== 'running') throw new EvaluationLeaseLostError();
+        : input.stage === 'final' && input.finalEvaluationId ? await tx.finalVideoEvaluation.findUnique({ where: { id: input.finalEvaluationId } })
+          : input.stage === 'v11_content' && input.v11RunId ? await tx.v11EvaluationRun.findUnique({ where: { id: input.v11RunId }, include: { group: true } }) : null;
+    const targetVideoId = input.stage === 'v11_content' ? (target as any)?.group?.videoId : (target as any)?.videoId;
+    if (!target || targetVideoId !== input.videoId || !['pending', 'running'].includes(target.status)) throw new EvaluationLeaseLostError();
     const job = await tx.evaluationJob.create({ data: { ...input, inputRefs: input.inputRefs || {}, ...(retry ? { retriedFromId: retry.old.id } : {}) } });
     if (retry) await tx.operationLog.create({ data: { userId: retry.actorId, videoId: input.videoId, actionType: 'admin_evaluation_retry', targetType: 'evaluation_job', targetId: job.id, result: 'success', comment: retry.reason, afterValue: { originalJobId: retry.old.id, newJobId: job.id, stage: input.stage, quotaUserId: input.actorId } } });
-    if (input.stage === 'content' && !legacy) await this.quotas?.reserve(tx, input.actorId, 'content_evaluations', 1, `content:${job.id}`);
+    if ((input.stage === 'content' || input.stage === 'v11_content') && !legacy) await this.quotas?.reserve(tx, input.actorId, 'content_evaluations', 1, `content:${job.id}`);
     // Use database time for scheduling: separate worker/API hosts can have clock skew.
     await tx.$executeRaw(Prisma.sql`UPDATE evaluation_jobs SET available_at = clock_timestamp() WHERE id = ${job.id}::uuid`);
     return job;
@@ -183,10 +185,10 @@ export class EvaluationJobsService {
     const lease = this.context.getStore();
     if (!lease) throw new EvaluationLeaseLostError();
     const job = lease.job;
-    if (videoId !== job.videoId || targetId !== (job.contentReviewId || job.resultReviewId || job.finalEvaluationId)) throw new EvaluationLeaseLostError();
+    if (videoId !== job.videoId || targetId !== (job.contentReviewId || job.resultReviewId || job.finalEvaluationId || job.v11RunId)) throw new EvaluationLeaseLostError();
     await this.assertLease(tx, lease);
     const video = await tx.video.findUnique({ where: { id: videoId } });
-    if (video?.status !== expectedStatus[job.stage]) throw new EvaluationLeaseLostError();
+    if (!video || (job.stage !== 'v11_content' && video.status !== expectedStatus[job.stage])) throw new EvaluationLeaseLostError();
     const refs = job.inputRefs as Record<string, unknown>;
     if (job.stage === 'content') {
       const review = await tx.aiContentReview.findUnique({ where: { id: targetId } });
@@ -197,10 +199,16 @@ export class EvaluationJobsService {
       if (review?.videoId !== videoId || review.status !== 'running' || review.resultMetricId !== refs.resultMetricId || latest?.id !== refs.resultMetricId) throw new EvaluationLeaseLostError();
       const snapshot = typeof refs.benchmarkSnapshotId === 'string' ? await tx.evaluationInputSnapshot.findUnique({ where: { id: refs.benchmarkSnapshotId } }) : null;
       if (snapshot?.videoId !== videoId) throw new EvaluationLeaseLostError();
-    } else {
+    } else if (job.stage === 'final') {
       const evaluation = await tx.finalVideoEvaluation.findUnique({ where: { id: targetId } });
       if (evaluation?.videoId !== videoId || evaluation.status !== 'running' || evaluation.contentReviewId !== refs.contentReviewId ||
         evaluation.resultReviewId !== refs.resultReviewId || evaluation.ruleEngineResultId !== refs.ruleEngineResultId) throw new EvaluationLeaseLostError();
+    } else {
+      const run = await tx.v11EvaluationRun.findUnique({ where: { id: targetId }, include: { group: { include: { workflowRevision: true } } } });
+      if (!run || run.group.videoId !== videoId || !['pending', 'running'].includes(run.status) ||
+        run.group.workflowRevision.status !== 'current' || run.group.workflowRevisionId !== refs.workflowRevisionId) {
+        throw new EvaluationLeaseLostError();
+      }
     }
   }
 
@@ -216,17 +224,17 @@ export class EvaluationJobsService {
     const lease = this.context.getStore();
     if (!lease) throw new EvaluationLeaseLostError();
     await this.prisma.$transaction(async (tx) => {
-      await this.assertCurrent(tx, lease.job.videoId, (lease.job.contentReviewId || lease.job.resultReviewId || lease.job.finalEvaluationId)!);
+      await this.assertCurrent(tx, lease.job.videoId, (lease.job.contentReviewId || lease.job.resultReviewId || lease.job.finalEvaluationId || lease.job.v11RunId)!);
       // Serialize the last eligibility check with account disable/expiry changes.
       if (this.quotas) {
         const actor = await this.quotas.lock(tx, lease.job.actorId);
         assertIdentityActive(actor);
-        if (actor.role === 'visitor' && (lease.job.stage !== 'content' || (await tx.video.findUnique({ where: { id: lease.job.videoId } }))?.creatorId !== actor.id)) throw new ForbiddenException('Visitor cannot execute this evaluation.');
+        if (actor.role === 'visitor' && (!['content', 'v11_content'].includes(lease.job.stage) || (await tx.video.findUnique({ where: { id: lease.job.videoId } }))?.creatorId !== actor.id)) throw new ForbiddenException('Visitor cannot execute this evaluation.');
       }
       await tx.evaluationJob.update({ where: { id: lease.job.id }, data: { externalStartedAt: new Date() } });
       await tx.evaluationJobAttempt.update({ where: { fencingToken: lease.token }, data: { externalStartedAt: new Date() } });
       const attempt = await tx.evaluationJobAttempt.findUniqueOrThrow({ where: { fencingToken: lease.token } });
-      const review = lease.job.contentReviewId ? await tx.aiContentReview.findUniqueOrThrow({ where: { id: lease.job.contentReviewId } }) : lease.job.resultReviewId ? await tx.aiResultReview.findUniqueOrThrow({ where: { id: lease.job.resultReviewId } }) : await tx.finalVideoEvaluation.findUniqueOrThrow({ where: { id: lease.job.finalEvaluationId! } });
+      const review = lease.job.contentReviewId ? await tx.aiContentReview.findUniqueOrThrow({ where: { id: lease.job.contentReviewId } }) : lease.job.resultReviewId ? await tx.aiResultReview.findUniqueOrThrow({ where: { id: lease.job.resultReviewId } }) : lease.job.finalEvaluationId ? await tx.finalVideoEvaluation.findUniqueOrThrow({ where: { id: lease.job.finalEvaluationId } }) : await tx.v11EvaluationRun.findUniqueOrThrow({ where: { id: lease.job.v11RunId! } });
       const setting = await tx.runtimeSetting.findUnique({ where: { key: 'cost_rates' } });
       const rate = setting?.value as Record<string, any> | undefined;
       const applies = rate?.provider === review.modelProvider && rate?.modelName === review.modelName;
@@ -250,7 +258,7 @@ export class EvaluationJobsService {
   }
 
   private async finish(tx: Prisma.TransactionClient, job: EvaluationJob, token: string | null, status: string, failureCode: string | null) {
-    if (job.stage === 'content' && this.quotas) {
+    if ((job.stage === 'content' || job.stage === 'v11_content') && this.quotas) {
       // The lease snapshot predates the external marker; always reread inside the transaction.
       const current = await tx.evaluationJob.findUniqueOrThrow({ where: { id: job.id } });
       if (current.externalStartedAt || status === 'succeeded') await this.quotas.commit(tx, job.actorId, 'content_evaluations', `content:${job.id}`);
@@ -271,7 +279,12 @@ export class EvaluationJobsService {
     if (job.contentReviewId) await tx.aiContentReview.updateMany({ where: { id: job.contentReviewId, status: 'running' }, data });
     if (job.resultReviewId) await tx.aiResultReview.updateMany({ where: { id: job.resultReviewId, status: 'running' }, data });
     if (job.finalEvaluationId) await tx.finalVideoEvaluation.updateMany({ where: { id: job.finalEvaluationId, status: 'running' }, data: { ...data, completedAt: new Date() } });
-    await tx.video.updateMany({ where: { id: job.videoId, status: expectedStatus[job.stage] }, data: { status: failedStatus[job.stage] } });
+    if (job.v11RunId) {
+      await tx.v11EvaluationRun.updateMany({ where: { id: job.v11RunId, status: { in: ['pending', 'running'] } }, data: { status: 'failed', errorMessage: data.errorMessage, completedAt: new Date() } });
+      await tx.v11EvaluationGroup.updateMany({ where: { runs: { some: { id: job.v11RunId } }, status: { in: ['queued', 'running'] } }, data: { status: 'failed' } });
+    } else {
+      await tx.video.updateMany({ where: { id: job.videoId, status: expectedStatus[job.stage] }, data: { status: failedStatus[job.stage] } });
+    }
     await tx.operationLog.create({ data: {
       userId: job.actorId, videoId: job.videoId, targetType: 'evaluation_job', targetId: job.id,
       actionType: 'evaluation_job_recovered', result: 'failure', comment: code,
@@ -355,7 +368,7 @@ export class EvaluationJobsService {
     if (user.role === 'visitor' && job.stage !== 'content') throw new ForbiddenException('Visitor cannot access this evaluation.');
     return {
       id: job.id, videoId: job.videoId, stage: job.stage, status: job.status,
-      reviewId: job.contentReviewId || job.resultReviewId, evaluationId: job.finalEvaluationId,
+      reviewId: job.contentReviewId || job.resultReviewId || job.v11RunId, evaluationId: job.finalEvaluationId,
       attempts: job.attempts, maxAttempts: job.maxAttempts, failureCode: job.failureCode,
       availableAt: job.availableAt, createdAt: job.createdAt, completedAt: job.completedAt,
     };
