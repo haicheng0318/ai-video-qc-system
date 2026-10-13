@@ -36,7 +36,16 @@ export type QwenEffectiveModelConfig = {
   seed: 'unsupported';
   region: string;
   protocol: 'openai-compatible-chat-completions';
+  structuredOutputMode: 'json_object' | 'json_schema';
 };
+
+const QWEN_STRUCTURED_OUTPUT_CAPABILITIES: Readonly<Record<string, QwenEffectiveModelConfig['structuredOutputMode']>> = {
+  'qwen3.5-omni-plus': 'json_object',
+};
+
+export function qwenStructuredOutputMode(modelName: string): QwenEffectiveModelConfig['structuredOutputMode'] {
+  return QWEN_STRUCTURED_OUTPUT_CAPABILITIES[modelName.trim().toLowerCase()] ?? 'json_object';
+}
 
 export function effectiveQwenModelConfig(input: {
   modelName: string;
@@ -58,6 +67,7 @@ export function effectiveQwenModelConfig(input: {
     seed: 'unsupported',
     region: input.region?.trim() || process.env.QWEN_REGION?.trim() || 'cn',
     protocol: 'openai-compatible-chat-completions',
+    structuredOutputMode: qwenStructuredOutputMode(input.modelName),
   };
 }
 
@@ -177,14 +187,16 @@ export class QwenClient {
             { type: 'text', text: prompt },
           ],
         }],
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'video_content_review',
-            strict: true,
-            schema: contentReviewResponseJsonSchema,
-          },
-        },
+        response_format: effectiveConfig.structuredOutputMode === 'json_schema'
+          ? {
+            type: 'json_schema',
+            json_schema: {
+              name: 'video_content_review',
+              strict: true,
+              schema: contentReviewResponseJsonSchema,
+            },
+          }
+          : { type: 'json_object' },
       };
       if (typeof effectiveConfig.temperature === 'number') request.temperature = effectiveConfig.temperature;
       if (typeof effectiveConfig.maxTokens === 'number') request.max_tokens = effectiveConfig.maxTokens;
