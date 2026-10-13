@@ -48,7 +48,17 @@ function majorComplianceConflict(runs: ReviewRun[]) {
 }
 
 function factsAgree(runs: ReviewRun[]) {
-  return !hasExplicitFactContradiction(runs);
+  return V11_CONTENT_DIMENSIONS.every(({ code }) => {
+    const definiteCounts = new Map<string, number>();
+    for (const run of runs) {
+      for (const claim of run.factClaims) {
+        if (claim.dimension !== code || claim.state === 'uncertain') continue;
+        const key = `${claim.key}:${claim.state}`;
+        definiteCounts.set(key, (definiteCounts.get(key) ?? 0) + 1);
+      }
+    }
+    return [...definiteCounts.values()].some((count) => count >= 2);
+  });
 }
 
 function hasExplicitFactContradiction(runs: ReviewRun[]) {

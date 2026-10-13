@@ -55,7 +55,8 @@ test('Qwen client uploads a private temporary video, streams JSON, and deletes t
 
   assert.equal(result.rawResponse, rawResponse);
   assert.equal(request?.model, 'qwen3.5-omni-plus');
-  assert.equal((request?.response_format as { type: string }).type, 'json_schema');
+  assert.deepEqual(request?.response_format, { type: 'json_object' });
+  assert.equal('json_schema' in (request?.response_format as Record<string, unknown>), false);
   const messages = request?.messages as Array<{ content: Array<{ video_url?: { url: string } }> }>;
   assert.match(messages[0].content[0].video_url?.url || '', /^https:\/\/private\.example\.test/);
   assert.deepEqual(calls.map((call) => call.action), ['put', 'sign', 'delete']);
@@ -121,6 +122,8 @@ test('effective model config snapshot is exactly applied to the provider request
   assert.equal(requestOptions?.timeout, config.timeoutMs);
   assert.equal(config.thinking, 'unsupported');
   assert.equal(config.seed, 'unsupported');
+  assert.equal(config.structuredOutputMode, 'json_object');
+  assert.deepEqual(request?.response_format, { type: 'json_object' });
 });
 
 test('Qwen client deletes the temporary object after a model request failure', async () => {

@@ -30,6 +30,12 @@ test('evaluation fingerprint is version sensitive', () => {
   assert.notEqual(buildEvaluationFingerprint(base), buildEvaluationFingerprint({ ...base, rubricVersion: 'rubric-v2' }));
 });
 
+test('evaluation fingerprint is structured-output capability sensitive', () => {
+  const jsonObject = { ...base, modelConfigSnapshot: { model: 'qwen', structuredOutputMode: 'json_object' } };
+  const jsonSchema = { ...base, modelConfigSnapshot: { model: 'qwen', structuredOutputMode: 'json_schema' } };
+  assert.notEqual(buildEvaluationFingerprint(jsonObject), buildEvaluationFingerprint(jsonSchema));
+});
+
 test('evaluation fingerprint is owner scoped', () => {
   assert.notEqual(buildEvaluationFingerprint(base), buildEvaluationFingerprint({ ...base, ownerId: 'owner-b' }));
 });
