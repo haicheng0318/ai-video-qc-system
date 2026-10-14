@@ -2,10 +2,14 @@ import { V11_CONTENT_ANCHORS, V11_CONTENT_DIMENSIONS } from './content-scoring';
 import { V11_FACT_CLAIMS, V11_FACT_CLAIM_VERSION } from './fact-claims';
 import { V11_PROMPT_VERSION, V11_RUBRIC_VERSION, V11_SCHEMA_VERSION } from './provenance';
 
-export function buildV11ContentPrompt(metadata: Record<string, unknown>) {
+export function buildV11ContentPrompt(
+  metadata: Record<string, unknown>,
+  outputSchema: Record<string, unknown>,
+) {
   const dimensionText = V11_CONTENT_DIMENSIONS
     .map((item) => `- ${item.code}（weight=${item.weight}）\n${V11_CONTENT_ANCHORS[item.code].map((description, anchor) => `  anchor ${anchor}: ${description}`).join('\n')}\n  canonical facts: ${V11_FACT_CLAIMS[item.code].join(', ')}`)
     .join('\n');
+  const outputContract = JSON.stringify(outputSchema);
   return `
 你是电商短视频内容质量评估专家。请基于视频和冻结元数据，独立观察内容质量。
 元数据：${JSON.stringify(metadata)}
@@ -19,7 +23,12 @@ ${dimensionText}
 品牌叙事或自然流不强制前三秒出现产品；无口播的设计不因“没有口播”扣分。只按声明的平台、用途与受众评价，不虚构平台政策或流量结果。
 不要计算总分，不要输出内容等级，不要评价运营数据、ROI、CTR、CVR、绩效或最终有效性。
 合规状态 clear/suspected/confirmed 独立于质量分，不要因合规风险修改 anchor。
-每个维度必须恰好出现一次，输出必须严格符合 JSON Schema，不要输出 Markdown。
+每个维度必须恰好出现一次。
+
+你必须只返回一个 JSON 对象，不得返回 Markdown、代码块或解释文字。
+根对象必须且只能包含：dimensions、compliance。
+输出必须严格符合以下 JSON Schema：
+${outputContract}
 promptVersion=${V11_PROMPT_VERSION}; schemaVersion=${V11_SCHEMA_VERSION}; rubricVersion=${V11_RUBRIC_VERSION}
 `.trim();
 }
