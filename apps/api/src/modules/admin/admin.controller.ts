@@ -4,7 +4,7 @@ import { CurrentUser } from '../../common/current-user.decorator';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { QuotasService } from '../quotas/quotas.service';
-import { AdjustQuotaDto, BatchUsersDto, CreateUserDto, ReasonDto, UpdateUserDto, UsersQueryDto } from './admin.dto';
+import { AdjustQuotaDto, BatchUsersDto, CreateUserDto, ReasonDto, SetPasswordDto, UpdateUserDto, UsersQueryDto } from './admin.dto';
 import { AdminUsersService } from './admin-users.service';
 @Injectable()
 export class AdminGuard implements CanActivate { canActivate(ctx: ExecutionContext) { if (ctx.switchToHttp().getRequest().user?.role !== 'admin') throw new ForbiddenException('Administrator required.'); return true; } }
@@ -18,6 +18,7 @@ export class AdminController {
   @Patch('users/:id') update(@Param('id', ParseUUIDPipe) id: string, @Body() input: UpdateUserDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.update(id, input, actor); }
   @Post('users/:id/archive') archive(@Param('id', ParseUUIDPipe) id: string, @Body() input: ReasonDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.update(id, { status: 'archived', reason: input.reason }, actor); }
   @Post('users/:id/reset-password') reset(@Param('id', ParseUUIDPipe) id: string, @Body() input: ReasonDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.resetPassword(id, input.reason, actor); }
+  @Post('users/:id/set-password') setPassword(@Param('id', ParseUUIDPipe) id: string, @Body() input: SetPasswordDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.setPassword(id, input, actor); }
   @Get('users/:id/sessions') sessions(@Param('id', ParseUUIDPipe) id: string) { return this.users.sessions(id); }
   @Post('users/:id/revoke-sessions') revoke(@Param('id', ParseUUIDPipe) id: string, @Body() input: ReasonDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.revoke(id, input.reason, actor); }
   @Post('users/:id/sessions/:sessionId/revoke') revokeOne(@Param('id', ParseUUIDPipe) id: string, @Param('sessionId', ParseUUIDPipe) sid: string, @Body() input: ReasonDto, @CurrentUser() actor: AuthenticatedUser) { return this.users.revoke(id, input.reason, actor, sid); }

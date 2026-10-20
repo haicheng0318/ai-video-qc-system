@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useRef, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, ApiRequestError } from '@/lib/api';
 import { ManagedUser, roleLabels } from '@/lib/admin-types';
 
 type CreatedAccount = { user: ManagedUser; initialPassword: string };
@@ -12,6 +12,7 @@ export function UserCreateForm({ onCreated }: { onCreated: (user: ManagedUser) =
   const [error, setError] = useState('');
   const [credential, setCredential] = useState<CreatedAccount | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const submittingRef = useRef(false);
   async function fillDefaults() {
     try { const settings = await apiFetch<any>('/api/admin/operations/settings'); const value = settings.items.find((v: any) => v.key === 'visitor_defaults')?.value || settings.defaults.visitor_defaults;
       const fields: Record<string, string> = { expiresAt: new Date(Date.now() + value.validDays * 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16), uploadLimit: String(value.uploadCount), storageLimit: String(value.storageBytes / 1048576), evaluationLimit: String(value.contentEvaluations) };
@@ -21,16 +22,24 @@ export function UserCreateForm({ onCreated }: { onCreated: (user: ManagedUser) =
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     const form = event.currentTarget;
-    setSubmitting(true); setError(''); setCredential(null);
     const data = new FormData(form);
+    const account = String(data.get('account') || '').trim();
+    const initialPassword = String(data.get('initialPassword') || '');
+    const accountCharacters = Array.from(account);
+    const hasControlCharacter = accountCharacters.some((character) => { const code = character.codePointAt(0)!; return code <= 31 || (code >= 127 && code <= 159); });
+    if (!account || accountCharacters.length > 100 || hasControlCharacter || /[\p{Cf}\p{Cs}]/u.test(account)) { setError('登录用户名需为 1–100 个字符，不能包含控制字符。'); return; }
+    if (initialPassword && (Array.from(initialPassword).length < 8 || Array.from(initialPassword).length > 128 || new TextEncoder().encode(initialPassword).length > 72)) { setError('初始密码需为 8–128 个字符，且 UTF-8 长度不超过 72 字节。'); return; }
+    submittingRef.current = true;
+    setSubmitting(true); setError(''); setCredential(null);
     const expiresValue = String(data.get('expiresAt') || '');
     const reason = String(data.get('reason') || '');
     const payload = {
-      account: String(data.get('account') || '').trim(), name: String(data.get('name') || '').trim(), role,
+      account, name: String(data.get('name') || '').trim(), role,
       department: String(data.get('department') || '').trim() || null,
       expiresAt: expiresValue ? new Date(expiresValue).toISOString() : null,
-      initialPassword: String(data.get('initialPassword') || '') || undefined, reason,
+      initialPassword: initialPassword || undefined, mustChangePassword: !initialPassword || data.get('mustChangePassword') === 'on', reason,
       ...(role === 'visitor' ? { quotas: [
         { kind: 'upload_count', period: 'daily', limit: Number(data.get('uploadLimit')) },
         { kind: 'storage_bytes', period: 'lifetime', limit: Number(data.get('storageLimit')) * 1024 * 1024 },
@@ -39,10 +48,10 @@ export function UserCreateForm({ onCreated }: { onCreated: (user: ManagedUser) =
     };
     try {
       const result = await apiFetch<CreatedAccount>('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) });
-      setCredential(result); onCreated(result.user); form.reset(); setRole('director');
+      setCredential(result); form.reset(); setRole('director'); onCreated(result.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '账号创建失败，请检查输入后重试。');
-    } finally { setSubmitting(false); }
+      setError(err instanceof ApiRequestError && err.status === 409 ? '该登录用户名已存在，请更换后重试。' : '账号创建失败，请检查输入、有效期及额度后重试。');
+    } finally { submittingRef.current = false; setSubmitting(false); }
   }
 
   return (
@@ -50,13 +59,14 @@ export function UserCreateForm({ onCreated }: { onCreated: (user: ManagedUser) =
       <div className="page-title"><div><p className="eyebrow">用户与权限</p><h2 id="create-account-title">创建账号</h2></div></div>
       <form ref={formRef} className="form-grid" onSubmit={submit}>
         <h3 className="full">账号与角色</h3>
-        <div className="form-field"><label htmlFor="new-account">账号</label><input id="new-account" name="account" autoComplete="off" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@-]{2,99}" required /></div>
+        <div className="form-field"><label htmlFor="new-account">账号</label><input id="new-account" name="account" autoComplete="off" maxLength={100} required /></div>
         <div className="form-field"><label htmlFor="new-name">姓名</label><input id="new-name" name="name" required /></div>
         <div className="form-field"><label htmlFor="new-role">角色</label><select id="new-role" name="role" value={role} onChange={(event) => setRole(event.target.value)}>{Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
         <div className="form-field"><label htmlFor="new-department">部门</label><input id="new-department" name="department" /></div>
         <h3 className="full">有效期与安全</h3>
         <div className="form-field"><label htmlFor="new-expiry">到期时间{role === 'visitor' ? '（必填）' : '（可选）'}</label><input id="new-expiry" name="expiresAt" type="datetime-local" required={role === 'visitor'} /></div>
-        <div className="form-field"><label htmlFor="new-password">初始密码（可选）</label><input id="new-password" name="initialPassword" type="password" minLength={12} maxLength={128} autoComplete="new-password" /><small className="muted">留空时由系统生成；首次登录必须修改。</small></div>
+        <div className="form-field"><label htmlFor="new-password">初始密码（可选）</label><input id="new-password" name="initialPassword" type="password" minLength={8} maxLength={128} autoComplete="new-password" /><small className="muted">可自行设置；留空则由系统生成随机密码，随机密码首次登录必须修改。</small></div>
+        <label className="checkbox-row full"><input name="mustChangePassword" type="checkbox" defaultChecked />首次登录要求修改密码</label>
         {role === 'visitor' ? <fieldset className="quota-fields full"><legend>访客额度（必填）</legend>
           <button type="button" onClick={fillDefaults}>填入访客默认策略</button><small>填入后仍需检查有效期与额度，再明确提交创建。</small>
           <div className="form-grid"><div className="form-field"><label htmlFor="upload-limit">每日上传次数</label><input id="upload-limit" name="uploadLimit" type="number" min="0" step="1" required /></div><div className="form-field"><label htmlFor="storage-limit">存储容量（MB，总量）</label><input id="storage-limit" name="storageLimit" type="number" min="0" step="1" required /></div><div className="form-field"><label htmlFor="evaluation-limit">每月内容评估次数</label><input id="evaluation-limit" name="evaluationLimit" type="number" min="0" step="1" required /></div></div>

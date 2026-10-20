@@ -4,9 +4,10 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService, assertIdentityActive, quotaKinds } from '../quotas/quotas.service';
-import { publicUser, validatePassword } from '../auth/auth-security';
+import { publicUser } from '../auth/auth-security';
 import { AuthenticatedUser } from '../../types/authenticated-user';
-import { AdjustQuotaDto, CreateUserDto, UpdateUserDto, UsersQueryDto } from './admin.dto';
+import { AdjustQuotaDto, CreateUserDto, SetPasswordDto, UpdateUserDto, UsersQueryDto } from './admin.dto';
+import { normalizeAdminAccount, validateAdminAssignedPassword, validateAdminReason } from './admin-credential-validation';
 
 @Injectable()
 export class AdminUsersService {
@@ -26,7 +27,7 @@ export class AdminUsersService {
     const current = await tx.user.findUnique({ where: { id: actor.id } }); assertIdentityActive(current);
     if (current?.role !== 'admin') throw new ForbiddenException('Administrator required.');
   }
-  private reason(reason: string) { if (!reason?.trim()) throw new BadRequestException('Reason required.'); }
+  private reason(reason: string) { return validateAdminReason(reason); }
   private async manager(tx: Prisma.TransactionClient, id: string | null | undefined, target?: string) {
     if (!id) return;
     const manager = await tx.user.findUnique({ where: { id } });
@@ -44,18 +45,24 @@ export class AdminUsersService {
     if (!inputs.length || inputs.length > 20) throw new BadRequestException('Batch must contain 1–20 accounts.');
     // Hash outside transaction so bounded bulk creates do not hold the administration lock for bcrypt work.
     const prepared = await Promise.all(inputs.map(async (input) => {
-      this.reason(input.reason); const password = input.initialPassword || randomBytes(18).toString('base64url'); validatePassword(password);
-      return { input, password, passwordHash: await bcrypt.hash(password, 12) };
+      const reason = this.reason(input.reason), account = normalizeAdminAccount(input.account);
+      if (input.initialPassword !== undefined && typeof input.initialPassword !== 'string') throw new BadRequestException('Initial password must be a string.');
+      if (input.mustChangePassword !== undefined && typeof input.mustChangePassword !== 'boolean') throw new BadRequestException('mustChangePassword must be a boolean.');
+      const assigned = input.initialPassword !== undefined && input.initialPassword !== '';
+      const password = assigned ? input.initialPassword! : randomBytes(18).toString('base64url');
+      validateAdminAssignedPassword(password);
+      return { input: { ...input, account, reason }, password, mustChangePassword: assigned ? input.mustChangePassword ?? true : true, passwordHash: await bcrypt.hash(password, 12) };
     }));
     return this.transaction(async (tx) => {
       await this.actor(tx, actor); const items: Array<{ user: ReturnType<AdminUsersService['safe']>; initialPassword: string }> = [];
-      for (const { input, password, passwordHash } of prepared) {
+      for (const { input, password, passwordHash, mustChangePassword } of prepared) {
+        if (await tx.user.findUnique({ where: { account: input.account } })) throw new ConflictException('Account already exists.');
         const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
         if (expiresAt && expiresAt <= new Date()) throw new BadRequestException('Expiry must be in the future.');
         if (input.role === 'visitor' && (!expiresAt || !input.quotas || quotaKinds.some((kind) => !input.quotas!.some((q) => q.kind === kind && q.limit !== null && q.limit !== undefined)))) throw new BadRequestException('Visitor requires future expiry and all three explicit finite quotas.');
         if (new Set(input.quotas?.map((q) => q.kind)).size !== (input.quotas?.length || 0)) throw new BadRequestException('Duplicate quota kind.');
         await this.manager(tx, input.managerId);
-        const user = await tx.user.create({ data: { account: input.account, name: input.name, role: input.role, department: input.department, managerId: input.managerId, expiresAt, passwordHash, mustChangePassword: true, createdById: actor.id } });
+        const user = await tx.user.create({ data: { account: input.account, name: input.name, role: input.role, department: input.department, managerId: input.managerId, expiresAt, passwordHash, mustChangePassword, createdById: actor.id } });
         for (const quota of input.quotas || []) await this.quotas.adjust(tx, user.id, { ...quota, limit: quota.limit ?? null, reason: input.reason, businessKey: `create:${randomUUID()}` }, actor.id);
         await this.audit(tx, actor.id, user.id, 'account_created', input.reason, { account: user.account, role: user.role });
         items.push({ user: this.safe(user), initialPassword: password });
@@ -64,9 +71,16 @@ export class AdminUsersService {
     });
   }
   async update(id: string, input: UpdateUserDto, actor: AuthenticatedUser) {
-    this.reason(input.reason);
+    const reason = this.reason(input.reason);
+    const account = input.account === undefined ? undefined : normalizeAdminAccount(input.account);
     return this.transaction(async (tx) => {
       await this.actor(tx, actor); const before = await this.quotas.lock(tx, id);
+      if (before.status === 'archived' && account !== undefined) throw new ConflictException('Archived account credentials cannot be changed.');
+      const accountChanged = account !== undefined && account !== before.account;
+      if (accountChanged) {
+        const existing = await tx.user.findUnique({ where: { account } });
+        if (existing && existing.id !== id) throw new ConflictException('Account already exists.');
+      }
       if (before.status === 'archived' && input.status && input.status !== 'archived') throw new ConflictException('Archived accounts cannot be restored.');
       const next = { ...before, ...input, expiresAt: input.expiresAt === undefined ? before.expiresAt : input.expiresAt ? new Date(input.expiresAt) : null };
       const active = (u: typeof next | User) => u.role === 'admin' && u.status === 'active' && (!u.expiresAt || u.expiresAt > new Date());
@@ -79,17 +93,35 @@ export class AdminUsersService {
         if (!next.expiresAt || quotaKinds.some((k) => !policies.some((p) => p.kind === k && p.limit !== null))) throw new BadRequestException('Visitor requires expiry and explicit quotas.');
       }
       await this.manager(tx, input.managerId, id);
-      const { reason, ...changes } = input;
-      const updated = await tx.user.update({ where: { id }, data: { ...changes, expiresAt: next.expiresAt } });
-      if (input.role !== undefined || input.status !== undefined || input.expiresAt !== undefined) await tx.userSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
-      await this.audit(tx, actor.id, id, 'account_updated', reason, { role: updated.role, status: updated.status, expiresAt: updated.expiresAt?.toISOString() || null });
+      const { reason: _reason, account: _account, ...changes } = input;
+      const updated = accountChanged || Object.values(changes).some((value) => value !== undefined)
+        ? await tx.user.update({ where: { id }, data: { ...changes, ...(accountChanged ? { account } : {}), expiresAt: next.expiresAt } })
+        : before;
+      if (accountChanged || input.role !== undefined || input.status !== undefined || input.expiresAt !== undefined) await tx.userSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+      await this.audit(tx, actor.id, id, 'account_updated', reason, { account: updated.account, role: updated.role, status: updated.status, expiresAt: updated.expiresAt?.toISOString() || null });
       return { user: this.safe(updated) };
+    });
+  }
+  async setPassword(id: string, input: SetPasswordDto, actor: AuthenticatedUser) {
+    const reason = this.reason(input.reason);
+    return this.transaction(async (tx) => {
+      await this.actor(tx, actor);
+      const target = await this.quotas.lock(tx, id);
+      if (target.status === 'archived') throw new ConflictException('Archived account credentials cannot be changed.');
+      validateAdminAssignedPassword(input.password);
+      if (typeof input.mustChangePassword !== 'boolean') throw new BadRequestException('mustChangePassword must be a boolean.');
+      const passwordHash = await bcrypt.hash(input.password, 12);
+      await tx.user.update({ where: { id }, data: { passwordHash, mustChangePassword: input.mustChangePassword } });
+      await tx.userSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+      await this.audit(tx, actor.id, id, 'admin_password_set', reason, { mustChangePassword: input.mustChangePassword });
+      return { success: true };
     });
   }
   async resetPassword(id: string, reason: string, actor: AuthenticatedUser) {
     this.reason(reason); const password = randomBytes(18).toString('base64url'), hash = await bcrypt.hash(password, 12);
     return this.transaction(async (tx) => {
-      await this.actor(tx, actor); await this.quotas.lock(tx, id);
+      await this.actor(tx, actor); const target = await this.quotas.lock(tx, id);
+      if (target.status === 'archived') throw new ConflictException('Archived account credentials cannot be changed.');
       await tx.user.update({ where: { id }, data: { passwordHash: hash, mustChangePassword: true } });
       await tx.userSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
       await this.audit(tx, actor.id, id, 'password_reset', reason); return { initialPassword: password };
