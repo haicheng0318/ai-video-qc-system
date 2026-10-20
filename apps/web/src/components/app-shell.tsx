@@ -7,10 +7,10 @@ import { apiFetch, ApiUser } from '@/lib/api';
 
 const authPaths = new Set(['/login', '/admin/login']);
 const businessLinks = [
-  ['/videos', '视频列表'], ['/videos/new', '上传评估'], ['/dashboard', '业务看板'],
-  ['/cases/excellent', '优秀案例'], ['/cases/negative', '反面案例'], ['/settings/benchmarks', '基准配置'],
+  ['/videos', '视频任务'], ['/videos/new', '上传视频'], ['/dashboard', '结果看板'],
+  ['/cases/excellent', '案例库'], ['/settings/benchmarks', '评价基准'],
 ] as const;
-const adminLinks = [['/admin', '总览'], ['/admin/users', '账号管理'], ['/admin/roles', '角色权限'], ['/admin/operations', '管理运行中心']] as const;
+const adminLinks = [['/admin', '系统总览'], ['/admin/users', '用户管理'], ['/admin/roles', '角色权限'], ['/admin/operations', '运行与配置']] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -44,28 +44,30 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${admin ? ' admin-shell' : ''}${pathname.startsWith('/settings/') ? ' content-shell' : ''}`} onKeyDown={(event) => { if (event.key === 'Escape') { setMenuOpen(false); document.getElementById('navigation-toggle')?.focus(); } }}>
       <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="mobile-header">
-        <Link className="brand" href={admin ? '/admin' : '/videos'}>AI短视频质检</Link>
-        <button type="button" className="menu-button" aria-label="切换导航" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>菜单</button>
+        <Link className="brand" href={admin ? '/admin' : '/videos'}>AI QC <small>V1.1</small></Link>
+        <button id="navigation-toggle" type="button" className="menu-button" aria-label={menuOpen ? '关闭导航' : '打开导航'} aria-controls="workspace-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
       </header>
-      <aside className={`sidebar${menuOpen ? ' open' : ''}`} aria-label={admin ? '管理端导航' : '工作台导航'}>
+      {menuOpen ? <button type="button" tabIndex={-1} className="navigation-overlay" aria-label="关闭导航" onClick={() => setMenuOpen(false)} /> : null}
+      <aside id="workspace-navigation" className={`sidebar${menuOpen ? ' open' : ''}`} aria-label={admin ? '管理端导航' : '工作台导航'}>
         <Link className="sidebar-brand" href={admin ? '/admin' : '/videos'}>
-          <span>AI QC</span><strong>短视频质检评估</strong><small>V1.01</small>
+          <span>AI QC</span><strong>短视频质检评估</strong><small>V1.1</small>
         </Link>
         <nav>
           {links.map(([href, label]) => {
-            const active = href === '/admin' || href === '/videos' ? pathname === href : pathname.startsWith(href);
-            return <Link key={href} className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} href={href}>{label}</Link>;
+            const active = href === '/admin' ? pathname === href : href === '/videos' ? pathname === href || (pathname.startsWith('/videos/') && pathname !== '/videos/new') : href === '/cases/excellent' ? pathname.startsWith('/cases/') : pathname.startsWith(href);
+            const group = admin ? href === '/admin' ? '管理工作台' : href === '/admin/users' ? '用户与权限' : href === '/admin/operations' ? '运行、配置与审计' : null : href === '/videos' ? '工作台' : href === '/dashboard' ? '分析' : href === '/settings/benchmarks' ? '业务配置' : null;
+            return <div className="nav-item" key={href}>{group ? <p className="nav-group-label">{group}</p> : null}<Link className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} href={href} onClick={() => setMenuOpen(false)}><span className="nav-marker" aria-hidden="true" />{label}</Link></div>;
           })}
         </nav>
         <div className="sidebar-footer">
-          {admin ? <Link href="/videos">返回业务工作台</Link> : user?.role === 'admin' ? <Link href="/admin">后台管理</Link> : null}
+          {admin ? <Link href="/videos" onClick={() => setMenuOpen(false)}>返回业务工作台</Link> : user?.role === 'admin' ? <Link href="/admin" onClick={() => setMenuOpen(false)}>系统管理</Link> : null}
           <button type="button" onClick={() => void logout()}>退出登录</button>
         </div>
       </aside>
-      <div className="app-content">
+      <div className="app-content" inert={menuOpen}>
         {user?.role === 'visitor' && quotaSummary ? <div className="visitor-banner" role="status"><strong>访客试用账号</strong><span>到期：{quotaSummary.expiresAt ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(quotaSummary.expiresAt)) : '未设置'}</span>{quotaSummary.quotas.map((quota) => <span key={quota.kind}>{quota.kind === 'upload_count' ? '上传' : quota.kind === 'storage_bytes' ? '存储字节' : '内容评估'}剩余：{quota.remaining === null ? '不限' : quota.remaining}</span>)}</div> : null}
         {children}
       </div>

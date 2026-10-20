@@ -67,12 +67,19 @@ export default function NewVideoPage() {
       <div className="page-title">
         <h1>上传视频</h1>
       </div>
-      <form className="panel form-grid" onSubmit={onSubmit} onChange={() => setDirty(true)}>
+      <form className="upload-form" onSubmit={onSubmit} onChange={() => setDirty(true)}>
+        <section className="section-gap" aria-labelledby="upload-file-heading">
+        <h2 id="upload-file-heading">视频文件</h2>
         <div className="form-field full">
           <label htmlFor="file">视频文件</label>
           <input id="file" name="file" type="file" accept="video/mp4,video/quicktime,video/webm" required />
           <small className="muted">支持 MP4、MOV、WEBM，最大 500 MB；提交后服务端会再次核验文件类型、大小和内容。</small>
         </div>
+        {phase ? <div className="upload-progress full" role="status"><span>{phase}</span>{progress !== null ? <><progress max="100" value={progress}>{progress}%</progress><strong>{progress}%</strong></> : null}</div> : null}
+        </section>
+        <section className="section-gap" aria-labelledby="upload-base-heading">
+        <h2 id="upload-base-heading">基础信息</h2>
+        <div className="form-grid">
         <div className="form-field">
           <label htmlFor="title">视频标题</label>
           <input id="title" name="title" required maxLength={255} />
@@ -99,10 +106,11 @@ export default function NewVideoPage() {
           <label htmlFor="platform">平台</label>
           <input id="platform" name="platform" list="configured-platforms" placeholder="请选择或填写平台" /><datalist id="configured-platforms">{options?.platforms.map(p => <option key={p} value={p} />)}</datalist>
         </div>
-        <div className="form-field">
-          <label htmlFor="eventName">节点名称</label>
-          <input id="eventName" name="eventName" />
         </div>
+        </section>
+        <section className="section-gap" aria-labelledby="upload-business-heading">
+        <h2 id="upload-business-heading">业务属性</h2>
+        <div className="form-grid">
         <div className="form-field">
           <label>
             <input name="isForAds" type="checkbox" value="true" style={{ width: 'auto', marginRight: 8 }} />
@@ -116,6 +124,10 @@ export default function NewVideoPage() {
           </label>
         </div>
         <div className="form-field full">
+          <label htmlFor="eventName">节点名称</label>
+          <input id="eventName" name="eventName" />
+        </div>
+        <div className="form-field full">
           <label htmlFor="scriptDescription">脚本说明</label>
           <textarea id="scriptDescription" name="scriptDescription" />
         </div>
@@ -123,11 +135,12 @@ export default function NewVideoPage() {
           <label htmlFor="relatedRequirement">关联需求</label>
           <textarea id="relatedRequirement" name="relatedRequirement" />
         </div>
-        {phase ? <div className="upload-progress full" role="status"><span>{phase}</span>{progress !== null ? <><progress max="100" value={progress}>{progress}%</progress><strong>{progress}%</strong></> : null}</div> : null}
+        </div>
+        </section>
         {error && <p className="error full" role="alert">{error}</p>}
-        <div className="form-field full">
+        <div className="button-row section-gap">
           <button className="button" disabled={submitting} type="submit">
-            {submitting ? '处理中…' : '提交视频'}
+            {submitting ? '处理中…' : '上传并查看详情'}
           </button>
           {submitting ? <button className="button secondary" type="button" onClick={() => controller.current?.abort()}>取消上传</button> : null}
         </div>

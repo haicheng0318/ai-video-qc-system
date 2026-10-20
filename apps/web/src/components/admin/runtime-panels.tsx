@@ -15,5 +15,5 @@ export function RuntimeFacts({ values }: { values: Record<string, unknown> }) {
 }
 export function RuntimeTable({ rows, columns, action }: { rows: Array<Record<string, any>>; columns: Array<[string, string]>; action?: (row: Record<string, any>) => React.ReactNode }) {
   if (!rows.length) return <p className="muted">当前条件下暂无记录。</p>;
-  return <div className="table-scroll"><table className="data-table"><thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}{action && <th>操作</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>{columns.map(([key]) => <td key={key}>{runtimeValue(row[key])}</td>)}{action && <td>{action(row)}</td>}</tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table className="data-table"><thead><tr>{columns.map(([key, label]) => <th scope="col" key={key}>{label}</th>)}{action && <th scope="col">操作</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>{columns.map(([key]) => <td key={key}>{runtimeValue(row[key])}</td>)}{action && <td>{action(row)}</td>}</tr>)}</tbody></table></div>;
 }

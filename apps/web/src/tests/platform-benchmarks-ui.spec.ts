@@ -7,7 +7,7 @@ test('platform benchmark page exposes create, edit, thresholds and role guidance
     new URL('../../app/settings/benchmarks/page.tsx', import.meta.url),
     'utf8',
   );
-  for (const text of ['平台基准配置', '新增基准', '编辑基准', 'S 阈值', 'A 阈值', 'B 阈值', 'C 阈值']) {
+  for (const text of ['评价基准', '新增基准', '编辑基准', 'S 阈值', 'A 阈值', 'B 阈值', 'C 阈值']) {
     assert.match(source, new RegExp(text));
   }
   assert.match(source, /admin/);
@@ -21,5 +21,5 @@ test('platform benchmark page exposes create, edit, thresholds and role guidance
 test('application navigation links to platform benchmark management', async () => {
   const source = await readFile(new URL('../components/app-shell.tsx', import.meta.url), 'utf8');
   assert.match(source, /settings\/benchmarks/);
-  assert.match(source, /基准配置/);
+  assert.match(source, /评价基准/);
 });

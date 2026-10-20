@@ -47,12 +47,14 @@ export function UserCreateForm({ onCreated }: { onCreated: (user: ManagedUser) =
 
   return (
     <section className="panel" aria-labelledby="create-account-title">
-      <div className="page-title"><div><p className="eyebrow">新增</p><h2 id="create-account-title">创建账号</h2></div></div>
+      <div className="page-title"><div><p className="eyebrow">用户与权限</p><h2 id="create-account-title">创建账号</h2></div></div>
       <form ref={formRef} className="form-grid" onSubmit={submit}>
+        <h3 className="full">账号与角色</h3>
         <div className="form-field"><label htmlFor="new-account">账号</label><input id="new-account" name="account" autoComplete="off" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@-]{2,99}" required /></div>
         <div className="form-field"><label htmlFor="new-name">姓名</label><input id="new-name" name="name" required /></div>
         <div className="form-field"><label htmlFor="new-role">角色</label><select id="new-role" name="role" value={role} onChange={(event) => setRole(event.target.value)}>{Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
         <div className="form-field"><label htmlFor="new-department">部门</label><input id="new-department" name="department" /></div>
+        <h3 className="full">有效期与安全</h3>
         <div className="form-field"><label htmlFor="new-expiry">到期时间{role === 'visitor' ? '（必填）' : '（可选）'}</label><input id="new-expiry" name="expiresAt" type="datetime-local" required={role === 'visitor'} /></div>
         <div className="form-field"><label htmlFor="new-password">初始密码（可选）</label><input id="new-password" name="initialPassword" type="password" minLength={12} maxLength={128} autoComplete="new-password" /><small className="muted">留空时由系统生成；首次登录必须修改。</small></div>
         {role === 'visitor' ? <fieldset className="quota-fields full"><legend>访客额度（必填）</legend>

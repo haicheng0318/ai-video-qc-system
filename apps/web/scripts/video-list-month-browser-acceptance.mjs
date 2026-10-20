@@ -50,14 +50,14 @@ try {
   const month = () => page.locator('input[name="month"]');
   async function settled() {
     await page.getByRole('status').waitFor({ state: 'hidden' });
-    await page.getByRole('heading', { name: '视频列表', exact: true }).waitFor();
+    await page.getByRole('heading', { name: '视频任务', exact: true }).waitFor();
   }
   await page.goto(`${base}/videos`);
-  await page.getByText('August historical video', { exact: true }).waitFor();
+  await page.getByRole('link', { name: 'August historical video', exact: true }).waitFor();
   await settled();
   assert.equal(requests.at(-1).searchParams.has('month'), false);
   assert.equal(await month().inputValue(), '');
-  assert.equal(await page.getByText('October own video', { exact: true }).count(), 1);
+  assert.equal(await page.getByRole('link', { name: 'October own video', exact: true }).count(), 1);
   assert.equal(requests.at(-1).searchParams.has('creatorId'), false);
   console.log('PASS no month sends no month; admin sees all historical months and owners');
 
@@ -66,17 +66,17 @@ try {
   await page.waitForURL('**/videos?month=2026-08&page=1');
   await settled();
   assert.equal(requests.at(-1).searchParams.get('month'), '2026-08');
-  assert.equal(await page.getByText('October own video', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: 'October own video', exact: true }).count(), 0);
   assert.equal(await month().inputValue(), '2026-08');
   console.log('PASS explicit August filters API and visible results to August');
 
   await month().fill('');
   await page.getByRole('button', { name: '筛选', exact: true }).click();
   await page.waitForURL('**/videos?page=1');
-  await page.getByText('October own video', { exact: true }).waitFor();
+  await page.getByRole('link', { name: 'October own video', exact: true }).waitFor();
   assert.equal(new URL(page.url()).searchParams.has('month'), false);
   assert.equal(requests.at(-1).searchParams.has('month'), false);
-  assert.equal(await page.getByText('August historical video', { exact: true }).count(), 1);
+  assert.equal(await page.getByRole('link', { name: 'August historical video', exact: true }).count(), 1);
   console.log('PASS clearing month removes it from URL/API and restores all months');
 
   await page.goBack();
@@ -89,21 +89,22 @@ try {
   assert.equal(requests.at(-1).searchParams.has('month'), false);
   console.log('PASS month UI follows URL on back/forward without stale defaultValue');
 
+  await page.getByText('更多筛选', { exact: true }).click();
   await page.locator('input[name="creatorId"]').fill('other');
   await page.getByRole('button', { name: '筛选', exact: true }).click();
   await page.waitForURL('**/videos?creatorId=other&page=1');
   await settled();
   assert.equal(requests.at(-1).searchParams.get('creatorId'), 'other');
   assert.equal(requests.at(-1).searchParams.has('month'), false);
-  assert.equal(await page.getByText('October own video', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: 'October own video', exact: true }).count(), 0);
   console.log('PASS admin creator filter remains independent of month');
 
   role = 'director';
   await page.goto(`${base}/videos`);
-  await page.getByText('October own video', { exact: true }).waitFor();
+  await page.getByRole('link', { name: 'October own video', exact: true }).waitFor();
   await settled();
   assert.equal(await page.locator('input[name="creatorId"]').count(), 0);
-  assert.equal(await page.getByText('August historical video', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: 'August historical video', exact: true }).count(), 0);
   console.log('PASS non-admin UI retains owner-only fixture and no creator control');
   console.log('VIDEO_MONTH_BROWSER=PASS (6 scenarios; mocked API, no database/model)');
 } finally {
