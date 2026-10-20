@@ -75,8 +75,8 @@ export class AdminUsersService {
     const account = input.account === undefined ? undefined : normalizeAdminAccount(input.account);
     return this.transaction(async (tx) => {
       await this.actor(tx, actor); const before = await this.quotas.lock(tx, id);
-      if (before.status === 'archived' && account !== undefined) throw new ConflictException('Archived account credentials cannot be changed.');
       const accountChanged = account !== undefined && account !== before.account;
+      if (before.status === 'archived' && accountChanged) throw new ConflictException('Archived account credentials cannot be changed.');
       if (accountChanged) {
         const existing = await tx.user.findUnique({ where: { account } });
         if (existing && existing.id !== id) throw new ConflictException('Account already exists.');

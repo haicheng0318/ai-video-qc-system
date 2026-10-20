@@ -188,10 +188,32 @@ for (const role of ['content_owner', 'supervisor', 'director', 'operator', 'adve
   });
 }
 
+test('archived same-account PATCH preserves ordinary profile updates', async () => {
+  const h = harness(); const target = h.state.users.find(u => u.id === 'target')!;
+  target.status = 'archived';
+  const result = await h.service.update('target', { account: target.account, name: 'Archived fixture profile', reason }, admin);
+  assert.equal(result.user.name, 'Archived fixture profile');
+  assert.equal(result.user.account, target.account); assert.equal(result.user.status, 'archived');
+  assert.ok(h.state.sessions.every(s => s.revokedAt === null));
+  assert.equal(h.state.logs.length, 1);
+});
+
+test('archived changed-account PATCH is rejected without writes', async () => {
+  const h = harness(); h.state.users.find(u => u.id === 'target')!.status = 'archived';
+  await assert.rejects(h.service.update('target', { account: 'Archived renamed fixture', reason }, admin), ConflictException);
+  assert.equal(h.calls.updates, 0); assert.equal(h.state.logs.length, 0);
+});
+
+test('archived random reset is rejected without writes', async () => {
+  const h = harness(); h.state.users.find(u => u.id === 'target')!.status = 'archived';
+  await assert.rejects(h.service.resetPassword('target', reason, admin), ConflictException);
+  assert.equal(h.calls.updates, 0); assert.equal(h.state.logs.length, 0);
+});
+
 test('missing target is 404 and archived target cannot receive an assigned password', async () => {
   const h = harness(); await assert.rejects(h.service.setPassword('missing', { password: assigned, mustChangePassword: false, reason }, admin), NotFoundException);
   h.state.users.find(u => u.id === 'target')!.status = 'archived';
-  await assert.rejects(h.service.setPassword('target', { password: assigned, mustChangePassword: false, reason }, admin), (error: any) => [400, 409].includes(error.getStatus()));
+  await assert.rejects(h.service.setPassword('target', { password: assigned, mustChangePassword: false, reason }, admin), ConflictException);
   assert.equal(h.calls.updates, 0); assert.equal(h.state.logs.length, 0);
 });
 

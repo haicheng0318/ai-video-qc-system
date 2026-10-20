@@ -40,6 +40,7 @@ export default function AdminUserDetailPage({ params: pendingParams }: { params:
       const result = await apiFetch<{ user: ManagedUser }>(`/api/admin/users/${params.id}`, { method: 'PATCH', body: JSON.stringify({ account, name: data.get('name'), role: data.get('role'), status: data.get('status'), expiresAt: data.get('expiresAt') ? new Date(String(data.get('expiresAt'))).toISOString() : null, reason: data.get('reason') }) });
       setUser(result.user);
       if (accountChanged && actorId === params.id) { credentialLogin('account_changed'); return; }
+      await load();
       setNotice('账号资料已更新，相关旧会话会按安全规则失效。');
     } catch (err) { setError(err instanceof Error ? err.message : '更新失败。'); }
     finally { mutationRef.current = false; setBusy(false); }

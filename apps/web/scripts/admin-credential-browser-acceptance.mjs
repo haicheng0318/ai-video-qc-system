@@ -18,6 +18,7 @@ async function setup({ self = false, role = 'admin' } = {}) {
   const user = { id: targetId, account: 'fixture.target', name: '本地凭据验收账号', role: self ? 'admin' : 'director', status: 'active', expiresAt: null, mustChangePassword: false };
   const actor = { ...user, id: self ? targetId : adminId, account: 'fixture.admin', role };
   const requests = [], errors = [];
+  const sessions = [{ id: 'fixture-session', createdAt: '2026-10-20T00:00:00Z', expiresAt: '2026-10-21T00:00:00Z', revokedAt: null }];
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin !== target.origin) return route.abort();
@@ -32,8 +33,8 @@ async function setup({ self = false, role = 'admin' } = {}) {
     else if (url.pathname === '/api/admin/users' && method === 'GET') response = { items: [user], total: 1, page: 1, pageSize: 20 };
     else if (url.pathname === '/api/admin/users' && method === 'POST') response = { user: { ...user, id: '00000000-0000-4000-8000-000000000033', account: body.account, name: body.name, mustChangePassword: body.initialPassword ? body.mustChangePassword : true }, initialPassword: body.initialPassword || randomPassword };
     else if (url.pathname === `/api/admin/users/${targetId}` && method === 'GET') response = { user };
-    else if (url.pathname === `/api/admin/users/${targetId}` && method === 'PATCH') { user.account = body.account; response = { user }; }
-    else if (url.pathname.endsWith('/sessions')) response = { items: [] };
+    else if (url.pathname === `/api/admin/users/${targetId}` && method === 'PATCH') { user.account = body.account; sessions.forEach(session => { session.revokedAt = '2026-10-20T01:00:00Z'; }); response = { user }; }
+    else if (url.pathname.endsWith('/sessions')) response = { items: sessions };
     else if (url.pathname.endsWith('/quotas')) response = { quotas: [] };
     else if (url.pathname.endsWith('/set-password')) { user.mustChangePassword = body.mustChangePassword; response = { success: true }; }
     else if (url.pathname.endsWith('/reset-password')) response = { initialPassword: randomPassword };
@@ -68,12 +69,18 @@ try {
 
   await page.locator('tr').filter({ hasText: 'fixture.target' }).getByRole('link', { name: '查看详情', exact: true }).click();
   await page.getByRole('heading', { name: '本地凭据验收账号', exact: true }).waitFor();
+  const sessionTable = page.locator('section').filter({ has: page.getByRole('heading', { name: '登录会话', exact: true }) });
+  await sessionTable.getByRole('cell', { name: '有效', exact: true }).waitFor();
   await page.getByLabel('登录用户名', { exact: true }).fill('本地 新账号');
   await page.locator('#update-reason').fill('FixtureOnly account rename');
   await page.getByRole('button', { name: '保存账号资料', exact: true }).click();
   await page.getByText('账号资料已更新，相关旧会话会按安全规则失效。', { exact: true }).waitFor();
   assert.equal(requests.find(r => r.method === 'PATCH').body.account, '本地 新账号');
-  checks.push('list to detail / account PATCH payload');
+  await sessionTable.getByRole('cell', { name: /^已撤销/ }).waitFor();
+  assert.equal(await sessionTable.getByRole('cell', { name: '有效', exact: true }).count(), 0);
+  const patchIndex = requests.findIndex(r => r.method === 'PATCH');
+  assert.ok(requests.slice(patchIndex + 1).some(r => r.method === 'GET' && r.path.endsWith('/sessions')));
+  checks.push('list to detail / account PATCH payload / server session refresh without manual reload');
 
   const password = page.getByLabel('设置新密码', { exact: true }), confirm = page.getByLabel('确认新密码', { exact: true });
   assert.equal(await password.getAttribute('type'), 'password'); assert.equal(await password.getAttribute('autocomplete'), 'new-password');
