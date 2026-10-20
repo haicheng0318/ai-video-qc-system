@@ -69,7 +69,7 @@ for (const caseType of ['excellent', 'negative', 'none'] as const) {
 
 for (const [file, patterns] of [
   ['../components/final-confirmation-panel.tsx', ['最终确认不可撤销', '绩效参考资格仅表示', 'case-marking']],
-  ['../../app/dashboard/page.tsx', ['已确认', '流程积压', '千问建议一致率']],
+  ['../../app/dashboard/page.tsx', ['已确认', '待处理流程', '千问建议一致率']],
   ['../components/case-library-page.tsx', ['已完成负责人确认', '案例列表暂时不可用']],
 ] as const) {
   test(`${file} contains required Phase 8 messaging`, async () => {

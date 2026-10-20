@@ -99,7 +99,7 @@ export function V11EvaluationPanel({ videoId }: { videoId: string }) {
     </section>
     </DetailSummary>
     {error ? <p className="error">{error}</p> : null}
-    {isAdmin ? <details className="section-gap"><summary>技术详情</summary><dl><dt>评估组状态</dt><dd>{content?.group?.status || '-'}</dd><dt>工作流版本</dt><dd>{content?.group?.workflowRevision.revision || workflow?.revision?.revision || '-'}</dd><dt>Review ID</dt><dd>{decision?.id || '-'}</dd><dt>Evaluation ID</dt><dd>{comprehensive?.id || '-'}</dd><dt>Run ID</dt><dd>{content?.group?.runs.map((item) => item.id).join('、') || '-'}</dd></dl></details> : null}
+    {isAdmin ? <details className="section-gap"><summary>技术详情</summary><dl><dt>评估组状态</dt><dd>{content?.group?.status || '-'}</dd><dt>工作流版本</dt><dd>{content?.group?.workflowRevision.revision || workflow?.revision?.revision || '-'}</dd><dt>内容决议 ID</dt><dd>{decision?.id || '-'}</dd><dt>综合决议 ID</dt><dd>{comprehensive?.id || '-'}</dd><dt>Run ID</dt><dd>{content?.group?.runs.map((item) => item.id).join('、') || '-'}</dd></dl></details> : null}
     {content?.group?.runs?.length ? <div className="table-scroll"><table className="table"><thead><tr><th>评估</th><th>角色</th><th>状态</th><th>分数</th><th>等级</th></tr></thead><tbody>{content.group.runs.map((item) => <tr key={item.id}><td>第 {item.runNumber} 次</td><td>{item.runRole}</td><td>{item.stale ? '已失效' : item.status}</td><td>{item.totalScore ?? '-'}</td><td>{item.contentRating || '-'}</td></tr>)}</tbody></table></div> : null}
     {workflow?.revision?.holds?.map((hold) => <p className="warning-list" key={hold.id}>流程挂起：{hold.reason}</p>)}
     {workflow?.revision?.appeals?.map((item) => <p className="warning-list" key={item.id}>异议处理中：{item.reason}</p>)}

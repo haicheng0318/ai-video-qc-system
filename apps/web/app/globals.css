@@ -12,10 +12,10 @@
   --border-strong: #b8c6cc;
   --line: var(--border);
   --panel: var(--surface);
-  --primary: #087f79;
-  --primary-hover: #066760;
+  --primary: #6d28d9;
+  --primary-hover: #5420ac;
   --primary-strong: var(--primary-hover);
-  --primary-soft: #e5f4f1;
+  --primary-soft: #f0eafe;
   --sidebar: var(--surface);
   --sidebar-text: var(--text-secondary);
   --success: #167445;
@@ -846,7 +846,7 @@ input[type=checkbox], input[type=radio] { width: 16px; min-height: 16px; accent-
 table, .table { background: var(--surface); font-size: 14px; }
 th, td, .table th, .table td { padding: var(--space-12) var(--space-16); line-height: 1.5; }
 th, .table th { background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; }
-tbody tr:hover { background: #f6faf9; }
+tbody tr:hover { background: var(--primary-soft); }
 td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .status-badge, .status, .capability, .grade-badge { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-4); border-radius: var(--radius-sm); padding: var(--space-4) var(--space-8); font-size: 12px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
 .status-badge.status-completed, .status-badge.active, .capability.yes { background: var(--success-soft); color: var(--success); }

@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 import ts from 'typescript';
 
-const root = resolve(__dirname, '../../../..');
+const root = resolve(__dirname, '../../..');
+const UI2_BASE_SHA = '410a0327ed6c2aae0a816266fdeff5cfcf42e457';
 const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 const files = [
   'apps/web/app/videos/page.tsx', 'apps/web/app/videos/[id]/page.tsx',
@@ -35,12 +36,8 @@ function requireOriginals(before: string[], after: string[], context: string) {
   }
 }
 
-test('UI2 base is the approved production baseline', () => {
-  assert.equal(git('rev-parse', 'origin/main'), '410a0327ed6c2aae0a816266fdeff5cfcf42e457');
-});
-
-test('backend, shared contracts, Prisma and critical web libraries are byte-identical to origin/main', () => {
-  const changed = git('diff', '--name-only', 'origin/main', '--', 'apps/api', 'packages', 'prisma', 'apps/web/src/lib', 'package.json', 'package-lock.json');
+test('backend, shared contracts, Prisma and critical web libraries are byte-identical to the immutable UI2 baseline', () => {
+  const changed = git('diff', '--name-only', UI2_BASE_SHA, '--', 'apps/api', 'packages', 'prisma', 'apps/web/src/lib', 'package.json', 'package-lock.json');
   assert.equal(changed, '', `Frozen paths changed:\n${changed}`);
   const untracked = git('ls-files', '--others', '--exclude-standard', '--', 'apps/api', 'packages', 'prisma', 'apps/web/src/lib');
   assert.equal(untracked, '', `New files in frozen paths:\n${untracked}`);
@@ -48,7 +45,7 @@ test('backend, shared contracts, Prisma and critical web libraries are byte-iden
 
 for (const file of files) {
   test(`${file}: API calls, effect/callback bodies and business handlers preserve the baseline AST`, () => {
-    const before = parse(file, git('show', `origin/main:${file}`));
+    const before = parse(file, git('show', `${UI2_BASE_SHA}:${file}`));
     const after = parse(file, readFileSync(resolve(root, file), 'utf8'));
     const calls = (source: ts.SourceFile, name: string) => nodes(source, node => callName(node) === name).map(node => print(node, source));
     assert.deepEqual(calls(after, 'apiFetch'), calls(before, 'apiFetch'), 'API call expressions/order changed');
@@ -84,7 +81,7 @@ for (const file of files) {
 
 test('five business tabs retain all original panel props and hidden mounted regions', () => {
   const file = 'apps/web/app/videos/[id]/page.tsx';
-  const before = parse(file, git('show', `origin/main:${file}`));
+  const before = parse(file, git('show', `${UI2_BASE_SHA}:${file}`));
   const after = parse(file, readFileSync(resolve(root, file), 'utf8'));
   const declaration = nodes(after, node => ts.isVariableDeclaration(node) && node.name.getText(after) === 'detailTabs')[0] as ts.VariableDeclaration;
   assert.ok(declaration && declaration.initializer && ts.isArrayLiteralExpression(declaration.initializer));

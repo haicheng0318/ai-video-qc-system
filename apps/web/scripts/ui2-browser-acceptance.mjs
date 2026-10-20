@@ -19,7 +19,7 @@ const group = { status: 'adopted', shadowMode: true, runs: [{ id: 'run-1', runNu
 const videos = Array.from({ length: 26 }, (_, index) => ({ id: index ? `00000000-0000-4000-8000-${String(index + 11).padStart(12, '0')}` : videoId, title: index ? `秋季内容评估 · ${index + 1}` : '秋日新品 · 日常清洁场景', brand: '清研', product: '洁净系列', platform: index % 2 ? '小红书' : '抖音', videoType: index % 2 ? 'organic' : 'product_card', status: index % 2 ? 'submitted' : 'pending_result_data', isForAds: false, createdAt: index < 3 ? now : '2026-08-15T04:00:00.000Z', updatedAt: now, creator: index % 2 ? other : owner, v11EvaluationGroups: [group], v11DataDecisions: [{ dataRating: 'B' }], v11ComprehensiveDecisions: [{ comprehensiveRating: 'A', decisionSource: 'system' }] }));
 const summary = { period: { startDate: now, endDate: now }, finalizedCount: 24, finalEffectiveCount: 15, finalLowEffectiveCount: 6, finalInvalidCount: 3, effectiveOutputCount: 21, effectiveOutputRate: 87.5, finalEffectiveRate: 62.5, lowEffectiveRate: 25, invalidRate: 12.5, performanceEligibleCount: 18, performanceEligibleRate: 75, excellentCaseCount: 4, negativeCaseCount: 2, manualAdjustedCount: 3, manualAdjustmentRate: 12.5, gptRecommendationMatchedCount: 20, gptMatchRate: 83.3, pipeline: { pendingDataCount: 4, pendingFinalEvaluationCount: 2, finalEvaluationFailedCount: 0, pendingFinalConfirmationCount: 3 }, v11: { finalizedCount: 24, effectiveCount: 15, lowEffectiveCount: 6, invalidCount: 3, performanceEligibleCount: 18, excellentCaseCount: 4, negativeCaseCount: 2 } };
 
-async function fixture(context, role) {
+async function fixture(context, role, allowedActions = ['submit_result_metrics', 'trigger_result_review', 'export_report']) {
   const requests = [];
   const user = { ...owner, role };
   await context.route('**/*', async route => {
@@ -44,7 +44,7 @@ async function fixture(context, role) {
         && (!q.get('platform') || v.platform === q.get('platform')));
       const page = Number(q.get('page') || 1), pageSize = Number(q.get('pageSize') || 20);
       body = { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize };
-    } else if (path === `/api/videos/${videoId}`) body = { ...videos[0], creator: owner, isEventVideo: false, relatedRequirement: '', operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], version: 1, revisions: [], versionChain: [], allowedActions: ['submit_result_metrics', 'export_report'], aiResultReviews: [], finalVideoEvaluations: [], latestResultMetricId: null };
+    } else if (path === `/api/videos/${videoId}`) body = { ...videos[0], creator: owner, isEventVideo: false, relatedRequirement: '', operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], version: 1, revisions: [], versionChain: [], allowedActions, aiResultReviews: [], finalVideoEvaluations: [], latestResultMetricId: null };
     else if (path.endsWith('/file-url')) body = { url: null };
     else if (path.endsWith('/content-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/supervisor-review/latest') || path.endsWith('/result-metrics/latest')) body = null;
@@ -119,6 +119,11 @@ try {
 
   await ready('/videos/' + videoId); await page.getByTestId('v11-evaluation-panel').waitFor();
   await page.getByRole('tab', { name: '评估结果', exact: true }).waitFor();
+  const actions = page.getByRole('region', { name: '当前可执行操作', exact: true });
+  assert.equal(await actions.locator('li').count(), 2);
+  assert((await actions.innerText()).includes('可补充运营/投放数据'));
+  assert((await actions.innerText()).includes('可开始数据复盘'));
+  assert.equal(await actions.getByRole('button').count(), 1, 'same-tab actions share navigation only');
   await shot('02-video-detail.png');
   const player = page.locator('.video-player-panel');
   const token = await player.evaluate(el => { el.dataset.lifecycleCheck = 'retained'; return el.dataset.lifecycleCheck; });
@@ -148,6 +153,17 @@ try {
   checks.push('1440/1024/768/390 overflow/menu open/close/Escape/route close');
   assert.deepEqual(errors, []);
   await context.close();
+  for (const [allowed, title, links] of [[['export_report'], '暂无可执行操作', 0], [['submit_result_metrics'], '下一步', 1], [['submit_result_metrics', 'execute_rule_engine'], '当前可执行操作', 2]]) {
+    const c = await browser.newContext({ serviceWorkers: 'block' });
+    const calls = await fixture(c, 'admin', allowed);
+    const p = await c.newPage(); await p.goto(base + '/videos/' + videoId);
+    const region = p.getByRole('region', { name: title, exact: true }); await region.waitFor();
+    assert.equal(await region.getByRole('button').count(), links);
+    for (const button of await region.getByRole('button').all()) await button.click();
+    assert(calls.every(call => call.method === 'GET'), 'action summary navigation never submits business mutations');
+    await c.close();
+  }
+  checks.push('zero/single/multiple allowedActions; same-tab dedupe/cross-tab navigation; no POST');
   for (const role of ['admin','content_owner','supervisor','director','operator','advertiser','visitor']) {
     const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });await fixture(c,role);const p=await c.newPage();await p.goto(base+'/videos');await p.getByRole('heading',{name:'视频任务',exact:true}).waitFor();await p.getByRole('status').filter({hasText:'正在加载视频'}).waitFor({state:'hidden'});
     assert.equal(await p.locator('input[name=creatorId]').count(),role==='admin'?1:0);

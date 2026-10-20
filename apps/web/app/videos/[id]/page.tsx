@@ -245,8 +245,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const canUploadRevision = allowedActions.includes('upload_revision');
   const latestDataReview = video.aiResultReviews?.[0];
   const latestFinal = video.finalVideoEvaluations?.[0];
-  const nextAction = allowedActions.find((action) => action !== 'export_report');
-  const nextTab = nextAction ? actionTabs[nextAction] : undefined;
+  const availableActions = allowedActions.filter((action) => action !== 'export_report');
+  const navigationTabs = [...new Set(availableActions.map((action) => actionTabs[action]).filter((tab): tab is DetailTab => Boolean(tab)))];
   const workflowIndex = workflowSteps.findIndex((step) => step.statuses.includes(video.status));
   const workflowComplete = ['final_effective', 'final_low_effective', 'final_invalid'].includes(video.status);
 
@@ -288,8 +288,11 @@ function VideoDetail({ params }: { params: { id: string } }) {
         <article><span>最终有效等级</span><strong>{latestFinal?.finalGrade ? displayLabel(finalGradeLabels, latestFinal.finalGrade) : latestFinal?.recommendedFinalGrade ? `${displayLabel(finalGradeLabels, latestFinal.recommendedFinalGrade)}（建议）` : '待负责人确认'}</strong><small>规则引擎 + AI 建议 + 负责人确认</small></article>
       </section>
       </details>
-      <section className="detail-next-action" aria-label="下一步">
-        <h2>下一步</h2><p>{nextActionText(allowedActions, video.status)}</p>{nextTab ? <button type="button" className="button" onClick={() => setActiveTab(nextTab)}>前往处理</button> : null}<small>版本 V{video.version || 1}{video.isTrial ? ' · 试用数据' : ''} · 更新于 {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(new Date(video.updatedAt || video.createdAt))}</small>
+      <section className="detail-next-action" aria-label={availableActions.length > 1 ? '当前可执行操作' : availableActions.length === 1 ? '下一步' : '暂无可执行操作'}>
+        <h2>{availableActions.length > 1 ? '当前可执行操作' : availableActions.length === 1 ? '下一步' : '暂无可执行操作'}</h2>
+        {availableActions.length ? <ul>{availableActions.map((action, index) => <li key={`${action}-${index}`}>{actionLabels[action] || action}</li>)}</ul> : <p>{nextActionText([], video.status)}</p>}
+        <div className="button-row">{navigationTabs.map((tab) => <button key={tab} type="button" className="button" onClick={() => setActiveTab(tab)}>前往{detailTabs.find(([value]) => value === tab)?.[1]}</button>)}</div>
+        <small>版本 V{video.version || 1}{video.isTrial ? ' · 试用数据' : ''} · 更新于 {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(new Date(video.updatedAt || video.createdAt))}</small>
       </section>
       <ol className="workflow-stepper" aria-label="评估流程">
         {workflowSteps.map((step, index) => <li key={step.label} aria-current={index === workflowIndex && !workflowComplete ? 'step' : undefined} data-state={workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? 'completed' : index === workflowIndex ? video.status.endsWith('_failed') ? 'failed' : 'current' : 'waiting'}><span>{step.label}</span><small>{workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? '已完成' : index === workflowIndex ? displayLabel(videoStatusLabels, video.status) : '待处理'}</small></li>)}
