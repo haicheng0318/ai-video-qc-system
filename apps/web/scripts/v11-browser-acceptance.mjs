@@ -12,7 +12,7 @@ const { base, target, childEnv } = localBrowserEnvironment(process.env, 'V11_BRO
 const executable = execFileSync('which', ['playwright'], { encoding: 'utf8', env: childEnv }).trim();
 const { chromium } = createRequire(realpathSync(executable))('playwright');
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
-const output = browserOutput('workflow');
+const output = process.env.QC_BROWSER_OUTPUT_DIR ? resolve(process.env.QC_BROWSER_OUTPUT_DIR, 'workflow') : browserOutput('workflow');
 await mkdir(output, { recursive: true });
 
 let server;
@@ -52,7 +52,7 @@ const video = (user) => ({
 function contentState(shadow = true) {
   return { group: { id: 'group-1', status: 'adopted', shadowMode: shadow, workflowRevision: { revision: 1 },
     runs: [{ id: 'run-1', runNumber: 1, runRole: 'initial', status: 'succeeded', totalScore: '82.0', contentRating: 'A', stale: false }],
-    decision: { id: 'decision-1', totalScore: '82.0', contentRating: 'A', complianceStatus: 'clear' } } };
+    decision: { id: 'decision-1', totalScore: '82.0', contentRating: 'A', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single_after_pilot' } } };
 }
 
 async function installFixture(context, initialUser) {
@@ -113,23 +113,24 @@ async function login(page, account) {
   await page.getByLabel('账号').fill(account);
   await page.getByLabel('密码').fill('fixture-only-password');
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  await page.getByRole('heading', { name: '视频列表', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '视频任务', exact: true }).waitFor();
 }
 
 try {
   const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' });
+  ownerContext.setDefaultTimeout(15000);
   const ownerFixture = await installFixture(ownerContext, users.owner);
   const ownerPage = await ownerContext.newPage();
   const ownerErrors = []; ownerPage.on('pageerror', (error) => ownerErrors.push(error.message));
   await login(ownerPage, 'director');
-  await ownerPage.getByText('V1.1 浏览器验收视频', { exact: true }).waitFor();
+  await ownerPage.getByRole('link', { name: 'V1.1 浏览器验收视频', exact: true }).waitFor();
   assert.equal(await ownerPage.getByText('其他账号视频', { exact: true }).count(), 0);
   assert.equal(await ownerPage.getByLabel('上传账号 ID').count(), 0, 'ordinary users cannot filter across owners');
   await ownerPage.getByRole('button', { name: '卡片', exact: true }).click();
   await ownerPage.locator('.video-card').waitFor();
-  await ownerPage.getByText('V1.1 浏览器验收视频', { exact: true }).first().click();
-  await ownerPage.getByText('模式：Shadow', { exact: true }).waitFor();
-  assert.match(await ownerPage.getByTestId('v11-evaluation-panel').innerText(), /内容等级：A[\s\S]*数据等级：B[\s\S]*综合等级：R/);
+  await ownerPage.locator('.video-card:visible').getByRole('link', { name: 'V1.1 浏览器验收视频', exact: true }).click();
+  await ownerPage.getByText('Shadow 结果不改变正式流程。', { exact: true }).waitFor();
+  assert.match(await ownerPage.locator('#v11-detail-summary').innerText(), /内容质量[\s\S]*A[\s\S]*数据表现[\s\S]*B[\s\S]*综合评级[\s\S]*R/);
   await ownerPage.getByRole('button', { name: '触发 V1.1 内容评估', exact: true }).click();
   await ownerPage.getByLabel('对当前内容结果提出异议').fill('请重新核对第 3 秒的产品露出证据');
   await ownerPage.getByRole('button', { name: '提交异议并创建新工作流版本', exact: true }).click();
@@ -141,10 +142,12 @@ try {
   await ownerContext.close();
 
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
+  adminContext.setDefaultTimeout(15000);
   const adminFixture = await installFixture(adminContext, users.admin);
   const adminPage = await adminContext.newPage();
   const adminErrors = []; adminPage.on('pageerror', (error) => adminErrors.push(error.message));
   await login(adminPage, 'admin');
+  await adminPage.getByText('更多筛选', { exact: true }).click();
   await adminPage.getByLabel('上传账号 ID').waitFor();
   await adminPage.getByLabel('数据等级').selectOption('B');
   await adminPage.getByLabel('综合等级').selectOption('A');
@@ -158,19 +161,20 @@ try {
   assert.equal(await adminPage.getByText('保留人工内容审核', { exact: true }).count(), 1);
 
   await adminPage.goto(`${base}/settings/benchmarks`);
-  await adminPage.getByRole('heading', { name: 'V1.1 已审批 Benchmark Profile' }).waitFor();
+  await adminPage.getByRole('heading', { name: 'V1.1 评价基准', exact: true }).waitFor();
   await adminPage.getByLabel('名称').fill('浏览器验收基准');
   await adminPage.getByRole('button', { name: '创建草稿', exact: true }).click();
   await adminPage.getByText('浏览器验收基准', { exact: true }).waitFor();
   adminPage.once('dialog', (dialog) => dialog.accept('批准本地浏览器验收基准'));
   await adminPage.getByRole('button', { name: '审批', exact: true }).click();
-  await adminPage.getByText('approved（启用）', { exact: true }).waitFor();
+  const benchmarkRow = adminPage.getByRole('row').filter({ hasText: '浏览器验收基准' });
+  await benchmarkRow.getByRole('cell', { name: 'approved 启用', exact: true }).waitFor();
 
   await adminPage.goto(`${base}/videos/${videoId}`);
   await adminPage.getByRole('heading', { name: '管理员人工决议' }).waitFor();
   await adminPage.getByLabel('人工决议理由').fill('证据完整，按冻结矩阵人工处理 R 组合');
   await adminPage.getByRole('button', { name: '提交人工决议', exact: true }).click();
-  await adminPage.getByRole('heading', { name: '负责人最终确认' }).waitFor();
+  await adminPage.locator('[data-testid="v11-evaluation-panel"]').getByRole('heading', { name: '负责人最终确认' }).waitFor();
   await adminPage.getByLabel('确认理由').fill('复核来源与安全门禁后确认正式结果');
   await adminPage.getByLabel('纳入绩效参考资格').check();
   await adminPage.getByRole('button', { name: '确认正式结果', exact: true }).click();

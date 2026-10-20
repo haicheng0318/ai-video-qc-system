@@ -84,7 +84,9 @@ test('video detail orders formal confirmation after Qwen suggestion', async () =
   assert.ok(source.indexOf('<FinalConfirmationPanel') > source.indexOf('<FinalEvaluationPanel'));
 });
 
-test('navigation exposes dashboard and both case libraries', async () => {
+test('navigation exposes dashboard and a case library with both original case routes', async () => {
   const source = await readFile(resolve(__dirname, '../components/app-shell.tsx'), 'utf8');
-  for (const href of ['/dashboard', '/cases/excellent', '/cases/negative']) assert.match(source, new RegExp(href));
+  const cases = await readFile(resolve(__dirname, '../components/case-library-page.tsx'), 'utf8');
+  for (const href of ['/dashboard', '/cases/excellent']) assert.match(source, new RegExp(href));
+  for (const href of ['/cases/excellent', '/cases/negative']) assert.match(cases, new RegExp(href));
 });

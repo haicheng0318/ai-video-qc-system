@@ -137,7 +137,7 @@ try {
   if (!externalRequestBlocked) throw new Error('External browser request was not blocked.');
   await page.goto(`${baseUrl}/videos/${id}`);
   await page.getByRole('heading', { name: 'V1.01 本地验收视频' }).waitFor();
-  if (await page.locator('[role="tab"]').count() !== 8) throw new Error('Expected eight workflow tabs.');
+  if (await page.locator('[role="tab"]').count() !== 5) throw new Error('Expected five UI2 workflow tabs.');
   if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)) throw new Error('Desktop page overflows horizontally.');
   await page.screenshot({ path: `${output}/detail-desktop.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -145,7 +145,7 @@ try {
   await page.screenshot({ path: `${output}/detail-mobile.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
 
-  await page.getByRole('tab', { name: '运营投放数据' }).click();
+  await page.getByRole('tab', { name: '数据表现', exact: true }).click();
   await page.locator('#metric-dataStartDate').fill('2026-09-01');
   await page.locator('#metric-dataEndDate').fill('2026-09-10');
   page.once('dialog', (dialog) => dialog.accept());
@@ -157,15 +157,15 @@ try {
   const secondMetricSaved = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/result-metrics') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '保存新数据快照' }).click();
   await secondMetricSaved;
-  await page.getByRole('tab', { name: '数据复盘' }).click();
+  await page.getByRole('tab', { name: '数据表现', exact: true }).click();
   await page.getByText('绑定快照：metric-2').waitFor();
   await page.getByRole('button', { name: '开始千问数据复盘' }).click();
   await page.getByText('精确任务 A 结果').waitFor();
-  await page.getByRole('tab', { name: '规则与最终建议' }).click();
+  await page.getByRole('tab', { name: '综合决策', exact: true }).click();
   await page.getByRole('button', { name: '执行规则判断' }).click();
   await page.getByRole('button', { name: '生成千问最终评定建议' }).click();
   await page.getByText('精确任务 A 最终建议').waitFor();
-  await page.getByRole('tab', { name: '负责人确认' }).click();
+  await page.getByRole('tab', { name: '综合决策', exact: true }).click();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '确认正式结论' }).click();
   await page.getByText('正式等级：有效').waitFor();
@@ -173,7 +173,7 @@ try {
   await page.goto(`${baseUrl}/videos/new`);
   await page.locator('#title').fill('未保存标题');
   page.once('dialog', (dialog) => dialog.dismiss());
-  await page.getByRole('link', { name: '视频列表' }).click();
+  await page.getByRole('link', { name: '视频任务', exact: true }).click();
   if (!page.url().endsWith('/videos/new') || await page.locator('#title').inputValue() !== '未保存标题') throw new Error('Unsaved same-origin navigation did not preserve the draft DOM.');
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.evaluate(() => window.next.router.push('/videos'));

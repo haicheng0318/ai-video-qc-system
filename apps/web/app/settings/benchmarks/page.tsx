@@ -112,12 +112,13 @@ export default function PlatformBenchmarksPage() {
     });
   }
 
-  return <main className="page">
-    <div className="page-title"><div><h1>平台基准配置</h1><p className="muted">用于千问数据复盘的相对表现判断；品牌留空表示平台通用基准。</p></div></div>
-    {error ? <p className="error">{error}</p> : null}
+  return <main className="page" id="main-content">
+    <div className="page-title"><div><h1>评价基准</h1><p className="muted">平台、品牌与视频类型对应的数据表现评价标准。</p></div></div>
+    {error ? <p className="error" role="alert">{error}</p> : null}
     <V11BenchmarkPanel user={user} />
-    {canManage ? <section className="panel section-gap">
-      <h2>{editingId ? '编辑基准' : '新增基准'}</h2>
+    <section className="section-gap" aria-labelledby="legacy-benchmarks-heading"><h2 id="legacy-benchmarks-heading">平台指标基准</h2><p className="muted">用于千问数据复盘的相对表现判断；品牌留空表示平台通用基准。</p>
+    {canManage ? <section className="section-gap">
+      <h3>{editingId ? '编辑基准' : '新增基准'}</h3>
       <form onSubmit={save}>
         <div className="form-grid">
           <label>平台<input required maxLength={100} value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} /></label>
@@ -135,6 +136,7 @@ export default function PlatformBenchmarksPage() {
         {editingId ? <button className="button secondary" type="button" onClick={() => { setEditingId(null); setForm(emptyForm); }}>取消编辑</button> : null}
       </form>
     </section> : <p className="muted">只有管理员和内容负责人可以管理平台基准。</p>}
-    <section className="panel section-gap"><h2>现有基准</h2><div className="table-scroll"><table className="table"><thead><tr><th>平台/品牌</th><th>视频类型</th><th>指标</th><th>S/A/B/C</th><th>方向</th><th>状态</th>{canManage ? <th>操作</th> : null}</tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.platform} / {item.brand || '通用'}</td><td>{videoTypes.find((type) => type.value === item.videoType)?.label}</td><td>{resultMetricFieldDefinitions[item.metricName as keyof typeof resultMetricFieldDefinitions]?.label || item.metricName}</td><td>{item.sThreshold} / {item.aThreshold} / {item.bThreshold} / {item.cThreshold}</td><td>{item.direction === 'higher_is_better' ? '越高越好' : '越低越好'}</td><td>{item.enabled ? '启用' : '停用'}</td>{canManage ? <td><button className="button secondary" onClick={() => edit(item)}>编辑</button></td> : null}</tr>)}</tbody></table></div></section>
+    <section className="section-gap"><h3>现有基准</h3><div className="table-scroll"><table className="table"><thead><tr><th scope="col">平台/品牌</th><th scope="col">视频类型</th><th scope="col">指标</th><th scope="col">S</th><th scope="col">A</th><th scope="col">B</th><th scope="col">C</th><th scope="col">方向</th><th scope="col">状态</th>{canManage ? <th scope="col">操作</th> : null}</tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.platform} / {item.brand || '通用'}</td><td>{videoTypes.find((type) => type.value === item.videoType)?.label}</td><td>{resultMetricFieldDefinitions[item.metricName as keyof typeof resultMetricFieldDefinitions]?.label || item.metricName}</td><td>{item.sThreshold}</td><td>{item.aThreshold}</td><td>{item.bThreshold}</td><td>{item.cThreshold}</td><td>{item.direction === 'higher_is_better' ? '越高越好' : '越低越好'}</td><td>{item.enabled ? '启用' : '停用'}</td>{canManage ? <td><button className="button secondary" onClick={() => edit(item)}>编辑</button></td> : null}</tr>)}</tbody></table></div></section>
+    </section>
   </main>;
 }

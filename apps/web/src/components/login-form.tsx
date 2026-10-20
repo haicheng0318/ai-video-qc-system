@@ -33,12 +33,12 @@ export function LoginForm({ adminOnly = false }: { adminOnly?: boolean }) {
   return (
     <main className="auth-page" id="main-content">
       <section className="auth-brand" aria-label="系统介绍">
-        <p className="eyebrow">CONTENT OPERATIONS</p>
-        <h1>AI短视频质检<br />评估系统</h1>
+        <p className="eyebrow">AI QC · V1.1</p>
+        <h1>短视频质检评估</h1>
         <p>让内容质量、数据表现与最终有效等级各有依据，全程可追踪、可复盘。</p>
       </section>
       <section className="auth-card" aria-labelledby="login-title">
-        <p className="eyebrow">V1.01</p>
+        <p className="eyebrow">AI QC / V1.1</p>
         <h2 id="login-title">{adminOnly ? '管理员登录' : '登录工作台'}</h2>
         <p className="muted">{adminOnly ? '仅管理员账号可进入后台管理。' : '使用内容中台账号继续。'}</p>
         <form onSubmit={onSubmit} className="auth-form">

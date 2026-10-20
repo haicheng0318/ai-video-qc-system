@@ -98,8 +98,21 @@ type VideoDetail = {
 };
 
 type VersionLink = { id: string; title: string; status: string; version: number };
-type DetailTab = 'content' | 'supervisor' | 'metrics' | 'result' | 'final' | 'confirmation' | 'versions' | 'logs';
-const detailTabs: Array<[DetailTab, string]> = [['content', '内容评估'], ['supervisor', '主管审核'], ['metrics', '运营投放数据'], ['result', '数据复盘'], ['final', '规则与最终建议'], ['confirmation', '负责人确认'], ['versions', '版本历史'], ['logs', '操作记录']];
+type DetailTab = 'content' | 'metrics' | 'final' | 'versions' | 'logs';
+const detailTabs: Array<[DetailTab, string]> = [['content', '评估结果'], ['metrics', '数据表现'], ['final', '综合决策'], ['versions', '版本记录'], ['logs', '操作记录']];
+const actionTabs: Record<string, DetailTab> = {
+  trigger_content_review: 'content', submit_supervisor_review: 'content', upload_revision: 'content',
+  submit_result_metrics: 'metrics', trigger_result_review: 'metrics', execute_rule_engine: 'final',
+  trigger_final_evaluation: 'final', confirm_final_evaluation: 'final', mark_case: 'final',
+};
+const workflowSteps = [
+  { label: '内容评估', statuses: ['submitted', 'ai_content_reviewing', 'ai_content_failed'] },
+  { label: '主管审核', statuses: ['pending_supervisor_review', 'revision_required', 'invalid_content'] },
+  { label: '数据表现', statuses: ['approved_for_publish', 'pending_result_data', 'pending_data'] },
+  { label: 'AI复盘', statuses: ['ai_result_reviewing', 'ai_result_failed'] },
+  { label: '综合判断', statuses: ['pending_rule_engine', 'pending_final_evaluation', 'final_evaluation_failed'] },
+  { label: '负责人确认', statuses: ['pending_final_confirmation', 'final_effective', 'final_low_effective', 'final_invalid'] },
+];
 
 const actionLabels: Record<string, string> = {
   trigger_content_review: '可开始内容评估', submit_supervisor_review: '可进行主管初审', upload_revision: '可上传返修版本',
@@ -232,6 +245,10 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const canUploadRevision = allowedActions.includes('upload_revision');
   const latestDataReview = video.aiResultReviews?.[0];
   const latestFinal = video.finalVideoEvaluations?.[0];
+  const nextAction = allowedActions.find((action) => action !== 'export_report');
+  const nextTab = nextAction ? actionTabs[nextAction] : undefined;
+  const workflowIndex = workflowSteps.findIndex((step) => step.statuses.includes(video.status));
+  const workflowComplete = ['final_effective', 'final_low_effective', 'final_invalid'].includes(video.status);
 
   return (
     <main className="page" id="main-content">
@@ -239,14 +256,16 @@ function VideoDetail({ params }: { params: { id: string } }) {
         <div>
           <h1>{video.title}</h1>
           <p className="muted">
-            {video.creator?.name || '-'} · {formatShanghaiDateTime(video.createdAt)}
+            {video.brand || '未填写品牌'} · {video.product || '未填写产品'} · {displayLabel(videoTypeLabels, video.videoType)} · {video.creator?.name || '-'} · {formatShanghaiDateTime(video.createdAt)}
           </p>
+          <p className="status-badge">{displayLabel(videoStatusLabels, video.status)}</p>
         </div>
         <Link className="button secondary" href="/videos">
           返回列表
         </Link>
         {allowedActions.includes('export_report') ? <a className="button secondary" href={`/api/videos/${video.id}/report`} download>导出授权报告</a> : null}
       </div>
+      <div id="v11-detail-summary" />
       <div className="detail-grid">
         <VideoPlayer videoId={params.id} />
         <aside className="panel">
@@ -261,18 +280,34 @@ function VideoDetail({ params }: { params: { id: string } }) {
           <p>节点名称：{video.eventName || '-'}</p>
         </aside>
       </div>
+      <details className="legacy-summary section-gap">
+        <summary>历史评估摘要</summary>
       <section className="grade-summary" aria-label="三级评估摘要">
-        <article><span>内容质量等级</span><strong>{contentReview?.status === 'succeeded' ? contentReview.contentGrade || '待确认' : '待评估'}</strong><small>Qwen-Omni 视频内容评估</small></article>
+        <article><span>内容质量 · 历史评估</span><strong>{contentReview?.status === 'succeeded' ? contentReview.contentGrade || '待确认' : '待评估'}</strong><small>历史内容分：{contentReview?.totalScore ?? '-'} · V1.1 结论见下方独立面板</small></article>
         <article><span>数据表现等级</span><strong>{latestDataReview?.status === 'succeeded' ? latestDataReview.dataGrade || '数据不足' : '待复盘'}</strong><small>GPT/千问运营投放数据复盘</small></article>
         <article><span>最终有效等级</span><strong>{latestFinal?.finalGrade ? displayLabel(finalGradeLabels, latestFinal.finalGrade) : latestFinal?.recommendedFinalGrade ? `${displayLabel(finalGradeLabels, latestFinal.recommendedFinalGrade)}（建议）` : '待负责人确认'}</strong><small>规则引擎 + AI 建议 + 负责人确认</small></article>
-        <article><span>当前状态 / 下一步</span><strong>{displayLabel(videoStatusLabels, video.status)}</strong><small>{nextActionText(allowedActions, video.status)} · 版本 V{video.version || 1}{video.isTrial ? ' · 试用数据' : ''} · 更新于 {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(new Date(video.updatedAt || video.createdAt))}</small></article>
       </section>
+      </details>
+      <section className="detail-next-action" aria-label="下一步">
+        <h2>下一步</h2><p>{nextActionText(allowedActions, video.status)}</p>{nextTab ? <button type="button" className="button" onClick={() => setActiveTab(nextTab)}>前往处理</button> : null}<small>版本 V{video.version || 1}{video.isTrial ? ' · 试用数据' : ''} · 更新于 {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(new Date(video.updatedAt || video.createdAt))}</small>
+      </section>
+      <ol className="workflow-stepper" aria-label="评估流程">
+        {workflowSteps.map((step, index) => <li key={step.label} aria-current={index === workflowIndex && !workflowComplete ? 'step' : undefined} data-state={workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? 'completed' : index === workflowIndex ? video.status.endsWith('_failed') ? 'failed' : 'current' : 'waiting'}><span>{step.label}</span><small>{workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? '已完成' : index === workflowIndex ? displayLabel(videoStatusLabels, video.status) : '待处理'}</small></li>)}
+      </ol>
       <nav className="detail-tabs" aria-label="视频评估详情" role="tablist">
-        {detailTabs.map(([value, label]) => <button key={value} type="button" role="tab" className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} onClick={() => setActiveTab(value)}>{label}</button>)}
+        {detailTabs.map(([value, label], index) => <button key={value} id={`detail-tab-${value}`} type="button" role="tab" tabIndex={activeTab === value ? 0 : -1} className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} aria-controls={`detail-panel-${value}${value === 'content' ? ' detail-panel-supervisor' : value === 'metrics' ? ' detail-panel-result' : value === 'final' ? ' detail-panel-confirmation' : ''}`} onClick={() => setActiveTab(value)} onKeyDown={(event) => {
+          const target = event.key === 'Home' ? 0 : event.key === 'End' ? detailTabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % detailTabs.length : event.key === 'ArrowLeft' ? (index + detailTabs.length - 1) % detailTabs.length : -1;
+          if (target < 0) return;
+          event.preventDefault();
+          setActiveTab(detailTabs[target][0]);
+          event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[target]?.focus();
+        }}>{label}</button>)}
       </nav>
-      <div hidden={activeTab !== 'content'}>
+      <div id="detail-panel-content" role="tabpanel" aria-labelledby="detail-tab-content" hidden={activeTab !== 'content'}>
       <V11EvaluationPanel videoId={video.id} />
-      <section className="panel" style={{ marginTop: 20 }}>
+      <details className="panel section-gap">
+        <summary>历史评估</summary>
+        <p className="muted">历史评分体系，仅用于历史记录，不参与当前 V1.1 正式结论。</p>
         <div className="page-title">
           <div>
             <h2>Qwen-Omni 内容评估</h2>
@@ -334,9 +369,11 @@ function VideoDetail({ params }: { params: { id: string } }) {
             <p>{(contentReview.usableScenarios || []).join('、') || '-'}</p>
           </div>
         ) : null}
-      </section>
+        {currentUser?.role === 'admin' ? <details className="section-gap"><summary>技术详情</summary><dl><dt>Review ID</dt><dd>{contentReview?.id || '-'}</dd><dt>Model Provider</dt><dd>{contentReview?.modelProvider || '-'}</dd><dt>Model Name</dt><dd>{contentReview?.modelName || '-'}</dd><dt>Prompt Version</dt><dd>{contentReview?.promptVersion || '-'}</dd><dt>Scoring Version</dt><dd>{contentReview?.scoringVersion || '-'}</dd></dl></details> : null}
+      </details>
       </div>
-      <div hidden={activeTab !== 'supervisor'}>
+      <div id="detail-panel-supervisor" role="region" aria-label="主管审核" hidden={activeTab !== 'content'}>
+      <h2>主管审核</h2>
       <SupervisorReviewPanel
         videoId={video.id}
         canReview={canReview}
@@ -351,7 +388,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
         />
       ) : null}
       </div>
-      <div hidden={activeTab !== 'versions'}>
+      <div id="detail-panel-versions" role="tabpanel" aria-labelledby="detail-tab-versions" hidden={activeTab !== 'versions'}>
+      <h2>版本历史</h2>
       <VideoVersionChain
         currentId={video.id}
         chain={video.versionChain || []}
@@ -359,7 +397,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
         revisions={video.revisions || []}
       />
       </div>
-      <div hidden={activeTab !== 'metrics'}>
+      <div id="detail-panel-metrics" role="tabpanel" aria-labelledby="detail-tab-metrics" hidden={activeTab !== 'metrics'}>
+      <h2>运营投放数据</h2>
       <ResultMetricsPanel
         videoId={video.id}
         videoType={video.videoType}
@@ -370,7 +409,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
         allowedActions={allowedActions}
       />
       </div>
-      <div hidden={activeTab !== 'result'}>
+      <div id="detail-panel-result" role="region" aria-label="数据复盘" hidden={activeTab !== 'metrics'}>
+      <h2>数据复盘</h2>
       <ResultReviewPanel
         videoId={video.id}
         videoType={video.videoType}
@@ -382,7 +422,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
         latestResultMetricId={video.latestResultMetricId}
       />
       </div>
-      <div hidden={activeTab !== 'final'}>
+      <div id="detail-panel-final" role="tabpanel" aria-labelledby="detail-tab-final" hidden={activeTab !== 'final'}>
+      <h2>规则与最终建议</h2>
       <RuleEnginePanel
         videoId={video.id}
         videoStatus={video.status}
@@ -398,7 +439,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
         allowedActions={allowedActions}
       />
       </div>
-      <div hidden={activeTab !== 'confirmation'}>
+      <div id="detail-panel-confirmation" role="region" aria-label="负责人确认" hidden={activeTab !== 'final'}>
+      <h2>负责人确认</h2>
       <FinalConfirmationPanel
         videoId={video.id}
         videoStatus={video.status}
@@ -407,7 +449,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         allowedActions={allowedActions}
       />
       </div>
-      <div hidden={activeTab !== 'logs'}>
+      <div id="detail-panel-logs" role="tabpanel" aria-labelledby="detail-tab-logs" hidden={activeTab !== 'logs'}>
       <section className="panel section-gap">
         <h2>操作日志</h2>
         <table className="table">

@@ -10,7 +10,7 @@ import { localBrowserEnvironment } from './local-browser-environment.mjs';
 const { base, target, childEnv } = localBrowserEnvironment(process.env, 'RELEASE_BROWSER_BASE_URL', 'http://127.0.0.1:3107');
 const executable = execFileSync('which', ['playwright'], { encoding: 'utf8', env: childEnv }).trim();
 const { chromium } = createRequire(realpathSync(executable))('playwright');
-const output = browserOutput('release'); await mkdir(output, { recursive: true });
+const output = process.env.QC_BROWSER_OUTPUT_DIR ? resolve(process.env.QC_BROWSER_OUTPUT_DIR, 'release') : browserOutput('release'); await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, env: childEnv });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
@@ -60,6 +60,9 @@ try {
     else if (u.pathname.endsWith('/result-review/latest')) body = { review: null, videoStatus: state };
     else if (u.pathname.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: state };
     else if (u.pathname.endsWith('/final-evaluation/latest')) body = { evaluation: null, videoStatus: state };
+    else if (u.pathname.endsWith('/v11-content-review/latest')) body = { group: null };
+    else if (u.pathname.endsWith('/v11-workflow')) body = { revision: null };
+    else if (u.pathname.endsWith('/ratings/latest')) body = { data: null, comprehensive: null };
     else if (u.pathname.includes('/history')) body = { items: [], nextCursor: null };
     else throw Error(`Unexpected fixture request: ${route.request().method()} ${u.pathname}`);
     return route.fulfill({ json: body });
@@ -87,6 +90,7 @@ try {
   await page.waitForFunction(() => document.querySelector('video').currentTime >= 0.2);
   await page.locator('video').evaluate(video => video.pause());
   await page.evaluate(() => { window.__task5Player = document.querySelector('video'); window.__task5Player.currentTime = 0.5; });
+  await page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^历史评估$/ }) }).locator('summary').click();
   await page.getByRole('button', { name: '触发内容评估', exact: true }).click();
   await page.getByText('弱网恢复后的任务 A 内容结果').waitFor({ timeout: 25000 });
   assert.equal(triggers, 1, 'network recovery must never issue another paid-trigger POST');
@@ -94,9 +98,9 @@ try {
   assert.equal(await page.evaluate(() => window.__task5Player === document.querySelector('video')), true, 'polling must retain player DOM');
   assert.ok(await page.locator('video').evaluate(video => video.currentTime) >= 0.4);
 
-  await page.getByRole('tab', { name: '主管审核', exact: true }).click();
+  await page.getByRole('tab', { name: '评估结果', exact: true }).click();
   await page.locator('#supervisor-comment').fill('尚未保存的本地主管意见');
-  await page.getByRole('tab', { name: '内容评估', exact: true }).click();
+  await page.getByRole('tab', { name: '数据表现', exact: true }).click();
   const oldSignatures = signatures;
   // The transport TTL is tested with real local HTTP by release-acceptance.integration.spec.ts.
   // This event isolates the mounted player's error/reload contract while retaining currentTime.
@@ -107,7 +111,7 @@ try {
   await page.waitForFunction(() => document.querySelector('video').currentTime >= 0.65);
   await page.locator('video').evaluate(video => video.pause());
   assert.equal(signatures, oldSignatures + 1, 'one media error performs one authorized URL renewal');
-  await page.getByRole('tab', { name: '主管审核', exact: true }).click();
+  await page.getByRole('tab', { name: '评估结果', exact: true }).click();
   assert.equal(await page.locator('#supervisor-comment').inputValue(), '尚未保存的本地主管意见');
   assert.equal(await page.evaluate(() => window.__task5Player === document.querySelector('video')), true);
   await page.screenshot({ path: resolve(output, 'desktop-player-draft.png'), fullPage: true });

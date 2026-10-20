@@ -11,6 +11,7 @@
     "test": "node --import tsx --test src/tests/*.spec.ts",
     "test:browser:v101": "node scripts/v101-browser-acceptance.mjs",
     "test:browser:v11": "node scripts/v11-browser-acceptance.mjs",
+    "test:browser:ui2": "node scripts/ui2-browser-acceptance.mjs",
     "test:browser:video-month": "node scripts/video-list-month-browser-acceptance.mjs"
   },
   "dependencies": {
