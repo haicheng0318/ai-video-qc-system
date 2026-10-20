@@ -11,11 +11,6 @@ type Video = { id: string; title: string; brand?: string; product?: string; stat
 type VideoList = { items: Video[]; total?: number; page?: number; pageSize?: number };
 type ViewMode = 'list' | 'card';
 
-function currentShanghaiMonth() {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
-  return `${parts.find((part) => part.type === 'year')?.value}-${parts.find((part) => part.type === 'month')?.value}`;
-}
-
 export default function VideosPage() {
   return <Suspense fallback={<main className="page"><p className="muted">正在加载视频列表…</p></main>}><VideoListPage /></Suspense>;
 }
@@ -26,7 +21,7 @@ function VideoListPage() {
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [user, setUser] = useState<ApiUser | null>(null), [viewMode, setViewMode] = useState<ViewMode>('list');
   const names = ['search', 'status', 'platform', 'videoType', 'month', 'dateFrom', 'dateTo', 'contentRating', 'dataRating', 'comprehensiveRating', 'creatorId'] as const;
-  const values = Object.fromEntries(names.map((name) => [name, params.get(name) || (name === 'month' ? currentShanghaiMonth() : '')])) as Record<(typeof names)[number], string>;
+  const values = Object.fromEntries(names.map((name) => [name, params.get(name) || ''])) as Record<(typeof names)[number], string>;
   const page = Math.max(1, Math.min(10000, Number(params.get('page')) || 1)), pageSize = 20;
   const queryString = new URLSearchParams({ ...Object.fromEntries(names.filter((name) => values[name]).map((name) => [name, values[name]])), page: String(page), pageSize: String(pageSize) }).toString();
 
@@ -57,7 +52,7 @@ function VideoListPage() {
     <div className="page-title"><div><p className="eyebrow">WORK QUEUE</p><h1>视频列表</h1><p className="muted">按本人数据范围查看评估、复核与下一步状态。</p></div><Link className="button" href="/videos/new">上传视频</Link></div>
     <section className="panel">
       <div className="list-toolbar"><div className="segmented" aria-label="显示方式"><button type="button" className={viewMode === 'list' ? 'active' : ''} onClick={() => changeView('list')}>列表</button><button type="button" className={viewMode === 'card' ? 'active' : ''} onClick={() => changeView('card')}>卡片</button></div></div>
-      <form className="filter-grid v11-filter-grid" onSubmit={submit}>
+      <form key={params.toString()} className="filter-grid v11-filter-grid" onSubmit={submit}>
         <Field label="搜索"><input name="search" defaultValue={values.search} placeholder="标题、品牌、产品或平台" /></Field>
         <Field label="状态"><select name="status" defaultValue={values.status}><option value="">全部状态</option>{Object.entries(videoStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
         <Field label="平台"><input name="platform" defaultValue={values.platform} /></Field>
