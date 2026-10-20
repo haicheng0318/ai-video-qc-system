@@ -23,7 +23,7 @@ export class AuthService {
         await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${user.id}::uuid FOR UPDATE`);
         const current = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
         this.assertActive(current);
-        if (current.passwordHash !== user.passwordHash || (dto.adminOnly && current.role !== 'admin')) throw new UnauthorizedException('Invalid account or password.');
+        if (current.account !== dto.account || current.passwordHash !== user.passwordHash || (dto.adminOnly && current.role !== 'admin')) throw new UnauthorizedException('Invalid account or password.');
         await tx.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
         await tx.operationLog.create({ data: { userId: user.id, actionType: 'login_success', result: 'success' } });
         return this.issue(tx, current, meta);

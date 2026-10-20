@@ -1,8 +1,9 @@
-import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsEnum, IsIn, IsInt, IsISO8601, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsISO8601, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { UserRole, UserStatus } from '@prisma/client';
 import { QuotaKind, QuotaPeriod, quotaKinds } from '../quotas/quotas.service';
-export class ReasonDto { @IsString() @MinLength(1) @MaxLength(500) reason: string; }
+import { normalizeAdminAccount } from './admin-credential-validation';
+export class ReasonDto { @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(500) reason: string; }
 export class QuotaInputDto {
   @IsIn(quotaKinds) kind: QuotaKind;
   @IsIn(['daily', 'monthly', 'lifetime']) period: QuotaPeriod;
@@ -15,23 +16,29 @@ export class AdjustQuotaDto extends ReasonDto {
   @IsString() @MinLength(1) @MaxLength(200) businessKey: string;
 }
 export class CreateUserDto extends ReasonDto {
-  @IsString() @Matches(/^[a-zA-Z0-9][a-zA-Z0-9_.@-]{2,99}$/) account: string;
+  @Transform(({ value }) => normalizeAdminAccount(value)) @IsString() @MinLength(1) @MaxLength(100) @Matches(/^[^\p{Cc}\p{Cf}\p{Cs}]*$/u) account: string;
   @IsString() @MinLength(1) @MaxLength(100) name: string;
   @IsEnum(UserRole) role: UserRole;
   @IsOptional() @IsString() @MaxLength(100) department?: string | null;
   @IsOptional() @IsUUID() managerId?: string | null;
   @IsOptional() @IsISO8601({ strict: true }) expiresAt?: string | null;
   @IsOptional() @IsString() @MaxLength(128) initialPassword?: string;
+  @ValidateIf((_o, value) => value !== undefined) @IsBoolean() mustChangePassword?: boolean;
   @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => QuotaInputDto) quotas?: QuotaInputDto[];
 }
 export class BatchUsersDto { @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => CreateUserDto) users: CreateUserDto[]; }
 export class UpdateUserDto extends ReasonDto {
+  @ValidateIf((_o, value) => value !== undefined) @Transform(({ value }) => value === undefined ? value : normalizeAdminAccount(value)) @IsString() @MinLength(1) @MaxLength(100) @Matches(/^[^\p{Cc}\p{Cf}\p{Cs}]*$/u) account?: string;
   @ValidateIf((_o, value) => value !== undefined) @IsString() @MinLength(1) @MaxLength(100) name?: string;
   @ValidateIf((_o, value) => value !== undefined) @IsEnum(UserRole) role?: UserRole;
   @ValidateIf((_o, value) => value !== undefined) @IsEnum(UserStatus) status?: UserStatus;
   @IsOptional() @IsString() @MaxLength(100) department?: string | null;
   @IsOptional() @IsUUID() managerId?: string | null;
   @IsOptional() @IsISO8601({ strict: true }) expiresAt?: string | null;
+}
+export class SetPasswordDto extends ReasonDto {
+  @IsString() @MinLength(8) @MaxLength(128) password: string;
+  @IsBoolean() mustChangePassword: boolean;
 }
 export class UsersQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;

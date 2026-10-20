@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch, ApiUser } from '@/lib/api';
 
@@ -11,6 +11,13 @@ export function LoginForm({ adminOnly = false }: { adminOnly?: boolean }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [credentialNotice, setCredentialNotice] = useState('');
+  useEffect(() => {
+    if (!adminOnly) return;
+    const notice = new URLSearchParams(window.location.search).get('notice');
+    if (notice === 'account_changed') setCredentialNotice('登录账号已修改，请使用新账号重新登录。');
+    if (notice === 'password_changed') setCredentialNotice('密码已修改，请使用新密码重新登录。');
+  }, [adminOnly]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,6 +48,7 @@ export function LoginForm({ adminOnly = false }: { adminOnly?: boolean }) {
         <p className="eyebrow">AI QC / V1.1</p>
         <h2 id="login-title">{adminOnly ? '管理员登录' : '登录工作台'}</h2>
         <p className="muted">{adminOnly ? '仅管理员账号可进入后台管理。' : '使用内容中台账号继续。'}</p>
+        {credentialNotice ? <p className="success" role="status">{credentialNotice}</p> : null}
         <form onSubmit={onSubmit} className="auth-form">
           <div className="form-field">
             <label htmlFor="account">账号</label>
