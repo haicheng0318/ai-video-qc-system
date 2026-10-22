@@ -25,6 +25,22 @@ test('legacy retry reconstructs only durable result/final foreign keys', async (
   }
 });
 
+test('legacy content jobs cannot be retried into a second formal scoring channel', async () => {
+  let legacyTriggerCalled = false;
+  const service = new AdminOperationsService(
+    { evaluationJob: { findUnique: async () => ({ id: 'job', videoId: 'video', status: 'failed', stage: 'content', inputRefs: {} }) } } as any,
+    { withAdminRetry: async (_o: any, _u: any, _r: any, callback: any) => callback() } as any,
+    { triggerContentReview: async () => { legacyTriggerCalled = true; } } as any,
+    {} as any,
+    {} as any,
+  );
+  await assert.rejects(
+    service.retry('job', { reason: 'recover', confirmed: true }, { id: 'admin' } as any),
+    /Legacy content evaluation retries are disabled/,
+  );
+  assert.equal(legacyTriggerCalled, false);
+});
+
 test('approved settings strictly accept bounded policy values and reject unsafe fields', () => {
   const cases = { site: { name: '内容质检', notice: '' }, visitor_defaults: { validDays: 7, uploadCount: 5, storageBytes: 1048576, contentEvaluations: 3 }, retention: { temporaryHours: 24, auditDays: 365 }, alerts: { workerStaleSeconds: 120, queueWaitSeconds: 600, expiryWarningDays: 7 }, video_options: { platforms: ['抖音'], videoTypes: ['product_card'] }, evaluation_parameters: { stage: 'result', modelName: 'qwen3.5-plus', maxOutputTokens: 4000 } };
   for (const [key, value] of Object.entries(cases)) { assert.deepEqual(validateSetting(key, value), value); assert.throws(() => validateSetting(key, { ...value, apiKey: 'no' })); }

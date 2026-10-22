@@ -11,6 +11,15 @@ test('video detail exposes V1.1 runs, ratings, hold and appeal without replacing
   assert.match(panel, /reason\.trim\(\)\.length < 10/);
 });
 
+test('video detail uses V1.1 as the only active content evaluation trigger', async () => {
+  const detail = await readFile(resolve(__dirname, '../../app/videos/[id]/page.tsx'), 'utf8');
+  const panel = await readFile(resolve(__dirname, '../components/v11-evaluation-panel.tsx'), 'utf8');
+  assert.doesNotMatch(detail, /\/content-review`, \{ method: 'POST' \}/);
+  assert.match(panel, /\/v11-content-review/);
+  assert.match(panel, /canTrigger/);
+  assert.match(detail, /旧版历史评分，不参与当前 V1\.1 正式流程/);
+});
+
 test('V1.1 benchmark UI requires administrator creation and explicit approval', async () => {
   const panel = await readFile(resolve(__dirname, '../components/v11-benchmark-panel.tsx'), 'utf8');
   assert.match(panel, /user\?\.role === 'admin'/);

@@ -21,6 +21,7 @@ function createHarness(options: {
   missingVideo?: boolean;
   status?: VideoStatus;
   hasSucceededAi?: boolean;
+  hasActiveV11Decision?: boolean;
   existingReview?: boolean;
   serialTransactions?: boolean;
 } = {}) {
@@ -67,6 +68,17 @@ function createHarness(options: {
         id: 'ai-review', status: AiReviewStatus.succeeded,
       },
     },
+    v11WorkflowRevision: {
+      findFirst: async () => options.hasActiveV11Decision === false ? null : {
+        id: 'workflow-v11', activeContentDecisionId: 'decision-v11',
+      },
+    },
+    v11EvaluationDecision: {
+      findFirst: async () => options.hasActiveV11Decision === false ? null : {
+        id: 'decision-v11', inputComplete: true, stable: true, complianceStatus: 'clear',
+        group: { videoId, shadowMode: false },
+      },
+    },
   };
   let queue = Promise.resolve();
   const runTransaction = async (callback: (client: typeof transaction) => Promise<unknown>) => {
@@ -103,11 +115,18 @@ test('non-pending-supervisor-review video returns 409', async () => {
   );
 });
 
-test('missing succeeded content review returns 409', async () => {
+test('missing current formal V1.1 content decision returns 409', async () => {
   await assert.rejects(
-    createHarness({ hasSucceededAi: false }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
+    createHarness({ hasActiveV11Decision: false }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
     ConflictException,
   );
+});
+
+test('current formal V1.1 content decision allows supervisor review without a legacy AI content review', async () => {
+  const harness = createHarness({ hasSucceededAi: false, hasActiveV11Decision: true });
+  const result = await harness.service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {});
+  assert.equal(result.decision, SupervisorReviewDecision.ApprovedForPublish);
+  assert.equal(harness.video.status, VideoStatus.approved_for_publish);
 });
 
 test('revision required without comment returns 400', async () => {

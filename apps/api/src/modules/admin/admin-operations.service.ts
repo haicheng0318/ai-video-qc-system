@@ -101,7 +101,9 @@ export class AdminOperationsService {
         if (review?.videoId !== old.videoId || !review.ruleEngineResultId) throw new ConflictException('Original rule source is unavailable.');
         refs.ruleEngineResultId = review.ruleEngineResultId;
       }
-      if (old.stage === 'content') return this.content.triggerContentReview(old.videoId, actor, {});
+      if (old.stage === 'content') {
+        throw new ConflictException('Legacy content evaluation retries are disabled. Start a formal V1.1 content review instead.');
+      }
       if (old.stage === 'result') return this.result.trigger(old.videoId, { resultMetricId: refs.resultMetricId }, actor, {});
       if (old.stage === 'final') return this.final.trigger(old.videoId, { ruleEngineResultId: refs.ruleEngineResultId }, actor, {});
       throw new ConflictException('Unsupported stage.');

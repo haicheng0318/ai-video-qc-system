@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   Get,
   NotFoundException,
@@ -11,8 +12,6 @@ import {
   UseGuards,
   UseInterceptors,
   Body,
-  HttpCode,
-  HttpStatus,
   Query,
   ParseUUIDPipe,
 } from '@nestjs/common';
@@ -117,16 +116,14 @@ export class VideosController {
   }
 
   @Post(':id/content-review')
-  @HttpCode(HttpStatus.ACCEPTED)
   contentReview(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthenticatedUser,
-    @Req() request: Request,
+    @Param('id') _id: string,
+    @CurrentUser() _user: AuthenticatedUser,
+    @Req() _request: Request,
   ) {
-    return this.contentReviewService.triggerContentReview(id, user, {
-      ipAddress: request.ip,
-      userAgent: request.headers['user-agent'],
-    });
+    throw new ConflictException(
+      'Legacy content evaluation is read-only. Use the V1.1 content review endpoint.',
+    );
   }
 
   @Get(':id/content-review/latest')

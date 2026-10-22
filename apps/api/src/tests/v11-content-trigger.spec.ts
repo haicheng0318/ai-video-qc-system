@@ -14,7 +14,7 @@ const ids = {
   workflow: '20000000-0000-4000-8000-000000000004',
 };
 
-async function createHarness() {
+async function createHarness(options: { shadowMode?: boolean; workflowShadowMode?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'v11-pilot-trigger-'));
   const path = join(directory, 'fixture.mp4');
   await writeFile(path, 'same frozen media bytes');
@@ -22,6 +22,7 @@ async function createHarness() {
   const inputs: any[] = [];
   const runs: any[] = [];
   const jobs: any[] = [];
+  let shadowMode = options.shadowMode ?? true;
   let sequence = 10;
   const id = () => `20000000-0000-4000-8000-${String(sequence++).padStart(12, '0')}`;
   const video = {
@@ -43,12 +44,23 @@ async function createHarness() {
     relatedRequirement: null,
     status: VideoStatus.submitted,
   };
-  const workflow = { id: ids.workflow, videoId: ids.video, ownerId: ids.owner, revision: 1, status: 'current' };
+  let workflow: any = {
+    id: ids.workflow, videoId: ids.video, ownerId: ids.owner, revision: 1, status: 'current',
+    policySnapshot: options.workflowShadowMode === undefined ? {} : { shadowMode: options.workflowShadowMode },
+  };
+  const activeDecision = options.workflowShadowMode === undefined ? null : {
+    id: '20000000-0000-4000-8000-000000000099',
+    group: { shadowMode: options.workflowShadowMode },
+  };
+  if (activeDecision) workflow.activeContentDecisionId = activeDecision.id;
   const tx: any = {
     $queryRaw: async () => [],
     v11EvaluationGroup: {
       findFirst: async ({ where }: any) => {
         const group = groups.slice().reverse().find((candidate) => candidate.ownerId === where.ownerId
+          && candidate.shadowMode === where.shadowMode
+          && candidate.independent === where.independent
+          && candidate.pilotRun === where.pilotRun
           && ['queued', 'running', 'review_required', 'adopted'].includes(candidate.status)
           && inputs.find((input) => input.id === candidate.inputRevisionId)?.evaluationFingerprint === where.inputRevision.evaluationFingerprint);
         return group ? { ...group, runs: runs.filter((run) => run.groupId === group.id) } : null;
@@ -58,6 +70,7 @@ async function createHarness() {
         groups.push(group);
         return group;
       },
+      updateMany: async () => ({ count: 0 }),
     },
     v11EvaluationInputRevision: {
       findFirst: async () => inputs.at(-1) ?? null,
@@ -69,7 +82,14 @@ async function createHarness() {
     },
     v11WorkflowRevision: {
       findFirst: async () => workflow,
-      create: async () => workflow,
+      update: async ({ data }: any) => { Object.assign(workflow, data); return workflow; },
+      create: async ({ data }: any) => {
+        workflow = { id: id(), status: 'current', ...data };
+        return workflow;
+      },
+    },
+    v11EvaluationDecision: {
+      findUnique: async () => activeDecision,
     },
     v11EvaluationRun: {
       create: async ({ data }: any) => {
@@ -77,10 +97,17 @@ async function createHarness() {
         runs.push(run);
         return run;
       },
+      updateMany: async () => ({ count: 0 }),
+    },
+    video: {
+      update: async ({ data }: any) => {
+        Object.assign(video, data);
+        return video;
+      },
     },
   };
   const db: any = {
-    runtimeSetting: { findUnique: async () => ({ value: { enabled: true, shadowMode: true } }) },
+    runtimeSetting: { findUnique: async () => ({ value: { enabled: true, shadowMode } }) },
     video: { findUnique: async () => video },
     aiModelConfig: { findFirst: async () => null },
     $transaction: async (callback: (client: any) => unknown) => callback(tx),
@@ -107,12 +134,55 @@ async function createHarness() {
     inputs,
     runs,
     jobs,
+    setShadowMode: (value: boolean) => { shadowMode = value; },
+    getWorkflow: () => workflow,
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
 }
 
+test('formal V1.1 trigger becomes the authoritative content workflow and marks the video reviewing', async () => {
+  const harness = await createHarness({ shadowMode: false });
+  try {
+    const started = await harness.service.trigger(ids.video, { id: ids.owner, role: UserRole.director } as any, {});
+    assert.equal(started.shadowMode, false);
+    assert.equal((await harness.db.video.findUnique()).status, VideoStatus.ai_content_reviewing);
+    assert.equal(harness.groups[0].triggerReason, 'formal_manual');
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('formal cutover supersedes the shadow workflow revision before creating the new group', async () => {
+  const harness = await createHarness({ shadowMode: false, workflowShadowMode: true });
+  try {
+    const previousWorkflowId = harness.getWorkflow().id;
+    const started = await harness.service.trigger(ids.video, { id: ids.owner, role: UserRole.director } as any, {});
+    assert.notEqual(harness.getWorkflow().id, previousWorkflowId);
+    assert.equal(harness.getWorkflow().revision, 2);
+    assert.equal(harness.getWorkflow().policySnapshot.shadowMode, false);
+    assert.equal(harness.groups.find((group) => group.id === started.groupId)?.workflowRevisionId, harness.getWorkflow().id);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('formal trigger never reuses a historical shadow or independent pilot group', async () => {
+  const harness = await createHarness({ shadowMode: false });
+  const admin = { id: ids.admin, role: UserRole.admin } as any;
+  try {
+    const pilot = await harness.service.triggerPilot(ids.video, { bypassReason: '正式切换前的独立影子验证样本' }, admin, {});
+    const formal = await harness.service.trigger(ids.video, admin, {});
+    assert.notEqual(formal.groupId, pilot.groupId);
+    assert.equal(harness.groups.find((group) => group.id === pilot.groupId)?.shadowMode, true);
+    assert.equal(harness.groups.find((group) => group.id === formal.groupId)?.shadowMode, false);
+    assert.equal(formal.duplicate, false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('normal V1.1 triggers deduplicate while admin pilot triggers create independent identities with the same fingerprint', async () => {
-  const harness = await createHarness();
+  const harness = await createHarness({ shadowMode: false });
   const admin = { id: ids.admin, role: UserRole.admin } as any;
   try {
     const normal = [
@@ -135,10 +205,25 @@ test('normal V1.1 triggers deduplicate while admin pilot triggers create indepen
     const pilotGroups = harness.groups.filter((group) => group.pilotRun);
     assert.equal(pilotGroups.length, 3);
     assert.ok(pilotGroups.every((group) => group.independent && group.bypassReason));
+    assert.ok(pilotGroups.every((group) => group.shadowMode === true));
     const pilotFingerprints = pilotGroups.map((group) => harness.inputs.find((input) => input.id === group.inputRevisionId).evaluationFingerprint);
     assert.equal(new Set(pilotFingerprints).size, 1);
     assert.equal(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).length, 3);
     assert.ok(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).every((job) => job.maxAttempts === 1));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('ordinary trigger refuses shadow policy so business users cannot create a second scoring channel', async () => {
+  const harness = await createHarness({ shadowMode: true });
+  try {
+    await assert.rejects(
+      harness.service.trigger(ids.video, { id: ids.owner, role: UserRole.director } as any, {}),
+      /V1.1 formal content evaluation is not enabled/,
+    );
+    assert.equal(harness.groups.length, 0);
+    assert.equal(harness.jobs.length, 0);
   } finally {
     await harness.cleanup();
   }

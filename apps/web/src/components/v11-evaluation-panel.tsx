@@ -3,13 +3,14 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { ApiUser, apiFetch } from '@/lib/api';
 import { DetailSummary } from '@/components/ui/detail-summary';
+import { startStatusPolling } from '@/lib/status-polling';
 
 type Run = { id: string; runNumber: number; runRole: string; status: string; totalScore: string | number | null; contentRating: string | null; stale: boolean };
 type ContentState = { group: null | { status: string; shadowMode: boolean; runs: Run[]; decision: null | { id: string; totalScore: string | number; contentRating: string; complianceStatus: string; inputComplete: boolean; stable: boolean; decisionSource: string; adoptionMethod: string }; workflowRevision: { revision: number } } };
 type WorkflowState = { revision: null | { revision: number; holds: Array<{ id: string; reason: string }>; appeals: Array<{ id: string; reason: string }> } };
 type RatingsState = { data: null | { dataRating: string | null; dataSufficiency: string }; comprehensive: null | { id: string; comprehensiveRating: string | null; requiresAdminReview: boolean; decisionSource: string | null; finalStatus: string | null; performanceEligible: boolean } };
 
-export function V11EvaluationPanel({ videoId }: { videoId: string }) {
+export function V11EvaluationPanel({ videoId, canTrigger }: { videoId: string; canTrigger: boolean }) {
   const [content, setContent] = useState<ContentState | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
   const [ratings, setRatings] = useState<RatingsState | null>(null);
@@ -20,6 +21,7 @@ export function V11EvaluationPanel({ videoId }: { videoId: string }) {
   const [performanceEligible, setPerformanceEligible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [trackedJobId, setTrackedJobId] = useState<string | null>(null);
   const load = useCallback(async () => {
     const results = await Promise.allSettled([
       apiFetch<ContentState>(`/api/videos/${videoId}/v11-content-review/latest`),
@@ -34,6 +36,17 @@ export function V11EvaluationPanel({ videoId }: { videoId: string }) {
     if (results.every((result) => result.status === 'rejected')) setError('V1.1 评估信息暂时不可用。');
   }, [videoId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!trackedJobId) return;
+    return startStatusPolling<{ status: string }>({
+      load: (signal) => apiFetch(`/api/evaluation-jobs/${trackedJobId}`, { signal, cache: 'no-store' }),
+      isTerminal: (value) => ['succeeded', 'failed', 'needs_attention', 'uncertain'].includes(value.status),
+      onValue: () => void load(),
+      onTerminal: () => { setTrackedJobId(null); void load(); },
+      onError: () => setError('评估状态查询暂时失败，后台任务不受影响。'),
+      onPause: () => setError('自动查询已暂停，请点击刷新获取最新状态。'),
+    });
+  }, [trackedJobId, load]);
   async function run(path: string) {
     setBusy(true); setError('');
     try { await apiFetch(path, { method: 'POST' }); await load(); }
@@ -81,9 +94,10 @@ export function V11EvaluationPanel({ videoId }: { videoId: string }) {
   const decision = content?.group?.decision;
   const comprehensive = ratings?.comprehensive;
   const isAdmin = user?.role === 'admin';
+  const contentRunning = Boolean(trackedJobId || (content?.group && ['queued', 'running', 'review_required'].includes(content.group.status)));
   const canConfirmPerformance = comprehensive?.comprehensiveRating != null && ['S', 'A+', 'A', 'B'].includes(comprehensive.comprehensiveRating);
   return <section className="panel section-gap" data-testid="v11-evaluation-panel">
-    <div className="page-title"><div><h2>V1.1 稳定性评估</h2><p className="muted">{content?.group ? content.group.shadowMode ? 'Shadow 评估 · 不改变正式流程' : '正式评估' : '尚未运行 V1.1 评估'}</p></div><button className="button secondary" disabled={busy} onClick={() => void load()}>刷新</button></div>
+    <div className="page-title"><div><h2>V1.1 正式内容评估</h2><p className="muted">{content?.group ? content.group.shadowMode ? '历史 Shadow 结果 · 不参与正式流程' : '当前正式评分来源' : '尚未运行正式评估'}</p></div><button className="button secondary" disabled={busy} onClick={() => void load()}>刷新</button></div>
     <DetailSummary>
     <section className="detail-summary" aria-label="V1.1 当前评估结果">
     <h2>V1.1 评估结果 <span className="status-badge">{content?.group ? content.group.shadowMode ? 'Shadow' : '正式' : '未运行'}</span></h2>
@@ -103,7 +117,15 @@ export function V11EvaluationPanel({ videoId }: { videoId: string }) {
     {content?.group?.runs?.length ? <div className="table-scroll"><table className="table"><thead><tr><th>评估</th><th>角色</th><th>状态</th><th>分数</th><th>等级</th></tr></thead><tbody>{content.group.runs.map((item) => <tr key={item.id}><td>第 {item.runNumber} 次</td><td>{item.runRole}</td><td>{item.stale ? '已失效' : item.status}</td><td>{item.totalScore ?? '-'}</td><td>{item.contentRating || '-'}</td></tr>)}</tbody></table></div> : null}
     {workflow?.revision?.holds?.map((hold) => <p className="warning-list" key={hold.id}>流程挂起：{hold.reason}</p>)}
     {workflow?.revision?.appeals?.map((item) => <p className="warning-list" key={item.id}>异议处理中：{item.reason}</p>)}
-    <div className="button-row"><button className="button" disabled={busy} onClick={() => void run(`/api/videos/${videoId}/v11-content-review`)}>触发 V1.1 内容评估</button><button className="button secondary" disabled={busy || !decision} onClick={() => void run(`/api/v11/videos/${videoId}/data-rating`)}>计算数据等级</button><button className="button secondary" disabled={busy || !ratings?.data?.dataRating} onClick={() => void run(`/api/v11/videos/${videoId}/comprehensive-rating`)}>计算综合等级</button></div>
+    <div className="button-row">{canTrigger ? <button className="button" disabled={busy || contentRunning} onClick={async () => {
+      setBusy(true); setError('');
+      try {
+        const started = await apiFetch<{ jobId?: string }>(`/api/videos/${videoId}/v11-content-review`, { method: 'POST' });
+        setTrackedJobId(started.jobId ?? null);
+        await load();
+      } catch (cause) { setError(cause instanceof Error ? cause.message : '内容评估启动失败。'); }
+      finally { setBusy(false); }
+    }}>{contentRunning ? '评估中...' : '开始内容评估'}</button> : null}<button className="button secondary" disabled={busy || !decision} onClick={() => void run(`/api/v11/videos/${videoId}/data-rating`)}>计算数据等级</button><button className="button secondary" disabled={busy || !ratings?.data?.dataRating} onClick={() => void run(`/api/v11/videos/${videoId}/comprehensive-rating`)}>计算综合等级</button></div>
     {isAdmin && comprehensive?.requiresAdminReview ? <form onSubmit={resolveManual} className="section-gap">
       <h3>管理员人工决议</h3>
       <p className="muted">R 组合必须由管理员结合证据选择 A / B / B- / C / D，不能人工提升为 S 或 A+。</p>

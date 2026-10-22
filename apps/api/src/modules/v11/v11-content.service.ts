@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { EvaluationJob, Prisma, UserRole } from '@prisma/client';
+import { EvaluationJob, Prisma, UserRole, VideoStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { effectiveQwenModelConfig, QwenClient, QWEN_CLIENT, QwenEffectiveModelConfig } from '../ai/gemini/qwen.client';
 import { sanitizeContentReviewText } from '../ai/gemini/gemini.service';
@@ -110,6 +110,10 @@ export class V11ContentService {
     if (!isUuid(videoId)) throw new NotFoundException('Video not found.');
     const feature = await readPolicy(this.db, 'v11_content_shadow');
     if (!feature.enabled) throw new ConflictException('V1.1 content scoring shadow mode is disabled.');
+    if (feature.shadowMode && !options.pilotRun) {
+      throw new ConflictException('V1.1 formal content evaluation is not enabled.');
+    }
+    const shadowMode = options.pilotRun ? true : feature.shadowMode;
     const video = await this.db.video.findUnique({ where: { id: videoId } });
     if (!video) throw new NotFoundException('Video not found.');
     await this.permissions.assertCanTriggerContentReview(user, video, meta);
@@ -167,6 +171,9 @@ export class V11ContentService {
         where: {
           ownerId: video.creatorId,
           stage: 'content',
+          shadowMode,
+          independent: false,
+          pilotRun: false,
           status: { in: ['queued', 'running', 'review_required', 'adopted'] },
           inputRevision: { evaluationFingerprint: fingerprint },
         },
@@ -198,8 +205,26 @@ export class V11ContentService {
         },
       });
       let workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' } });
+      const activeDecision = workflow?.activeContentDecisionId
+        ? await tx.v11EvaluationDecision.findUnique({
+          where: { id: workflow.activeContentDecisionId },
+          include: { group: { select: { shadowMode: true } } },
+        })
+        : null;
+      const workflowMode = activeDecision?.group.shadowMode
+        ?? (workflow?.policySnapshot && typeof workflow.policySnapshot === 'object' && !Array.isArray(workflow.policySnapshot)
+          ? (workflow.policySnapshot as Prisma.JsonObject).shadowMode
+          : undefined);
+      if (workflow && typeof workflowMode === 'boolean' && workflowMode !== shadowMode) {
+        await tx.v11WorkflowRevision.update({ where: { id: workflow.id }, data: { status: 'superseded', supersededAt: new Date() } });
+        await tx.v11EvaluationRun.updateMany({ where: { group: { workflowRevisionId: workflow.id }, status: { in: ['pending', 'running'] } }, data: { status: 'stale', stale: true, completedAt: new Date() } });
+        await tx.v11EvaluationGroup.updateMany({ where: { workflowRevisionId: workflow.id, status: { in: ['queued', 'running', 'review_required'] } }, data: { status: 'superseded' } });
+        workflow = await tx.v11WorkflowRevision.create({
+          data: { videoId, ownerId: video.creatorId, revision: workflow.revision + 1, policySnapshot: { shadowMode, cutoverFromWorkflowRevisionId: workflow.id } },
+        });
+      }
       if (!workflow) {
-        workflow = await tx.v11WorkflowRevision.create({ data: { videoId, ownerId: video.creatorId, revision: 1, policySnapshot: { shadowMode: feature.shadowMode } } });
+        workflow = await tx.v11WorkflowRevision.create({ data: { videoId, ownerId: video.creatorId, revision: 1, policySnapshot: { shadowMode } } });
       }
       const group = await tx.v11EvaluationGroup.create({
         data: {
@@ -207,8 +232,8 @@ export class V11ContentService {
           ownerId: video.creatorId,
           inputRevisionId: inputRevision.id,
           workflowRevisionId: workflow.id,
-          triggerReason: options.pilotRun ? 'pilot_independent' : feature.shadowMode ? 'shadow_manual' : 'formal_manual',
-          shadowMode: feature.shadowMode,
+          triggerReason: options.pilotRun ? 'pilot_independent' : 'formal_manual',
+          shadowMode,
           independent: options.independent,
           pilotRun: options.pilotRun,
           bypassReason: options.bypassReason,
@@ -239,7 +264,10 @@ export class V11ContentService {
         inputRefs: { workflowRevisionId: workflow.id, inputRevisionId: inputRevision.id },
         maxAttempts: options.pilotRun ? 1 : 2,
       });
-      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_evaluation_group', targetId: group.id, actionType: options.pilotRun ? 'v11_content_pilot_started' : 'v11_content_shadow_started', result: 'started', comment: options.bypassReason ?? undefined, afterValue: { fingerprint, inputRevisionId: inputRevision.id, workflowRevision: workflow.revision, independent: options.independent, pilotRun: options.pilotRun }, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, tx);
+      if (!shadowMode && !options.pilotRun) {
+        await tx.video.update({ where: { id: videoId }, data: { status: VideoStatus.ai_content_reviewing } });
+      }
+      await this.logs.create({ userId: user.id, videoId, targetType: 'v11_evaluation_group', targetId: group.id, actionType: options.pilotRun ? 'v11_content_pilot_started' : 'v11_content_review_started', result: 'started', comment: options.bypassReason ?? undefined, afterValue: { fingerprint, inputRevisionId: inputRevision.id, workflowRevision: workflow.revision, independent: options.independent, pilotRun: options.pilotRun, shadowMode }, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, tx);
       return { duplicate: false, group: { ...group, runs: [run] }, job };
     });
     return { groupId: created.group.id, runId: created.group.runs[0]?.id, status: created.group.status, shadowMode: created.group.shadowMode, duplicate: created.duplicate, ...(created.job ? { jobId: created.job.id } : {}) };
@@ -316,6 +344,9 @@ export class V11ContentService {
         if (!inputComplete) {
           await tx.v11WorkflowHold.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, groupId: run.groupId, holdType: 'input_incomplete', reason: '关键媒体或评分维度不可观察，不能形成正式评分。' } });
           await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { status: 'hold' } });
+          if (!run.group.shadowMode) {
+            await tx.video.update({ where: { id: job.videoId }, data: { status: VideoStatus.ai_content_failed } });
+          }
           await this.jobs.finishCurrent(tx, 'succeeded');
           return;
         }
@@ -397,6 +428,9 @@ export class V11ContentService {
         if (progress.action === 'hold') {
           await tx.v11WorkflowHold.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, groupId: run.groupId, holdType: 'evaluation_instability', reason: `评估结果存在严重分歧：${progress.reason}` } });
           await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { status: 'hold' } });
+          if (!run.group.shadowMode) {
+            await tx.video.update({ where: { id: job.videoId }, data: { status: VideoStatus.ai_content_failed } });
+          }
           await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_group', targetId: run.groupId, actionType: 'v11_content_review_held', result: 'hold', comment: progress.reason }, tx);
           await this.jobs.finishCurrent(tx, 'succeeded');
           return;
@@ -435,14 +469,17 @@ export class V11ContentService {
             await tx.video.update({ where: { id: job.videoId }, data: { status: 'pending_supervisor_review' } });
           }
         }
-        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_decision', targetId: decision.id, actionType: 'v11_content_shadow_completed', result: 'success', afterValue: { contentRating: progress.contentRating, totalScore: progress.totalScore, runCount: succeeded.length } }, tx);
+        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_decision', targetId: decision.id, actionType: run.group.shadowMode ? 'v11_content_shadow_completed' : 'v11_content_review_completed', result: 'success', afterValue: { contentRating: progress.contentRating, totalScore: progress.totalScore, runCount: succeeded.length, shadowMode: run.group.shadowMode } }, tx);
         await this.jobs.finishCurrent(tx, 'succeeded');
       });
     } catch (error) {
       await this.db.$transaction(async (tx) => {
         await tx.v11EvaluationRun.updateMany({ where: { id: run.id, status: { in: ['pending', 'running'] } }, data: { status: 'failed', errorMessage: safeFailure(error), rawResponse: rawText ? { rawText: sanitizeContentReviewText(rawText, 20_000) } : undefined, completedAt: new Date() } });
         await tx.v11EvaluationGroup.updateMany({ where: { id: run.groupId, status: { in: ['queued', 'running'] } }, data: { status: 'failed' } });
-        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_run', targetId: run.id, actionType: 'v11_content_shadow_failed', result: 'failure', comment: safeFailure(error) }, tx);
+        if (!run.group.shadowMode) {
+          await tx.video.update({ where: { id: job.videoId }, data: { status: VideoStatus.ai_content_failed } });
+        }
+        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_run', targetId: run.id, actionType: run.group.shadowMode ? 'v11_content_shadow_failed' : 'v11_content_review_failed', result: 'failure', comment: safeFailure(error), afterValue: { shadowMode: run.group.shadowMode } }, tx);
         await this.jobs.finishCurrent(tx, 'failed', false, error);
       });
     }
@@ -465,6 +502,6 @@ export class V11ContentService {
       ...(workflow?.activeContentDecisionId ? {} : { orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }] }),
       include: { runs: { orderBy: { runNumber: 'asc' }, select: { id: true, runNumber: true, runRole: true, status: true, totalScore: true, contentRating: true, complianceStatus: true, stale: true, completedAt: true } }, decision: { select: { id: true, totalScore: true, contentRating: true, complianceStatus: true, inputComplete: true, stable: true, decisionSource: true, adoptionMethod: true, decidedAt: true } }, workflowRevision: { select: { revision: true, status: true } } },
     });
-    return { shadowMode: group?.shadowMode ?? true, group };
+    return { shadowMode: group?.shadowMode ?? false, group };
   }
 }

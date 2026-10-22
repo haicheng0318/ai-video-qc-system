@@ -1,10 +1,10 @@
 # AI短视频质检评估系统 V1.0
 
-> V1.1 pilot implementation follows frozen product baseline `AIQC-PRD-V1.1-R1`. It is additive: legacy model results and `content-score-v2` remain readable and are never overwritten.
+> V1.1 follows frozen product baseline `AIQC-PRD-V1.1-R1`. The eight-dimension `V11EvaluationDecision` is the only current formal content score. Legacy `AiContentReview` and `content-score-v2` records remain readable and are never overwritten, but they no longer drive new content-review workflow decisions.
 
-## V1.1 评估稳定性试运行
+## V1.1 正式评估
 
-- `v11_content_shadow` is disabled by default. When enabled in Shadow mode, the new eight-dimension result does not change video status, performance eligibility, cases, or formal dashboard figures.
+- `v11_content_shadow` defaults to enabled formal mode (`shadowMode=false`). Shadow mode remains available only for controlled comparisons and never changes video status, performance eligibility, cases, or formal dashboard figures.
 - Qwen only emits observable facts, evidence, 0-4 anchors, observations and an independent compliance status. The backend calculates the weighted score and A+/A/B/B-/C/D content rating.
 - Every evaluation freezes file SHA256, metadata, media manifest, model settings and prompt/schema/rubric/rating/preprocessing/reference versions into an owner-scoped fingerprint.
 - The first 50 eligible samples, boundary scores, first A+, deterministic 10% sample, fact conflicts, history drift and appeals use independent blind review. Severe disagreement enters Hold rather than being averaged away.
@@ -12,7 +12,8 @@
 - `manualContentReviewEnabled` and `manualFinalConfirmationEnabled` are admin-only, versioned runtime policies. Safety gates cannot be bypassed.
 - Data ratings use an approved V1.1 Benchmark Profile plus the latest immutable metric snapshot. Qwen may explain data but cannot decide the rating.
 - Comprehensive ratings use the frozen 42-cell matrix. `R` requires administrator resolution and cannot be manually resolved to S or A+.
-- V1.1 migrations are four additive migrations after the 13-migration formal baseline. They have no destructive rebuild or historical re-rating step.
+- Supervisor review is bound to the active formal `V11EvaluationDecision`; a Shadow, stale, incomplete or unstable result cannot enter manual review.
+- The V1.1 cutover migration is additive. It binds new supervisor reviews to their formal content decision without rewriting legacy review history or re-rating old videos.
 
 Real Qwen stability and accuracy experiments are not part of automated development tests. See [REAL_QWEN_PILOT_PLAN](docs/REAL_QWEN_PILOT_PLAN.md); paid calls require separate authorization.
 
@@ -45,7 +46,7 @@ V1.01 本地实现、集成与发布准备见 [本地验收与发布手册](docs
 - 通过后端鉴权接口访问视频文件
 - `operation_logs` 记录登录成功/失败、视频上传、查看详情、访问文件、权限拒绝
 
-### 第二阶段：Qwen-Omni 内容质量评估
+### 第二阶段：旧版 Qwen-Omni 内容质量评估（历史兼容）
 
 - 本地视频临时上传到私有阿里云 OSS，并使用一小时短时签名 URL 调用百炼 Qwen3.5-Omni-Plus
 - 模型调用结束后立即删除 OSS 临时对象；清理失败时评估任务进入失败状态
@@ -53,7 +54,7 @@ V1.01 本地实现、集成与发布准备见 [本地验收与发布手册](docs
 - 结构化 JSON Schema 与后端 Zod 双重校验
 - 后端按版本化的 `content-score-v2` 权重和硬边界确定性计算内容总分与等级；维度评分、计算明细、版本和审计原文一并落库
 - 历史内容评估保留原值并标记为 `legacy-model-score-v1`，不自动覆盖或重评；不同版本的分数不可直接用于纵向绩效比较
-- HTTP 202 异步触发与 latest 状态查询
+- 历史接口和记录继续支持只读查询；新业务触发统一进入 V1.1 正式八维评估
 - running 任务重复触发保护与超时任务回收
 - 评估成功、失败和回收操作日志
 - Qwen-Omni 只承担内容质量评估，与后续的千问数据复盘、规则引擎和最终评定保持模块隔离

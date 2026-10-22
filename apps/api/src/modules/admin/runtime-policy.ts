@@ -20,7 +20,7 @@ export const settingDefaults = {
   visitor_defaults: { validDays: 7, uploadCount: 5, storageBytes: 1073741824, contentEvaluations: 3 },
   retention: { temporaryHours: 24, auditDays: 365 },
   alerts: { workerStaleSeconds: 120, queueWaitSeconds: 600, expiryWarningDays: 7 },
-  v11_content_shadow: { enabled: false, shadowMode: true },
+  v11_content_shadow: { enabled: true, shadowMode: false },
   v11_workflow_gates: { manualContentReviewEnabled: true, manualFinalConfirmationEnabled: true },
 };
 export async function readPolicy<K extends keyof typeof settingDefaults>(db: any, key: K): Promise<typeof settingDefaults[K]> {
