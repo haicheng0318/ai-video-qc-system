@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, InternalServerErrorException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { UserRole, VideoStatus, VideoType } from '@prisma/client';
 import { countQualifiedInitialPilotSamples, V11ContentService } from '../modules/v11/v11-content.service';
 
@@ -102,6 +102,7 @@ async function createHarness() {
   );
   return {
     service,
+    db,
     groups,
     inputs,
     runs,
@@ -139,6 +140,34 @@ test('normal V1.1 triggers deduplicate while admin pilot triggers create indepen
     assert.equal(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).length, 3);
     assert.ok(harness.jobs.filter((job) => pilots.some((pilot) => pilot.jobId === job.id)).every((job) => job.maxAttempts === 1));
   } finally {
+    await harness.cleanup();
+  }
+});
+
+test('trigger contains technical failures, keeps sanitized server diagnostics and preserves HTTP errors', async () => {
+  const harness = await createHarness();
+  const original = Logger.prototype.error;
+  const messages: string[] = [];
+  Logger.prototype.error = function (...args: unknown[]) { messages.push(args.map(String).join(' ')); };
+  const actor = { id: ids.admin, role: UserRole.admin } as any;
+  try {
+    harness.db.runtimeSetting.findUnique = async () => { throw new Error('Prisma SQLSTATE 23514 evaluation_jobs_stage_check https://private.test/file?signature=secret'); };
+    await assert.rejects(harness.service.trigger(ids.video, actor, {}), (error: unknown) => {
+      assert.ok(error instanceof InternalServerErrorException);
+      assert.equal(error.message, 'V1.1 评估任务启动失败，请稍后重试或联系管理员。');
+      assert.doesNotMatch(JSON.stringify(error.getResponse()), /Prisma|SQLSTATE|constraint|signature/);
+      return true;
+    });
+    assert.match(messages.join(' '), /23514/);
+    assert.doesNotMatch(messages.join(' '), /signature=secret/);
+    harness.db.runtimeSetting.findUnique = async () => { throw new Error('Video file is unavailable.'); };
+    await assert.rejects(harness.service.trigger(ids.video, actor, {}), (error: unknown) =>
+      error instanceof ServiceUnavailableException && error.message === '原始视频文件当前不可用，无法发起评估。');
+    const denied = new ForbiddenException('denied');
+    harness.db.runtimeSetting.findUnique = async () => { throw denied; };
+    await assert.rejects(harness.service.trigger(ids.video, actor, {}), (error: unknown) => error === denied);
+  } finally {
+    Logger.prototype.error = original;
     await harness.cleanup();
   }
 });
