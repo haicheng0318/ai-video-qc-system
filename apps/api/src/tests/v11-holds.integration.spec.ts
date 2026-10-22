@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { ConflictException } from '@nestjs/common';
 import { PrismaClient, UserRole, VideoStatus, VideoType } from '@prisma/client';
 import { V11ContentService } from '../modules/v11/v11-content.service';
 
@@ -15,6 +16,7 @@ const createdVideoIds: string[] = [];
 after(async () => {
   if (!client) return;
   if (createdVideoIds.length) {
+    await client.v11Appeal.deleteMany({ where: { videoId: { in: createdVideoIds } } });
     await client.v11EvaluationDecision.deleteMany({ where: { group: { videoId: { in: createdVideoIds } } } });
     await client.v11WorkflowHold.deleteMany({ where: { videoId: { in: createdVideoIds } } });
     await client.v11EvaluationRun.deleteMany({ where: { group: { videoId: { in: createdVideoIds } } } });
@@ -140,4 +142,77 @@ test('one workflow revision stores appeal, instability and incomplete-input hold
     orderBy: { holdType: 'asc' },
   });
   assert.deepEqual(holds.map((hold) => hold.holdType), ['appeal', 'evaluation_instability', 'input_incomplete']);
+});
+
+test('real trigger cannot supersede a workflow with instability and incomplete-input holds', { skip: !client }, async () => {
+  const userId = randomUUID();
+  const videoId = randomUUID();
+  const workflowId = randomUUID();
+  const directory = await mkdtemp(join(tmpdir(), 'v11-mixed-hold-trigger-'));
+  const mediaPath = join(directory, 'fixture.mp4');
+  await writeFile(mediaPath, 'isolated mixed hold fixture');
+  createdUserIds.push(userId);
+  createdVideoIds.push(videoId);
+  try {
+    await client!.$transaction(async (tx) => {
+      await tx.user.create({ data: {
+        id: userId,
+        account: `mixed-${userId}`,
+        passwordHash: 'not-a-login-secret',
+        name: 'Mixed hold integration fixture',
+        role: UserRole.admin,
+      } });
+      await tx.video.create({ data: {
+        id: videoId,
+        title: 'Mixed hold integration fixture',
+        originalFileName: 'fixture.mp4',
+        filePath: mediaPath,
+        mimeType: 'video/mp4',
+        fileSizeBytes: 27,
+        videoType: VideoType.organic,
+        creatorId: userId,
+        status: VideoStatus.ai_content_failed,
+      } });
+      await tx.v11WorkflowRevision.create({ data: {
+        id: workflowId,
+        videoId,
+        ownerId: userId,
+        revision: 1,
+        policySnapshot: { shadowMode: false },
+      } });
+      await tx.v11WorkflowHold.createMany({ data: [
+        { videoId, workflowRevisionId: workflowId, holdType: 'evaluation_instability', reason: 'Instability hold' },
+        { videoId, workflowRevisionId: workflowId, holdType: 'input_incomplete', reason: 'Input hold' },
+      ] });
+    });
+
+    const service = new V11ContentService(
+      client as any,
+      { assertCanTriggerContentReview: async () => undefined } as any,
+      { create: async () => ({ id: randomUUID() }) } as any,
+      { materialize: async () => ({ path: mediaPath, cleanup: async () => undefined }) } as any,
+      { enqueue: async () => ({ id: randomUUID() }) } as any,
+      { analyzeVideo: async () => { throw new Error('model must not be called by trigger integration'); } } as any,
+    );
+    const actor = { id: userId, role: UserRole.admin } as any;
+
+    await assert.rejects(
+      service.trigger(videoId, actor, {}),
+      (error: unknown) => error instanceof ConflictException
+        && error.message === '当前流程存在其他待处理事项，请先完成后再重新评估。',
+    );
+
+    const workflows = await client!.v11WorkflowRevision.findMany({ where: { videoId } });
+    const groups = await client!.v11EvaluationGroup.count({ where: { videoId } });
+    const runs = await client!.v11EvaluationRun.count({ where: { group: { videoId } } });
+    const jobs = await client!.evaluationJob.count({ where: { videoId, stage: 'v11_content' } });
+    assert.equal(workflows.length, 1);
+    assert.equal(workflows[0].id, workflowId);
+    assert.equal(workflows[0].status, 'current');
+    assert.equal(groups, 0);
+    assert.equal(runs, 0);
+    assert.equal(jobs, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
