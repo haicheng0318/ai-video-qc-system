@@ -1,6 +1,7 @@
 import { ContentReviewPromptInput } from './gemini.types';
+import { contentReviewResponseJsonSchema } from './gemini.schema';
 
-export const CONTENT_REVIEW_PROMPT_VERSION = 'content-review-v3-deterministic-score';
+export const CONTENT_REVIEW_PROMPT_VERSION = 'content-review-v4-json-contract';
 
 export function buildContentReviewPrompt(input: ContentReviewPromptInput) {
   return `
@@ -26,6 +27,9 @@ export function buildContentReviewPrompt(input: ContentReviewPromptInput) {
 你只提供逐维度观察和证据，不计算总分，不输出S/A/B/C/D等级。总分和等级由后端确定性评分规则生成。
 主要问题必须包含维度、描述、可选时间点和严重程度；修改建议必须包含问题、建议和优先级；合规风险必须包含严重程度。
 输出必须严格符合约定的 JSON Schema，数组字段必须输出数组，不要输出 Markdown 代码块或额外解释。
+字段名必须使用下方 Schema 中定义的英文键，不得翻译字段名，也不得改用维度名称作为顶层键。
+响应 JSON Schema：
+${JSON.stringify(contentReviewResponseJsonSchema)}
 Schema 版本：${CONTENT_REVIEW_PROMPT_VERSION}
 `.trim();
 }

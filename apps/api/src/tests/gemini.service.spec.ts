@@ -297,7 +297,7 @@ test('background success persists succeeded result and safe raw response', async
     assert.equal(review?.totalScore, 80);
     assert.equal(review?.contentGrade, 'A');
     assert.equal(review?.scoringVersion, 'content-score-v2');
-    assert.equal(review?.promptVersion, 'content-review-v3-deterministic-score');
+    assert.equal(review?.promptVersion, 'content-review-v4-json-contract');
     assert.equal(harness.video.status, VideoStatus.pending_supervisor_review);
     assert.deepEqual(review?.rawResponse, {
       usage: null,
