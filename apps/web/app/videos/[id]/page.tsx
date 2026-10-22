@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import { startStatusPolling, PollingPauseReason } from '@/lib/status-polling';
 import { VideoPlayer } from '@/components/video-player';
 import { ApiUser } from '@/lib/api';
 import { loadVideoDetailRequests } from '@/lib/video-detail-loader';
@@ -31,7 +30,6 @@ import {
   videoTypeLabels,
 } from '@/lib/display-labels';
 import { formatShanghaiDateTime } from '@/lib/display-time';
-import { shouldApplyLatestSelection } from '@/lib/workflow-refresh';
 
 type ContentReviewScore = {
   id: string;
@@ -134,20 +132,13 @@ export default function VideoDetailPage({ params: pendingParams }: { params: Pro
 
 function VideoDetail({ params }: { params: { id: string } }) {
   const active = useRef(true);
-  const triggering = useRef(false);
   const [video, setVideo] = useState<VideoDetail | null>(null);
   const [contentReview, setContentReview] = useState<ContentReview | null>(null);
-  const [trackedReviewId, setTrackedReviewId] = useState<string | null>(null);
-  const [pollPause, setPollPause] = useState<PollingPauseReason | null>(null);
-  const [pollAttempt, setPollAttempt] = useState(0);
   const [error, setError] = useState('');
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewError, setReviewError] = useState('');
   const [latestError, setLatestError] = useState('');
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [supervisorReview, setSupervisorReview] = useState<SupervisorReviewView | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('content');
-  const pinnedContentReviewId = useRef<string | null>(null);
 
   const loadVideo = useCallback(async () => {
     if (!active.current) return;
@@ -159,8 +150,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
       onDetail: (value) => { if (active.current) setVideo(value); },
       onLatest: (latest) => {
         if (!active.current) return;
-        if (shouldApplyLatestSelection(pinnedContentReviewId.current, latest.review?.id)) setContentReview(latest.review);
-        if (!pinnedContentReviewId.current && latest.review?.status === 'running') pinnedContentReviewId.current = latest.review.id;
+        setContentReview(latest.review);
       },
       onLatestError: () => { if (active.current) setLatestError('评估结果暂时不可用，请稍后重试。'); },
     });
@@ -178,48 +168,6 @@ function VideoDetail({ params }: { params: { id: string } }) {
     loadVideo().catch(() => { if (active.current) setError('详情暂时无法加载，请检查网络后重试。'); });
     return () => { active.current = false; };
   }, [loadVideo]);
-
-  const running = contentReview?.status === 'running' || video?.status === 'ai_content_reviewing';
-  const pollingId = trackedReviewId ?? (running ? contentReview?.id : undefined);
-  useEffect(() => {
-    if (!pollingId) return;
-    setPollPause(null);
-    return startStatusPolling<{ review: ContentReview | null; videoStatus: string }>({
-      load: (signal) => apiFetch(`/api/videos/${params.id}/content-reviews/${pollingId}`, { signal, cache: 'no-store' }),
-      isTerminal: (value) => Boolean(value.review && ['succeeded', 'failed'].includes(value.review.status)),
-      onValue: (value) => {
-        setLatestError('');
-        setContentReview(value.review);
-        setVideo((current) => current ? { ...current, status: value.videoStatus } : current);
-      },
-      onTerminal: () => {
-        setTrackedReviewId(null);
-        void loadVideo().catch(() => { if (active.current) setLatestError('结果已更新，部分详情同步失败，请重新查询。'); });
-      },
-      onError: () => setLatestError('状态查询暂时失败，正在有限重试；后台评估不受影响。'),
-      onPause: setPollPause,
-    });
-  }, [pollingId, pollAttempt, params.id, loadVideo]);
-
-  async function triggerContentReview() {
-    if (triggering.current || running) return;
-    triggering.current = true;
-    setReviewLoading(true);
-    setReviewError('');
-    try {
-      const started = await apiFetch<{ reviewId: string }>(`/api/videos/${params.id}/content-review`, { method: 'POST' });
-      if (!active.current) return;
-      pinnedContentReviewId.current = started.reviewId;
-      setTrackedReviewId(started.reviewId);
-      setVideo((current) => current ? { ...current, status: 'ai_content_reviewing' } : current);
-    } catch (err) {
-      setReviewError(err instanceof Error ? err.message : '内容评估失败');
-      await loadVideo().catch(() => undefined);
-    } finally {
-      triggering.current = false;
-      setReviewLoading(false);
-    }
-  }
 
   if (error) {
     return (
@@ -307,10 +255,10 @@ function VideoDetail({ params }: { params: { id: string } }) {
         }}>{label}</button>)}
       </nav>
       <div id="detail-panel-content" role="tabpanel" aria-labelledby="detail-tab-content" hidden={activeTab !== 'content'}>
-      <V11EvaluationPanel videoId={video.id} />
+      <V11EvaluationPanel videoId={video.id} canTrigger={canTriggerReview} />
       <details className="panel section-gap">
         <summary>历史评估</summary>
-        <p className="muted">历史评分体系，仅用于历史记录，不参与当前 V1.1 正式结论。</p>
+        <p className="muted">旧版历史评分，不参与当前 V1.1 正式流程。</p>
         <div className="page-title">
           <div>
             <h2>Qwen-Omni 内容评估</h2>
@@ -318,19 +266,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
               {contentReview ? displayLabel(reviewStatusLabels, contentReview.status) : '未评估'}
             </p>
           </div>
-          {canTriggerReview ? (
-            <button className="button" type="button" onClick={triggerContentReview} disabled={reviewLoading}>
-              {reviewLoading ? '评估中...' : '触发内容评估'}
-            </button>
-          ) : null}
         </div>
-        {reviewError ? <p className="error">{reviewError}</p> : null}
-        {running ? <p className="muted" role="status">内容评估正在后台执行，无需刷新页面。离开页面不会取消任务。</p> : null}
-        {pollPause ? <p className="warning-list" role="status">{pollPause === 'timeout' ? '已达到本次自动查询时限。' : '网络不稳定，已暂停自动查询。'} 后台任务状态以查询结果为准，不会因本提示被判为失败。</p> : null}
-        {pollPause || latestError || (running && !pollingId) ? <button className="button secondary" type="button" onClick={() => {
-          if (pollingId) setPollAttempt((value) => value + 1);
-          else void loadVideo().catch(() => setLatestError('查询失败，请稍后重试。'));
-        }}>重新查询状态</button> : null}
+        {latestError ? <button className="button secondary" type="button" onClick={() => void loadVideo().catch(() => setLatestError('查询失败，请稍后重试。'))}>重新查询历史记录</button> : null}
         {latestError ? <p className="error">{latestError}</p> : null}
         {contentReview?.status === 'failed' ? <p className="error">{userFacingErrorMessage(contentReview.errorMessage, '内容评估失败，请稍后重试。')}</p> : null}
         {contentReview?.status === 'succeeded' ? (

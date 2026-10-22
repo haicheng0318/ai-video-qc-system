@@ -100,11 +100,17 @@ test('an exact tracked result cannot be replaced by a different latest result', 
   assert.equal(shouldApplyLatestSelection(null, 'result-b'), true);
 });
 
-test('content, result and final panels pin the explicitly tracked result id', async () => {
-  for (const file of ['../../app/videos/[id]/page.tsx', '../components/result-review-panel.tsx', '../components/final-evaluation-panel.tsx']) {
+test('formal V1.1 content evaluation tracks the exact returned job', async () => {
+  const source = await readFile(resolve(__dirname, '../components/v11-evaluation-panel.tsx'), 'utf8');
+  assert.match(source, /setTrackedJobId\(started\.jobId/);
+  assert.match(source, /\/api\/evaluation-jobs\/\$\{trackedJobId\}/);
+});
+
+test('result and final panels pin the explicitly tracked result id', async () => {
+  for (const file of ['../components/result-review-panel.tsx', '../components/final-evaluation-panel.tsx']) {
     const source = await readFile(resolve(__dirname, file), 'utf8');
     assert.match(source, /shouldApplyLatestSelection/);
-    assert.match(source, /pinned(ContentReview|Review|Evaluation)Id/);
+    assert.match(source, /pinned(Review|Evaluation)Id/);
   }
 });
 

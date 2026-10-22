@@ -216,6 +216,7 @@ model SupervisorReview {
   id                   String   @id @default(uuid()) @db.Uuid
   videoId              String   @unique @map("video_id") @db.Uuid
   reviewerId           String   @map("reviewer_id") @db.Uuid
+  v11ContentDecisionId String?  @map("v11_content_decision_id") @db.Uuid
   decision             String   @map("review_result") @db.VarChar(50)
   /// Reserved for V1.1 final confirmation; not used in phase 3.
   adjustedContentGrade String?  @map("adjusted_content_grade") @db.VarChar(20)
@@ -227,9 +228,11 @@ model SupervisorReview {
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
   video                Video    @relation(fields: [videoId], references: [id])
   reviewer             User     @relation(fields: [reviewerId], references: [id])
+  v11ContentDecision   V11EvaluationDecision? @relation(fields: [v11ContentDecisionId], references: [id], onDelete: Restrict)
 
   @@index([videoId])
   @@index([reviewerId])
+  @@index([v11ContentDecisionId])
   @@map("supervisor_reviews")
 }
 
@@ -933,6 +936,7 @@ model V11EvaluationDecision {
   workflowRevision         V11WorkflowRevision @relation(fields: [workflowRevisionId], references: [id], onDelete: Restrict)
   actor                    User?    @relation("V11DecisionActor", fields: [actorId], references: [id], onDelete: Restrict)
   comprehensiveDecisions   V11ComprehensiveDecision[]
+  supervisorReviews        SupervisorReview[]
 
   @@index([workflowRevisionId])
   @@map("v11_evaluation_decisions")

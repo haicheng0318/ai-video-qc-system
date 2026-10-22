@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AiReviewStatus, Prisma, VideoStatus } from '@prisma/client';
+import { Prisma, VideoStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
@@ -66,19 +66,31 @@ export class SupervisorReviewsService {
         const existingReview = await transaction.supervisorReview.findUnique({ where: { videoId } });
         if (existingReview) throw new ConflictException('This video has already been reviewed.');
 
-        const succeededContentReview = await transaction.aiContentReview.findFirst({
-          where: { videoId, status: AiReviewStatus.succeeded },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true },
+        const workflow = await transaction.v11WorkflowRevision.findFirst({
+          where: { videoId, status: 'current', activeContentDecisionId: { not: null } },
+          orderBy: { revision: 'desc' },
+          select: { activeContentDecisionId: true },
         });
-        if (!succeededContentReview) {
-          throw new ConflictException('A successful video content review is required.');
+        const contentDecision = workflow?.activeContentDecisionId
+          ? await transaction.v11EvaluationDecision.findFirst({
+            where: {
+              id: workflow.activeContentDecisionId,
+              inputComplete: true,
+              stable: true,
+              group: { videoId, shadowMode: false },
+            },
+            select: { id: true, complianceStatus: true },
+          })
+          : null;
+        if (!contentDecision) {
+          throw new ConflictException('A current formal V1.1 content decision is required.');
         }
 
         const created = await transaction.supervisorReview.create({
           data: {
             videoId,
             reviewerId: user.id,
+            v11ContentDecisionId: contentDecision.id,
             decision: dto.decision,
             isAllowedToPublish: dto.decision === SupervisorReviewDecision.ApprovedForPublish,
             comment: dto.comment?.trim() || null,
@@ -104,6 +116,7 @@ export class SupervisorReviewsService {
           result: 'success',
           afterValue: {
             decision: dto.decision,
+            v11ContentDecisionId: contentDecision.id,
             comment: dto.comment?.trim() || null,
           },
           comment: 'Supervisor review submitted.',
@@ -187,6 +200,7 @@ export class SupervisorReviewsService {
   private toResponse(review: {
     id: string;
     videoId: string;
+    v11ContentDecisionId: string | null;
     decision: string;
     comment: string | null;
     revisionRequirements: Prisma.JsonValue | null;
@@ -196,6 +210,7 @@ export class SupervisorReviewsService {
     return {
       id: review.id,
       videoId: review.videoId,
+      v11ContentDecisionId: review.v11ContentDecisionId,
       decision: review.decision,
       comment: review.comment,
       revisionRequirements: Array.isArray(review.revisionRequirements)

@@ -123,6 +123,7 @@ export const operationLogActionLabels: Record<string, string> = {
   video_uploaded: '上传视频', video_detail_viewed: '查看视频详情', video_file_accessed: '访问视频文件',
   ai_content_review_started: '开始内容评估', ai_content_review_recovered: '回收超时内容评估',
   ai_content_review_completed: '内容评估完成', ai_content_review_failed: '内容评估失败', ai_content_review_viewed: '查看内容评估',
+  v11_content_review_started: '开始 V1.1 正式内容评估', v11_content_review_completed: 'V1.1 正式内容评估完成', v11_content_review_failed: 'V1.1 正式内容评估失败',
   supervisor_review_approved: '主管初审通过', supervisor_review_revision_required: '主管要求返修',
   supervisor_review_invalid_content: '主管判定内容无效', supervisor_review_viewed: '查看主管初审',
   video_revision_uploaded: '上传返修版本', result_metric_snapshot_created: '创建结果数据快照',

@@ -8,7 +8,7 @@ const definitions: Record<string, { title: string; fields: Array<[string, string
   retention: { title: '保留复核策略（不会自动删除）', fields: [['temporaryHours','临时文件复核时限（小时）','number'],['auditDays','审计记录保留复核（天）','number']] },
   alerts: { title: '告警阈值', fields: [['workerStaleSeconds','执行进程心跳超时（秒）','number'],['queueWaitSeconds','排队超时（秒）','number'],['expiryWarningDays','账号到期预警（天）','number']] },
   evaluation_parameters: { title: '后续文本评估参数', fields: [['stage','评估阶段','stage'],['modelName','模型名称','text'],['maxOutputTokens','输出 Token 上限','number']] },
-  v11_content_shadow: { title: 'V1.1 内容评估灰度', fields: [['enabled','启用 V1.1 内容评估','boolean'],['shadowMode','仅影子运行，不改变正式流程','boolean']] },
+  v11_content_shadow: { title: 'V1.1 内容评估模式', fields: [['enabled','启用 V1.1 内容评估','boolean'],['shadowMode','影子模式（仅用于受控对照，不推进正式流程）','boolean']] },
   v11_workflow_gates: { title: 'V1.1 人工关卡', fields: [['manualContentReviewEnabled','保留人工内容审核','boolean'],['manualFinalConfirmationEnabled','保留人工最终确认','boolean']] },
 };
 export function PolicySettings({ data, onSaved, onDirty, onReset }: { data: any; onSaved: (key: string) => void; onDirty: (key: string) => void; onReset: (key: string) => void }) {
