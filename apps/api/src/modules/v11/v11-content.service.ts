@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { EvaluationJob, Prisma, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { effectiveQwenModelConfig, QwenClient, QWEN_CLIENT, QwenEffectiveModelConfig } from '../ai/gemini/qwen.client';
@@ -61,6 +61,7 @@ export async function countQualifiedInitialPilotSamples(tx: Pick<Prisma.Transact
 
 @Injectable()
 export class V11ContentService {
+  private readonly logger = new Logger(V11ContentService.name);
   constructor(
     private readonly db: PrismaService,
     private readonly permissions: PermissionsService,
@@ -71,7 +72,7 @@ export class V11ContentService {
   ) {}
 
   async trigger(videoId: string, user: AuthenticatedUser, meta: RequestMeta) {
-    return this.triggerInternal(videoId, user, meta, { independent: false, pilotRun: false, bypassReason: null });
+    return this.safeTrigger(videoId, user, meta, { independent: false, pilotRun: false, bypassReason: null });
   }
 
   async triggerPilot(videoId: string, body: unknown, user: AuthenticatedUser, meta: RequestMeta) {
@@ -82,7 +83,27 @@ export class V11ContentService {
     if (reason.length < 10 || reason.length > 500) {
       throw new BadRequestException('Pilot bypass reason must be 10-500 characters.');
     }
-    return this.triggerInternal(videoId, user, meta, { independent: true, pilotRun: true, bypassReason: reason });
+    return this.safeTrigger(videoId, user, meta, { independent: true, pilotRun: true, bypassReason: reason });
+  }
+
+  private async safeTrigger(videoId: string, user: AuthenticatedUser, meta: RequestMeta, options: TriggerOptions) {
+    try {
+      return await this.triggerInternal(videoId, user, meta, options);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const diagnostics: string[] = [];
+      let cause = error;
+      for (let depth = 0; cause instanceof Error && depth < 3; depth += 1) {
+        diagnostics.push(cause.stack || `${cause.name}: ${cause.message}`);
+        cause = (cause as Error & { cause?: unknown }).cause;
+      }
+      this.logger.error(`V1.1 trigger failed for video ${videoId}.`,
+        sanitizeContentReviewText(diagnostics.join('\nCaused by: '), 8000));
+      if (error instanceof Error && error.message === 'Video file is unavailable.') {
+        throw new ServiceUnavailableException('原始视频文件当前不可用，无法发起评估。');
+      }
+      throw new InternalServerErrorException('V1.1 评估任务启动失败，请稍后重试或联系管理员。');
+    }
   }
 
   private async triggerInternal(videoId: string, user: AuthenticatedUser, meta: RequestMeta, options: TriggerOptions) {
