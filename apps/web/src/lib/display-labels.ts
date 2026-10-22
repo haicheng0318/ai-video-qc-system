@@ -45,6 +45,42 @@ export const videoStatusLabels: Record<string, string> = {
   negative_case: '已纳入反面案例',
 };
 
+const holdReasonLabels: Record<string, string> = {
+  major_fact_conflict: '多次评估对关键事实判断不一致',
+  soft_fact_conflict_unresolved: '多次评估对行动提示判断仍未形成多数结论',
+  score_difference_over_ten: '多次评估分数差异较大',
+  rating_difference_two_levels: '多次评估等级差异较大',
+  major_compliance_conflict: '多次评估的合规判断存在重大分歧',
+};
+
+export function holdReasonCode(value: string) {
+  return Object.keys(holdReasonLabels).find((code) => value === code || value.endsWith(`：${code}`)) || null;
+}
+
+export function holdReasonLabel(value: string) {
+  const code = holdReasonCode(value);
+  return code ? holdReasonLabels[code] : value;
+}
+
+export function contentEvaluationDisplay(input: {
+  videoStatus: string;
+  groupStatus: string | null;
+  activeHoldCount: number;
+}) {
+  if (input.groupStatus === 'hold' && input.activeHoldCount > 0) {
+    return {
+      label: '评估结果待确认',
+      state: 'warning' as const,
+      description: 'AI评估已完成，但多次结果存在分歧，未形成正式内容决议。',
+    };
+  }
+  return {
+    label: displayLabel(videoStatusLabels, input.videoStatus),
+    state: input.videoStatus.endsWith('_failed') ? 'failed' as const : 'current' as const,
+    description: '',
+  };
+}
+
 export const reviewStatusLabels: Record<string, string> = {
   pending: '等待处理',
   running: '处理中',

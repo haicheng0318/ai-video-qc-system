@@ -204,7 +204,10 @@ export class V11ContentService {
           incompleteReasons: media.incompleteReasons,
         },
       });
-      let workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' } });
+      let workflow = await tx.v11WorkflowRevision.findFirst({
+        where: { videoId, status: 'current' },
+        include: { holds: { where: { status: 'active' }, select: { id: true, holdType: true } } },
+      });
       const activeDecision = workflow?.activeContentDecisionId
         ? await tx.v11EvaluationDecision.findUnique({
           where: { id: workflow.activeContentDecisionId },
@@ -215,16 +218,43 @@ export class V11ContentService {
         ?? (workflow?.policySnapshot && typeof workflow.policySnapshot === 'object' && !Array.isArray(workflow.policySnapshot)
           ? (workflow.policySnapshot as Prisma.JsonObject).shadowMode
           : undefined);
+      const retryableInstability = workflow
+        && !shadowMode
+        && !options.pilotRun
+        && workflowMode === false
+        && !workflow.activeContentDecisionId
+        && workflow.holds.some((hold) => hold.holdType === 'evaluation_instability');
+      if (workflow && retryableInstability) {
+        const previous = workflow;
+        await tx.v11WorkflowRevision.update({ where: { id: previous.id }, data: { status: 'superseded', supersededAt: new Date() } });
+        workflow = await tx.v11WorkflowRevision.create({
+          data: {
+            videoId,
+            ownerId: video.creatorId,
+            revision: previous.revision + 1,
+            policySnapshot: {
+              shadowMode: false,
+              retryFromWorkflowRevisionId: previous.id,
+              retryReason: 'evaluation_instability',
+            },
+          },
+          include: { holds: { where: { status: 'active' }, select: { id: true, holdType: true } } },
+        });
+      }
       if (workflow && typeof workflowMode === 'boolean' && workflowMode !== shadowMode) {
         await tx.v11WorkflowRevision.update({ where: { id: workflow.id }, data: { status: 'superseded', supersededAt: new Date() } });
         await tx.v11EvaluationRun.updateMany({ where: { group: { workflowRevisionId: workflow.id }, status: { in: ['pending', 'running'] } }, data: { status: 'stale', stale: true, completedAt: new Date() } });
         await tx.v11EvaluationGroup.updateMany({ where: { workflowRevisionId: workflow.id, status: { in: ['queued', 'running', 'review_required'] } }, data: { status: 'superseded' } });
         workflow = await tx.v11WorkflowRevision.create({
           data: { videoId, ownerId: video.creatorId, revision: workflow.revision + 1, policySnapshot: { shadowMode, cutoverFromWorkflowRevisionId: workflow.id } },
+          include: { holds: { where: { status: 'active' }, select: { id: true, holdType: true } } },
         });
       }
       if (!workflow) {
-        workflow = await tx.v11WorkflowRevision.create({ data: { videoId, ownerId: video.creatorId, revision: 1, policySnapshot: { shadowMode } } });
+        workflow = await tx.v11WorkflowRevision.create({
+          data: { videoId, ownerId: video.creatorId, revision: 1, policySnapshot: { shadowMode } },
+          include: { holds: { where: { status: 'active' }, select: { id: true, holdType: true } } },
+        });
       }
       const group = await tx.v11EvaluationGroup.create({
         data: {

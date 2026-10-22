@@ -18,6 +18,7 @@ import { FinalConfirmationPanel } from '@/components/final-confirmation-panel';
 import { V11EvaluationPanel } from '@/components/v11-evaluation-panel';
 import {
   displayLabel,
+  contentEvaluationDisplay,
   contentDimensionLabels,
   finalGradeLabels,
   operationLogActionLabels,
@@ -139,6 +140,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [supervisorReview, setSupervisorReview] = useState<SupervisorReviewView | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('content');
+  const [v11ContentState, setV11ContentState] = useState<{ groupStatus: string | null; activeHoldCount: number }>({ groupStatus: null, activeHoldCount: 0 });
 
   const loadVideo = useCallback(async () => {
     if (!active.current) return;
@@ -197,6 +199,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const navigationTabs = [...new Set(availableActions.map((action) => actionTabs[action]).filter((tab): tab is DetailTab => Boolean(tab)))];
   const workflowIndex = workflowSteps.findIndex((step) => step.statuses.includes(video.status));
   const workflowComplete = ['final_effective', 'final_low_effective', 'final_invalid'].includes(video.status);
+  const contentDisplay = contentEvaluationDisplay({ videoStatus: video.status, ...v11ContentState });
 
   return (
     <main className="page" id="main-content">
@@ -206,7 +209,8 @@ function VideoDetail({ params }: { params: { id: string } }) {
           <p className="muted">
             {video.brand || '未填写品牌'} · {video.product || '未填写产品'} · {displayLabel(videoTypeLabels, video.videoType)} · {video.creator?.name || '-'} · {formatShanghaiDateTime(video.createdAt)}
           </p>
-          <p className="status-badge">{displayLabel(videoStatusLabels, video.status)}</p>
+          <p className="status-badge">{contentDisplay.label}</p>
+          {contentDisplay.description ? <p className="muted">{contentDisplay.description}</p> : null}
         </div>
         <Link className="button secondary" href="/videos">
           返回列表
@@ -218,7 +222,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         <VideoPlayer videoId={params.id} />
         <aside className="panel">
           <h2>基础信息</h2>
-          <p>状态：{displayLabel(videoStatusLabels, video.status)}</p>
+          <p>状态：{contentDisplay.label}</p>
           <p>视频类型：{displayLabel(videoTypeLabels, video.videoType)}</p>
           <p>品牌：{video.brand || '-'}</p>
           <p>产品：{video.product || '-'}</p>
@@ -243,7 +247,13 @@ function VideoDetail({ params }: { params: { id: string } }) {
         <small>版本 V{video.version || 1}{video.isTrial ? ' · 试用数据' : ''} · 更新于 {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(new Date(video.updatedAt || video.createdAt))}</small>
       </section>
       <ol className="workflow-stepper" aria-label="评估流程">
-        {workflowSteps.map((step, index) => <li key={step.label} aria-current={index === workflowIndex && !workflowComplete ? 'step' : undefined} data-state={workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? 'completed' : index === workflowIndex ? video.status.endsWith('_failed') ? 'failed' : 'current' : 'waiting'}><span>{step.label}</span><small>{workflowComplete || (workflowIndex >= 0 && index < workflowIndex) ? '已完成' : index === workflowIndex ? displayLabel(videoStatusLabels, video.status) : '待处理'}</small></li>)}
+        {workflowSteps.map((step, index) => {
+          const isCurrent = index === workflowIndex && !workflowComplete;
+          const completed = workflowComplete || (workflowIndex >= 0 && index < workflowIndex);
+          const stepState = completed ? 'completed' : isCurrent ? index === 0 ? contentDisplay.state : video.status.endsWith('_failed') ? 'failed' : 'current' : 'waiting';
+          const stepLabel = completed ? '已完成' : isCurrent ? index === 0 ? contentDisplay.label : displayLabel(videoStatusLabels, video.status) : '待处理';
+          return <li key={step.label} aria-current={isCurrent ? 'step' : undefined} data-state={stepState}><span>{step.label}</span><small>{stepLabel}</small></li>;
+        })}
       </ol>
       <nav className="detail-tabs" aria-label="视频评估详情" role="tablist">
         {detailTabs.map(([value, label], index) => <button key={value} id={`detail-tab-${value}`} type="button" role="tab" tabIndex={activeTab === value ? 0 : -1} className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} aria-controls={`detail-panel-${value}${value === 'content' ? ' detail-panel-supervisor' : value === 'metrics' ? ' detail-panel-result' : value === 'final' ? ' detail-panel-confirmation' : ''}`} onClick={() => setActiveTab(value)} onKeyDown={(event) => {
@@ -255,7 +265,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         }}>{label}</button>)}
       </nav>
       <div id="detail-panel-content" role="tabpanel" aria-labelledby="detail-tab-content" hidden={activeTab !== 'content'}>
-      <V11EvaluationPanel videoId={video.id} canTrigger={canTriggerReview} />
+          <V11EvaluationPanel videoId={video.id} canTrigger={canTriggerReview} onContentStateChange={setV11ContentState} />
       <details className="panel section-gap">
         <summary>历史评估</summary>
         <p className="muted">旧版历史评分，不参与当前 V1.1 正式流程。</p>

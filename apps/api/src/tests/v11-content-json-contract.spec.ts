@@ -88,7 +88,8 @@ test('strict schema rejects illegal fact keys and anchors', () => {
 });
 
 test('JSON contract prompt version changes the evaluation fingerprint', () => {
-  assert.equal(V11_PROMPT_VERSION, 'content-review-v1.1-json-contract-v3');
+  assert.equal(V11_PROMPT_VERSION, 'content-review-v1.1-json-contract-v4');
+  assert.equal(V11_RUBRIC_VERSION, 'content-rubric-v1.1-fact-claims-v3');
   const base = {
     ownerId: 'smoke-owner',
     fileHash: 'file-hash',

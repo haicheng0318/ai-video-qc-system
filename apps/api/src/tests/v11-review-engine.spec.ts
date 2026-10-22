@@ -30,6 +30,17 @@ const run = (
   complianceStatus,
 });
 
+function withClaim(
+  input: ReviewRun,
+  dimension: ReviewRun['factClaims'][number]['dimension'],
+  key: ReviewRun['factClaims'][number]['key'],
+  state: ReviewRun['factClaims'][number]['state'],
+) {
+  input.factClaims = input.factClaims.filter((claim) => !(claim.dimension === dimension && claim.key === key));
+  input.factClaims.push({ dimension, key, state });
+  return input;
+}
+
 test('first fifty eligible samples and first A+ always require independent review', () => {
   assert.equal(requiresIndependentReview({ eligiblePilotCount: 0, fingerprint: 'x', score: 80, rating: 'B' }), true);
   assert.equal(requiresIndependentReview({ eligiblePilotCount: 50, fingerprint: 'x', score: 91, rating: 'A+' }), true);
@@ -68,6 +79,53 @@ test('free-text paraphrases do not create a major conflict while explicit mutual
   ]);
   assert.equal(conflict.action, 'hold');
   assert.equal('reason' in conflict ? conflict.reason : null, 'major_fact_conflict');
+});
+
+test('98.8 A+ action cue ambiguity requests a blind third review instead of a false hold', () => {
+  const first = withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'absent');
+  const second = withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'present');
+  first.anchors.action_logic = 3;
+  second.anchors.action_logic = 3;
+
+  const result = decideReviewProgress([first, second]);
+
+  assert.equal(result.action, 'third_review');
+  assert.equal('reason' in result ? result.reason : null, 'soft_fact_conflict');
+});
+
+test('three-run action cue conflict adopts the existing median result only with a 2:1 definite majority', () => {
+  const first = withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'absent');
+  const second = withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'present');
+  const third = withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'absent');
+  for (const item of [first, second, third]) item.anchors.action_logic = 3;
+
+  const result = decideReviewProgress([first, second, third]);
+
+  assert.equal(result.action, 'adopt');
+  assert.equal(result.method, 'triple_median');
+  assert.equal(result.totalScore, 98.8);
+  assert.equal(result.contentRating, 'A+');
+});
+
+test('three-run action cue conflict without a definite majority holds fail closed', () => {
+  const result = decideReviewProgress([
+    withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'absent'),
+    withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'present'),
+    withClaim(run(98.8, 'A+', 4), 'action_logic', 'action_cue_present', 'uncertain'),
+  ]);
+
+  assert.equal(result.action, 'hold');
+  assert.equal('reason' in result ? result.reason : null, 'soft_fact_conflict_unresolved');
+});
+
+test('audio present versus absent remains a hard conflict after soft action cue handling', () => {
+  const result = decideReviewProgress([
+    withClaim(run(75, 'B', 3), 'subtitle_audio', 'audio_present', 'present'),
+    withClaim(run(76, 'B', 3), 'subtitle_audio', 'audio_present', 'absent'),
+  ]);
+
+  assert.equal(result.action, 'hold');
+  assert.equal('reason' in result ? result.reason : null, 'major_fact_conflict');
 });
 
 test('missing or uncertain canonical claims remain compatible instead of causing a major conflict', () => {

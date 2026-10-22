@@ -27,7 +27,7 @@ import { V11_FACT_CLAIMS } from '../modules/v11/fact-claims';
 const url = process.env.V11_HOTFIX_TEST_DATABASE_URL;
 const migrationName = '20261022090000_fix_v11_evaluation_job_constraints';
 
-test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTTP and real worker dispatch', { skip: !url, timeout: 240_000 }, async (t) => {
+test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback, HTTP and real worker dispatch', { skip: !url, timeout: 240_000 }, async (t) => {
   configureLocalAcceptance(url!);
   const db = new PrismaClient({ datasources: { db: { url } } });
   const temporary = await mkdtemp(join(tmpdir(), 'v11-job-hotfix-'));
@@ -46,7 +46,7 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
     });
     deploy(join(temporary, 'schema.prisma'));
     const applied = () => db.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
-    assert.equal(Number((await applied())[0].count), 17);
+    assert.equal(Number((await applied())[0].count), 18);
     const actor = await db.user.create({ data: { account: `hotfix-${randomUUID()}`, name: 'Fixture only', passwordHash: 'not-a-login-hash', role: 'admin', mustChangePassword: false } });
     const mediaPath = process.env.V11_HOTFIX_MEDIA_PATH;
     assert.ok(mediaPath, 'explicit synthetic media fixture required');
@@ -75,7 +75,7 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
       return tx.v11EvaluationRun.create({ data: { groupId: group.id, runNumber: 1, runRole: 'primary', blindContextHash: 'e'.repeat(64), modelProvider: 'fixture', modelName: 'fake', modelConfigSnapshot: {}, ...versions } });
     };
     const counts = async () => Promise.all([db.v11EvaluationInputRevision.count(), db.v11WorkflowRevision.count(), db.v11EvaluationGroup.count(), db.v11EvaluationRun.count(), db.evaluationJob.count()]);
-    await t.test('old 17 rejects actual v11 enqueue and rolls back all five records', async () => {
+    await t.test('schema without the target migration rejects actual v11 enqueue and rolls back all five records', async () => {
       await assert.rejects(db.$transaction(async tx => {
         const run = await createRun(tx);
         await jobs.enqueue(tx, { ...common, stage: 'v11_content', v11RunId: run.id });
@@ -83,8 +83,8 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
       assert.deepEqual(await counts(), [0, 0, 0, 0, 3]);
     });
     deploy(join(schemaRoot, 'schema.prisma'));
-    await t.test('18 migrations preserve every legacy job field and NOT NULL stage', async () => {
-      assert.equal(Number((await applied())[0].count), 18);
+    await t.test('19 migrations preserve every legacy job field and NOT NULL stage', async () => {
+      assert.equal(Number((await applied())[0].count), 19);
       assert.deepEqual(await db.evaluationJob.findMany({ orderBy: { id: 'asc' } }), before);
       const stage = await db.$queryRaw<Array<{ is_nullable: string }>>`SELECT is_nullable FROM information_schema.columns WHERE table_name='evaluation_jobs' AND column_name='stage'`;
       assert.equal(stage[0].is_nullable, 'NO');
@@ -136,7 +136,7 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
         assert.deepEqual(await counts(), [0, 0, 0, 0, 3]);
       });
     }
-    await db.runtimeSetting.create({ data: { key: 'v11_content_shadow', value: { enabled: true, shadowMode: true } } });
+    await db.runtimeSetting.create({ data: { key: 'v11_content_shadow', value: { enabled: true, shadowMode: false } } });
     let fakeCalls = 0;
     const fake = { analyzeVideo: async () => {
       fakeCalls += 1;
@@ -152,10 +152,11 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
       { provide: V11ContentService, useValue: service },
       { provide: OperationLogsService, useValue: logs },
       { provide: PrismaService, useValue: db },
-      JwtStrategy,
+      { provide: JwtStrategy, useValue: new JwtStrategy(db as any) },
     ] })
     class FixtureModule {}
     app = await NestFactory.create(FixtureModule, { logger: ['error'], abortOnError: false });
+    (app.get(V11ContentController) as unknown as { service: V11ContentService }).service = service;
     app.setGlobalPrefix('api');
     await app.listen(0, '127.0.0.1');
     await t.test('real HTTP 202 creates complete input, workflow, group, run, job; worker executes fake provider', async () => {
@@ -177,9 +178,9 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
       assert.equal(completed.status, 'succeeded', completed.errorMessage || '');
       assert.equal((await db.evaluationJob.findUniqueOrThrow({ where: { id: job.id } })).status, 'succeeded');
       assert.equal(await db.evaluationJobAttempt.count({ where: { jobId: job.id, status: 'succeeded' } }), 1);
-      assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, video.status, 'shadow preserves video state');
+      assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'ai_content_reviewing', 'formal first run queues its required independent review');
     });
-    await t.test('fresh database deploys all 18 migrations', async () => {
+    await t.test('fresh database deploys all 19 migrations', async () => {
       const freshUrl = process.env.V11_HOTFIX_FRESH_DATABASE_URL!;
       assert.ok(freshUrl, 'separate pre-created empty fixture database required');
       configureLocalAcceptance(freshUrl);
@@ -189,12 +190,12 @@ test('V11 hotfix: old-17 failure, nonempty upgrade, target matrix, rollback, HTT
         assert.equal(Number(existing[0].count), 0);
         deploy(join(schemaRoot, 'schema.prisma'), freshUrl);
         const rows = await fresh.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
-        assert.equal(Number(rows[0].count), 18);
+        assert.equal(Number(rows[0].count), 19);
         const failed = await fresh.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL`;
         assert.equal(Number(failed[0].count), 0);
       } finally { await fresh.$disconnect(); }
     });
-    assert.equal((await readdir(join(schemaRoot, 'migrations'))).filter(name => /^\d/.test(name)).length, 18);
+    assert.equal((await readdir(join(schemaRoot, 'migrations'))).filter(name => /^\d/.test(name)).length, 19);
   } finally {
     await app?.close();
     await db.$disconnect();

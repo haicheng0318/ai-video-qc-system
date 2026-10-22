@@ -1,5 +1,5 @@
 import { V11_CONTENT_ANCHORS, V11_CONTENT_DIMENSIONS } from './content-scoring';
-import { V11_FACT_CLAIMS, V11_FACT_CLAIM_VERSION } from './fact-claims';
+import { V11_FACT_CLAIM_DEFINITIONS, V11_FACT_CLAIMS, V11_FACT_CLAIM_VERSION } from './fact-claims';
 import { V11_PROMPT_VERSION, V11_RUBRIC_VERSION, V11_SCHEMA_VERSION } from './provenance';
 
 export function buildV11ContentPrompt(
@@ -7,7 +7,12 @@ export function buildV11ContentPrompt(
   outputSchema: Record<string, unknown>,
 ) {
   const dimensionText = V11_CONTENT_DIMENSIONS
-    .map((item) => `- ${item.code}（weight=${item.weight}）\n${V11_CONTENT_ANCHORS[item.code].map((description, anchor) => `  anchor ${anchor}: ${description}`).join('\n')}\n  canonical facts: ${V11_FACT_CLAIMS[item.code].join(', ')}`)
+    .map((item) => {
+      const definitions = item.code === 'action_logic'
+        ? `\n  fact definitions:\n    action_cue_present: ${V11_FACT_CLAIM_DEFINITIONS.action_logic.action_cue_present}`
+        : '';
+      return `- ${item.code}（weight=${item.weight}）\n${V11_CONTENT_ANCHORS[item.code].map((description, anchor) => `  anchor ${anchor}: ${description}`).join('\n')}\n  canonical facts: ${V11_FACT_CLAIMS[item.code].join(', ')}${definitions}`;
+    })
     .join('\n');
   const outputContract = JSON.stringify(outputSchema);
   return `
