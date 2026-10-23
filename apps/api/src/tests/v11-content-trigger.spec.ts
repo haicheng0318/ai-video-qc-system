@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { ForbiddenException, InternalServerErrorException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, InternalServerErrorException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { UserRole, VideoStatus, VideoType } from '@prisma/client';
 import { countQualifiedInitialPilotSamples, V11ContentService } from '../modules/v11/v11-content.service';
 
@@ -14,7 +14,13 @@ const ids = {
   workflow: '20000000-0000-4000-8000-000000000004',
 };
 
-async function createHarness(options: { shadowMode?: boolean; workflowShadowMode?: boolean } = {}) {
+async function createHarness(options: {
+  shadowMode?: boolean;
+  workflowShadowMode?: boolean;
+  evaluationInstabilityHold?: boolean;
+  holdTypes?: string[];
+  activeAppeals?: number;
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'v11-pilot-trigger-'));
   const path = join(directory, 'fixture.mp4');
   await writeFile(path, 'same frozen media bytes');
@@ -46,9 +52,23 @@ async function createHarness(options: { shadowMode?: boolean; workflowShadowMode
   };
   let workflow: any = {
     id: ids.workflow, videoId: ids.video, ownerId: ids.owner, revision: 1, status: 'current',
-    policySnapshot: options.workflowShadowMode === undefined ? {} : { shadowMode: options.workflowShadowMode },
+    activeContentDecisionId: null,
+    policySnapshot: options.workflowShadowMode === undefined ? { shadowMode: options.shadowMode ?? true } : { shadowMode: options.workflowShadowMode },
   };
-  const activeDecision = options.workflowShadowMode === undefined ? null : {
+  const workflows: any[] = [workflow];
+  const holdTypes = options.holdTypes ?? (options.evaluationInstabilityHold ? ['evaluation_instability'] : []);
+  const holds = holdTypes.map((holdType, index) => ({
+    id: `20000000-0000-4000-8000-${String(98 + index).padStart(12, '0')}`,
+    workflowRevisionId: workflow.id,
+    holdType,
+    status: 'active',
+  }));
+  const appeals = Array.from({ length: options.activeAppeals ?? 0 }, (_, index) => ({
+    id: `20000000-0000-4000-8001-${String(index + 1).padStart(12, '0')}`,
+    workflowRevisionId: workflow.id,
+    status: 'active',
+  }));
+  const activeDecision = options.workflowShadowMode === undefined || holdTypes.length > 0 || appeals.length > 0 ? null : {
     id: '20000000-0000-4000-8000-000000000099',
     group: { shadowMode: options.workflowShadowMode },
   };
@@ -81,10 +101,15 @@ async function createHarness(options: { shadowMode?: boolean; workflowShadowMode
       },
     },
     v11WorkflowRevision: {
-      findFirst: async () => workflow,
+      findFirst: async () => ({
+        ...workflow,
+        holds: holds.filter((hold) => hold.workflowRevisionId === workflow.id && hold.status === 'active'),
+        appeals: appeals.filter((appeal) => appeal.workflowRevisionId === workflow.id && appeal.status === 'active'),
+      }),
       update: async ({ data }: any) => { Object.assign(workflow, data); return workflow; },
       create: async ({ data }: any) => {
-        workflow = { id: id(), status: 'current', ...data };
+        workflow = { id: id(), status: 'current', holds: [], appeals: [], ...data };
+        workflows.push(workflow);
         return workflow;
       },
     },
@@ -106,11 +131,16 @@ async function createHarness(options: { shadowMode?: boolean; workflowShadowMode
       },
     },
   };
+  let transactionTail = Promise.resolve();
   const db: any = {
     runtimeSetting: { findUnique: async () => ({ value: { enabled: true, shadowMode } }) },
     video: { findUnique: async () => video },
     aiModelConfig: { findFirst: async () => null },
-    $transaction: async (callback: (client: any) => unknown) => callback(tx),
+    $transaction: async (callback: (client: any) => unknown) => {
+      const result = transactionTail.then(() => callback(tx));
+      transactionTail = result.then(() => undefined, () => undefined);
+      return result;
+    },
   };
   const jobsService: any = {
     enqueue: async (_client: any, data: any) => {
@@ -134,6 +164,9 @@ async function createHarness(options: { shadowMode?: boolean; workflowShadowMode
     inputs,
     runs,
     jobs,
+    workflows,
+    holds,
+    appeals,
     setShadowMode: (value: boolean) => { shadowMode = value; },
     getWorkflow: () => workflow,
     cleanup: () => rm(directory, { recursive: true, force: true }),
@@ -147,6 +180,82 @@ test('formal V1.1 trigger becomes the authoritative content workflow and marks t
     assert.equal(started.shadowMode, false);
     assert.equal((await harness.db.video.findUnique()).status, VideoStatus.ai_content_reviewing);
     assert.equal(harness.groups[0].triggerReason, 'formal_manual');
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+async function assertRetryBlocked(options: Parameters<typeof createHarness>[0]) {
+  const harness = await createHarness({ shadowMode: false, workflowShadowMode: false, ...options });
+  try {
+    const previous = harness.getWorkflow();
+    await assert.rejects(
+      harness.service.trigger(ids.video, { id: ids.owner, role: UserRole.director } as any, {}),
+      (error: unknown) => error instanceof ConflictException
+        && error.message === '当前流程存在其他待处理事项，请先完成后再重新评估。',
+    );
+    assert.equal(previous.status, 'current');
+    assert.equal(harness.workflows.length, 1);
+    assert.equal(harness.groups.length, 0);
+    assert.equal(harness.runs.length, 0);
+    assert.equal(harness.jobs.length, 0);
+  } finally {
+    await harness.cleanup();
+  }
+}
+
+test('formal trigger supersedes only a current instability hold workflow and preserves its audit history', async () => {
+  const harness = await createHarness({ shadowMode: false, workflowShadowMode: false, evaluationInstabilityHold: true });
+  try {
+    const previous = harness.getWorkflow();
+    const started = await harness.service.trigger(ids.video, { id: ids.owner, role: UserRole.director } as any, {});
+    const current = harness.getWorkflow();
+
+    assert.equal(previous.status, 'superseded');
+    assert.ok(previous.supersededAt instanceof Date);
+    assert.equal(current.revision, 2);
+    assert.equal(current.policySnapshot.shadowMode, false);
+    assert.equal(current.policySnapshot.retryFromWorkflowRevisionId, previous.id);
+    assert.equal(current.policySnapshot.retryReason, 'evaluation_instability');
+    assert.equal(harness.holds[0].status, 'active');
+    assert.equal(harness.groups.find((group) => group.id === started.groupId)?.workflowRevisionId, current.id);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('formal retry rejects evaluation instability combined with incomplete input', async () => {
+  await assertRetryBlocked({ holdTypes: ['evaluation_instability', 'input_incomplete'] });
+});
+
+test('formal retry rejects evaluation instability combined with a manual hold', async () => {
+  await assertRetryBlocked({ holdTypes: ['evaluation_instability', 'manual'] });
+});
+
+test('formal retry rejects evaluation instability combined with an appeal hold', async () => {
+  await assertRetryBlocked({ holdTypes: ['evaluation_instability', 'appeal'] });
+});
+
+test('formal retry rejects evaluation instability when an active appeal record exists', async () => {
+  await assertRetryBlocked({ holdTypes: ['evaluation_instability'], activeAppeals: 1 });
+});
+
+test('formal retry rejects an incomplete-input hold without instability', async () => {
+  await assertRetryBlocked({ holdTypes: ['input_incomplete'] });
+});
+
+test('concurrent retries from one instability hold create one current workflow and one active group', async () => {
+  const harness = await createHarness({ shadowMode: false, workflowShadowMode: false, evaluationInstabilityHold: true });
+  const actor = { id: ids.owner, role: UserRole.director } as any;
+  try {
+    const results = await Promise.all([
+      harness.service.trigger(ids.video, actor, {}),
+      harness.service.trigger(ids.video, actor, {}),
+    ]);
+
+    assert.equal(harness.workflows.filter((workflow) => workflow.status === 'current').length, 1);
+    assert.equal(new Set(results.map((result) => result.groupId)).size, 1);
+    assert.equal(harness.groups.filter((group) => ['queued', 'running', 'review_required'].includes(group.status)).length, 1);
   } finally {
     await harness.cleanup();
   }

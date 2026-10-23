@@ -41,21 +41,24 @@ const users = {
   owner: { id: 'owner-1', account: 'director', name: '普通编导', role: 'director' },
   admin: { id: 'admin-1', account: 'admin', name: '系统管理员', role: 'admin' },
 };
-const video = (user) => ({
+const video = (user, hold = false) => ({
   id: videoId, title: 'V1.1 浏览器验收视频', brand: '验收品牌', product: '验收产品', platform: '抖音',
-  status: 'pending_result_data', videoType: 'organic', isForAds: false, isTrial: true,
+  status: hold ? 'ai_content_failed' : 'pending_result_data', videoType: 'organic', isForAds: false, isTrial: true,
   createdAt: now, updatedAt: now, creator: users.owner, operationLogs: [], revisions: [], versionChain: [],
-  allowedActions: [], v11EvaluationGroups: [{ status: 'adopted', decision: { totalScore: '82.0', contentRating: 'A', decisionSource: 'system' }, workflowRevision: { revision: 1 }, holds: [], appeals: [] }],
+  allowedActions: ['trigger_content_review'], v11EvaluationGroups: [{ status: hold ? 'hold' : 'adopted', decision: hold ? null : { totalScore: '82.0', contentRating: 'A', decisionSource: 'system' }, workflowRevision: { revision: hold ? 2 : 1 }, holds: hold ? [{ id: 'hold-1', holdType: 'evaluation_instability' }] : [], appeals: [] }],
   v11DataDecisions: [{ dataRating: 'B' }], v11ComprehensiveDecisions: [{ comprehensiveRating: 'A', decisionSource: 'system' }],
 });
 
-function contentState(shadow = true) {
-  return { group: { id: 'group-1', status: 'adopted', shadowMode: shadow, workflowRevision: { revision: 1 },
-    runs: [{ id: 'run-1', runNumber: 1, runRole: 'initial', status: 'succeeded', totalScore: '82.0', contentRating: 'A', stale: false }],
-    decision: { id: 'decision-1', totalScore: '82.0', contentRating: 'A', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single_after_pilot' } } };
+function contentState(shadow = true, hold = false) {
+  return { group: { id: 'group-1', status: hold ? 'hold' : 'adopted', shadowMode: shadow, workflowRevision: { revision: hold ? 2 : 1 },
+    runs: hold ? [
+      { id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: '98.8', contentRating: 'A+', stale: false },
+      { id: 'run-2', runNumber: 2, runRole: 'independent_review', status: 'succeeded', totalScore: '98.8', contentRating: 'A+', stale: false },
+    ] : [{ id: 'run-1', runNumber: 1, runRole: 'initial', status: 'succeeded', totalScore: '82.0', contentRating: 'A', stale: false }],
+    decision: hold ? null : { id: 'decision-1', totalScore: '82.0', contentRating: 'A', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single_after_pilot' } } };
 }
 
-async function installFixture(context, initialUser) {
+async function installFixture(context, initialUser, hold = false) {
   const state = { user: initialUser, appealed: false, benchmarkApproved: false, benchmarkCreated: false, manualResolved: false, confirmed: false };
   const mutations = [];
   await context.route('**/*', async (route) => {
@@ -71,8 +74,8 @@ async function installFixture(context, initialUser) {
       state.user = payload.account === 'admin' ? users.admin : users.owner; body = { user: state.user };
     } else if (url.pathname === '/api/auth/me') body = { user: state.user };
     else if (url.pathname === '/api/auth/quotas') body = { items: [] };
-    else if (url.pathname === '/api/videos') body = { items: [video(state.user)], total: 1, page: 1, pageSize: 20 };
-    else if (url.pathname === `/api/videos/${videoId}`) body = video(state.user);
+    else if (url.pathname === '/api/videos') body = { items: [video(state.user, hold)], total: 1, page: 1, pageSize: 20 };
+    else if (url.pathname === `/api/videos/${videoId}`) body = video(state.user, hold);
     else if (url.pathname.endsWith('/file-url')) body = { url: null };
     else if (url.pathname.endsWith('/content-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
     else if (url.pathname.endsWith('/supervisor-review/latest') || url.pathname.endsWith('/result-metrics/latest')) body = null;
@@ -80,8 +83,8 @@ async function installFixture(context, initialUser) {
     else if (url.pathname.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: 'pending_result_data' };
     else if (url.pathname.endsWith('/final-evaluation/latest')) body = { evaluation: null, videoStatus: 'pending_result_data' };
     else if (url.pathname.includes('/history')) body = { items: [], nextCursor: null };
-    else if (url.pathname.endsWith('/v11-content-review/latest')) body = contentState(true);
-    else if (url.pathname.endsWith('/v11-workflow') && method === 'GET') body = { revision: { revision: 1, holds: [], appeals: state.appealed ? [{ id: 'appeal-1', reason: '画面证据时间点需要重新核对' }] : [] } };
+    else if (url.pathname.endsWith('/v11-content-review/latest')) body = contentState(hold ? false : true, hold);
+    else if (url.pathname.endsWith('/v11-workflow') && method === 'GET') body = { revision: { revision: hold ? 2 : 1, holds: hold ? [{ id: 'hold-1', holdType: 'evaluation_instability', reason: '评估结果存在严重分歧：major_fact_conflict' }] : [], appeals: state.appealed ? [{ id: 'appeal-1', reason: '画面证据时间点需要重新核对' }] : [] } };
     else if (url.pathname.endsWith('/v11-workflow/appeals')) { state.appealed = true; body = { id: 'appeal-1' }; }
     else if (url.pathname.endsWith('/v11-content-review')) body = { groupId: 'shadow-group-2', status: 'queued' };
     else if (url.pathname.endsWith('/ratings/latest')) body = { data: { dataRating: 'B', dataSufficiency: 'sufficient' }, comprehensive: state.manualResolved
@@ -131,7 +134,7 @@ try {
   await ownerPage.locator('.video-card:visible').getByRole('link', { name: 'V1.1 浏览器验收视频', exact: true }).click();
   await ownerPage.getByText('Shadow 结果不改变正式流程。', { exact: true }).waitFor();
   assert.match(await ownerPage.locator('#v11-detail-summary').innerText(), /内容质量[\s\S]*A[\s\S]*数据表现[\s\S]*B[\s\S]*综合评级[\s\S]*R/);
-  await ownerPage.getByRole('button', { name: '触发 V1.1 内容评估', exact: true }).click();
+  await ownerPage.getByRole('button', { name: '开始内容评估', exact: true }).click();
   await ownerPage.getByLabel('对当前内容结果提出异议').fill('请重新核对第 3 秒的产品露出证据');
   await ownerPage.getByRole('button', { name: '提交异议并创建新工作流版本', exact: true }).click();
   await ownerPage.getByText('异议处理中：画面证据时间点需要重新核对').waitFor();
@@ -188,13 +191,29 @@ try {
   await adminPage.screenshot({ path: resolve(output, 'admin-dashboard.png'), fullPage: true });
   await adminContext.close();
 
+  const holdContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
+  holdContext.setDefaultTimeout(15000);
+  await installFixture(holdContext, users.admin, true);
+  const holdPage = await holdContext.newPage();
+  await login(holdPage, 'admin');
+  await holdPage.getByText('评估结果待确认', { exact: true }).first().waitFor();
+  assert.equal(await holdPage.locator('tbody').getByText('内容评估失败', { exact: true }).count(), 0);
+  await holdPage.getByRole('link', { name: 'V1.1 浏览器验收视频', exact: true }).first().click();
+  await holdPage.getByText('AI评估已完成，但多次结果存在分歧，未形成正式内容决议。', { exact: true }).first().waitFor();
+  assert.equal(await holdPage.getByText('内容评估失败', { exact: true }).count(), 0);
+  await holdPage.getByTestId('v11-evaluation-panel').getByText('技术详情', { exact: true }).click();
+  await holdPage.getByText('evaluation_instability', { exact: true }).waitFor();
+  await holdPage.getByText('major_fact_conflict', { exact: true }).waitFor();
+  assert.match(await holdPage.locator('.workflow-stepper').innerText(), /评估结果待确认/);
+  await holdContext.close();
+
   assert.ok(ownerFixture.mutations.some((item) => item.path.endsWith('/v11-content-review')));
   assert.ok(ownerFixture.mutations.some((item) => item.path.endsWith('/appeals')));
   assert.ok(adminFixture.mutations.some((item) => item.path.endsWith('/comprehensive-rating/manual')));
   assert.ok(adminFixture.mutations.some((item) => item.path.endsWith('/comprehensive-rating/confirm')));
   const summary = { ok: true, browser: await browser.version(), paidModelCalls: 0,
     ordinary: ['login', 'owner-only list', 'list/card', 'shadow', 'appeal', 'ratings', 'admin denial'],
-    admin: ['creator/rating filters', 'gate settings', 'benchmark create/approve', 'R resolution', 'final confirmation', 'case', 'dashboard'] };
+    admin: ['creator/rating filters', 'gate settings', 'benchmark create/approve', 'R resolution', 'final confirmation', 'case', 'dashboard', 'hold warning and technical audit'] };
   await writeFile(resolve(output, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary));
 } finally {

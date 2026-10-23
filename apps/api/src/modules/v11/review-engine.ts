@@ -61,7 +61,9 @@ function factsAgree(runs: ReviewRun[]) {
   });
 }
 
-function hasExplicitFactContradiction(runs: ReviewRun[]) {
+const SOFT_FACT_CLAIMS = new Set(['action_logic:action_cue_present']);
+
+function explicitFactContradictions(runs: ReviewRun[]) {
   const states = new Map<string, Set<string>>();
   for (const run of runs) {
     for (const claim of run.factClaims) {
@@ -72,14 +74,36 @@ function hasExplicitFactContradiction(runs: ReviewRun[]) {
       states.set(key, values);
     }
   }
-  return [...states.values()].some((values) => values.has('present') && values.has('absent'));
+  return [...states.entries()]
+    .filter(([, values]) => values.has('present') && values.has('absent'))
+    .map(([key]) => key);
+}
+
+function hasHardFactContradiction(runs: ReviewRun[]) {
+  return explicitFactContradictions(runs).some((key) => !SOFT_FACT_CLAIMS.has(key));
+}
+
+function softFactContradictions(runs: ReviewRun[]) {
+  return explicitFactContradictions(runs).filter((key) => SOFT_FACT_CLAIMS.has(key));
+}
+
+function softConflictsHaveMajority(runs: ReviewRun[], conflicts: string[]) {
+  return conflicts.every((conflict) => {
+    const [dimension, key] = conflict.split(':');
+    const counts = { present: 0, absent: 0 };
+    for (const run of runs) {
+      const state = run.factClaims.find((claim) => claim.dimension === dimension && claim.key === key)?.state;
+      if (state === 'present' || state === 'absent') counts[state] += 1;
+    }
+    return counts.present >= 2 || counts.absent >= 2;
+  });
 }
 
 export function detectFirstRunFactualContradiction(
   run: Pick<ReviewRun, 'factClaims'>,
   mediaManifest: { hasAudio?: boolean | null },
 ) {
-  if (hasExplicitFactContradiction([run as ReviewRun])) return true;
+  if (hasHardFactContradiction([run as ReviewRun])) return true;
   if (typeof mediaManifest.hasAudio !== 'boolean') return false;
   const audioClaim = run.factClaims.find((claim) => claim.dimension === 'subtitle_audio' && claim.key === 'audio_present');
   if (!audioClaim || audioClaim.state === 'uncertain') return false;
@@ -121,8 +145,11 @@ export function decideReviewProgress(runs: ReviewRun[]) {
   const scores = runs.map((run) => run.score);
   if (Math.max(...scores) - Math.min(...scores) > 10) return hold('score_difference_over_ten');
   if (Math.max(...runs.flatMap((left) => runs.map((right) => ratingDistance(left.rating, right.rating)))) >= 2) return hold('rating_difference_two_levels');
-  if (hasExplicitFactContradiction(runs)) return hold('major_fact_conflict');
+  if (hasHardFactContradiction(runs)) return hold('major_fact_conflict');
   if (majorComplianceConflict(runs)) return hold('major_compliance_conflict');
+  const softConflicts = softFactContradictions(runs);
+  if (softConflicts.length && runs.length === 2) return { action: 'third_review' as const, reason: 'soft_fact_conflict' };
+  if (softConflicts.length && !softConflictsHaveMajority(runs, softConflicts)) return hold('soft_fact_conflict_unresolved');
 
   if (runs.length === 2) {
     const [left, right] = runs;

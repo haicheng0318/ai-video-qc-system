@@ -1,6 +1,6 @@
 import { V11ContentDimension } from './content-scoring';
 
-export const V11_FACT_CLAIM_VERSION = 'fact-claims-v1.1-v2';
+export const V11_FACT_CLAIM_VERSION = 'fact-claims-v1.1-v3';
 
 export const V11_FACT_CLAIMS = {
   opening_hook: ['hook_present', 'topic_clear_in_opening'],
@@ -12,6 +12,12 @@ export const V11_FACT_CLAIMS = {
   platform_fit: ['declared_platform_fit'],
   action_logic: ['action_cue_present', 'action_cue_consistent'],
 } as const satisfies Record<V11ContentDimension, readonly string[]>;
+
+export const V11_FACT_CLAIM_DEFINITIONS = {
+  action_logic: {
+    action_cue_present: '只代表明确可观察的行动提示：仅当视频中直接提示下一步动作（例如购买、点击、咨询、进入直播间或关注）时为 present；产品吸引力、购买动机或使用场景本身不算行动提示；无法可靠判断时为 uncertain。',
+  },
+} as const;
 
 export type V11FactClaimKey = (typeof V11_FACT_CLAIMS)[V11ContentDimension][number];
 

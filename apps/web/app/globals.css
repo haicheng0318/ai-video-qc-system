@@ -930,6 +930,8 @@ input[type=file]::file-selector-button { font: inherit; font-weight: 600; color:
 .workflow-stepper > li[data-state=current]::before { color: var(--primary); }
 .workflow-stepper > li[data-state=failed], .workflow-stepper > li[data-state=hold] { border-color: var(--danger); color: var(--danger); }
 .workflow-stepper > li[data-state=failed]::before, .workflow-stepper > li[data-state=hold]::before { color: var(--danger); }
+.workflow-stepper > li[data-state=warning] { border-color: var(--warning); color: var(--warning); }
+.workflow-stepper > li[data-state=warning]::before { color: var(--warning); }
 .workflow-stepper > li[data-state=waiting] { color: var(--text-muted); }
 .content-tabs { display: flex; gap: var(--space-16); overflow-x: auto; border-bottom: 1px solid var(--border); margin: var(--space-24) 0; }
 .content-tabs > button, .content-tabs > a { flex: 0 0 auto; min-height: 44px; padding: var(--space-12) var(--space-4); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }

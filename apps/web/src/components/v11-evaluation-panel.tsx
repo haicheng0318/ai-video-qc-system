@@ -4,13 +4,14 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { ApiUser, apiFetch } from '@/lib/api';
 import { DetailSummary } from '@/components/ui/detail-summary';
 import { startStatusPolling } from '@/lib/status-polling';
+import { holdReasonCode, holdReasonLabel } from '@/lib/display-labels';
 
 type Run = { id: string; runNumber: number; runRole: string; status: string; totalScore: string | number | null; contentRating: string | null; stale: boolean };
 type ContentState = { group: null | { status: string; shadowMode: boolean; runs: Run[]; decision: null | { id: string; totalScore: string | number; contentRating: string; complianceStatus: string; inputComplete: boolean; stable: boolean; decisionSource: string; adoptionMethod: string }; workflowRevision: { revision: number } } };
-type WorkflowState = { revision: null | { revision: number; holds: Array<{ id: string; reason: string }>; appeals: Array<{ id: string; reason: string }> } };
+type WorkflowState = { revision: null | { revision: number; holds: Array<{ id: string; holdType?: string; reason: string }>; appeals: Array<{ id: string; reason: string }> } };
 type RatingsState = { data: null | { dataRating: string | null; dataSufficiency: string }; comprehensive: null | { id: string; comprehensiveRating: string | null; requiresAdminReview: boolean; decisionSource: string | null; finalStatus: string | null; performanceEligible: boolean } };
 
-export function V11EvaluationPanel({ videoId, canTrigger }: { videoId: string; canTrigger: boolean }) {
+export function V11EvaluationPanel({ videoId, canTrigger, onContentStateChange }: { videoId: string; canTrigger: boolean; onContentStateChange?: (state: { groupStatus: string | null; activeHoldCount: number }) => void }) {
   const [content, setContent] = useState<ContentState | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
   const [ratings, setRatings] = useState<RatingsState | null>(null);
@@ -36,6 +37,9 @@ export function V11EvaluationPanel({ videoId, canTrigger }: { videoId: string; c
     if (results.every((result) => result.status === 'rejected')) setError('V1.1 评估信息暂时不可用。');
   }, [videoId]);
   useEffect(() => { void load(); }, [load]);
+  const groupStatus = content?.group?.status || null;
+  const activeHoldCount = workflow?.revision?.holds?.length || 0;
+  useEffect(() => { onContentStateChange?.({ groupStatus, activeHoldCount }); }, [activeHoldCount, groupStatus, onContentStateChange]);
   useEffect(() => {
     if (!trackedJobId) return;
     return startStatusPolling<{ status: string }>({
@@ -102,20 +106,20 @@ export function V11EvaluationPanel({ videoId, canTrigger }: { videoId: string; c
     <section className="detail-summary" aria-label="V1.1 当前评估结果">
     <h2>V1.1 评估结果 <span className="status-badge">{content?.group ? content.group.shadowMode ? 'Shadow' : '正式' : '未运行'}</span></h2>
     {content?.group?.shadowMode ? <p className="muted">Shadow 结果不改变正式流程。</p> : null}
-    {workflow?.revision?.holds?.map((hold) => <p className="warning-list" role="status" key={`summary-${hold.id}`}><strong>当前流程已暂停：Hold</strong> · {hold.reason}</p>)}
+    {workflow?.revision?.holds?.map((hold) => <p className="warning-list" role="status" key={`summary-${hold.id}`}><strong>评估结果待确认</strong> · {holdReasonLabel(hold.reason)}</p>)}
     {workflow?.revision?.appeals?.map((item) => <p className="warning-list" role="status" key={`summary-${item.id}`}><strong>当前结果存在异议</strong> · {item.reason}</p>)}
     <div className="grade-summary" aria-label="V1.1 评估摘要">
       <article><span>内容质量</span><strong>{decision?.contentRating || '待评估'}</strong><small>内容分：{decision?.totalScore ?? '-'}{decision?.complianceStatus ? ` · 合规：${decision.complianceStatus}` : ''}</small>{decision ? <dl>{typeof decision.inputComplete === 'boolean' ? <><dt>输入完整</dt><dd>{decision.inputComplete ? '是' : '否'}</dd></> : null}{typeof decision.stable === 'boolean' ? <><dt>结果稳定</dt><dd>{decision.stable ? '是' : '否'}</dd></> : null}{decision.decisionSource ? <><dt>决议来源</dt><dd>{decision.decisionSource === 'system' ? '系统' : decision.decisionSource === 'human' ? '人工' : decision.decisionSource}</dd></> : null}{decision.adoptionMethod ? <><dt>采纳方式</dt><dd>{decision.adoptionMethod}</dd></> : null}</dl> : null}</article>
       <article><span>数据表现</span><strong>{ratings?.data?.dataRating || (ratings?.data?.dataSufficiency === 'insufficient' ? '数据不足' : '待评估')}</strong><small>V1.1 数据等级</small></article>
       <article><span>综合评级</span><strong>{comprehensive?.comprehensiveRating || (comprehensive?.requiresAdminReview ? 'R（管理员复核）' : '待评估')}</strong><small>{comprehensive?.finalStatus || '尚未最终确认'} · 决议来源：{comprehensive?.decisionSource === 'system' ? '系统' : comprehensive?.decisionSource === 'human' ? '人工' : '-'}</small></article>
-      <article><span>流程与风险</span><strong>{workflow?.revision?.holds?.length ? 'Hold · 流程暂停' : workflow?.revision?.appeals?.length ? '存在异议' : content?.group?.status || '未运行'}</strong><small>模式：{content?.group ? content.group.shadowMode ? 'Shadow' : '正式' : '-'} · 绩效参考：{comprehensive?.finalStatus ? comprehensive.performanceEligible ? '是' : '否' : '待确认'}</small></article>
+      <article><span>流程与风险</span><strong>{workflow?.revision?.holds?.length ? '评估结果待确认' : workflow?.revision?.appeals?.length ? '存在异议' : content?.group?.status || '未运行'}</strong><small>{workflow?.revision?.holds?.length ? 'AI评估已完成，但多次结果存在分歧，未形成正式内容决议。' : `模式：${content?.group ? content.group.shadowMode ? 'Shadow' : '正式' : '-'} · 绩效参考：${comprehensive?.finalStatus ? comprehensive.performanceEligible ? '是' : '否' : '待确认'}`}</small></article>
     </div>
     </section>
     </DetailSummary>
     {error ? <p className="error">{error}</p> : null}
-    {isAdmin ? <details className="section-gap"><summary>技术详情</summary><dl><dt>评估组状态</dt><dd>{content?.group?.status || '-'}</dd><dt>工作流版本</dt><dd>{content?.group?.workflowRevision.revision || workflow?.revision?.revision || '-'}</dd><dt>内容决议 ID</dt><dd>{decision?.id || '-'}</dd><dt>综合决议 ID</dt><dd>{comprehensive?.id || '-'}</dd><dt>Run ID</dt><dd>{content?.group?.runs.map((item) => item.id).join('、') || '-'}</dd></dl></details> : null}
+    {isAdmin ? <details className="section-gap"><summary>技术详情</summary><dl><dt>评估组状态</dt><dd>{content?.group?.status || '-'}</dd><dt>工作流版本</dt><dd>{content?.group?.workflowRevision.revision || workflow?.revision?.revision || '-'}</dd><dt>Hold 类型</dt><dd>{workflow?.revision?.holds?.map((hold) => hold.holdType || 'unknown').join('、') || '-'}</dd><dt>Hold Code</dt><dd>{workflow?.revision?.holds?.map((hold) => holdReasonCode(hold.reason) || hold.reason).join('、') || '-'}</dd><dt>内容决议 ID</dt><dd>{decision?.id || '-'}</dd><dt>综合决议 ID</dt><dd>{comprehensive?.id || '-'}</dd><dt>Run ID</dt><dd>{content?.group?.runs.map((item) => item.id).join('、') || '-'}</dd></dl></details> : null}
     {content?.group?.runs?.length ? <div className="table-scroll"><table className="table"><thead><tr><th>评估</th><th>角色</th><th>状态</th><th>分数</th><th>等级</th></tr></thead><tbody>{content.group.runs.map((item) => <tr key={item.id}><td>第 {item.runNumber} 次</td><td>{item.runRole}</td><td>{item.stale ? '已失效' : item.status}</td><td>{item.totalScore ?? '-'}</td><td>{item.contentRating || '-'}</td></tr>)}</tbody></table></div> : null}
-    {workflow?.revision?.holds?.map((hold) => <p className="warning-list" key={hold.id}>流程挂起：{hold.reason}</p>)}
+    {workflow?.revision?.holds?.map((hold) => <p className="warning-list" key={hold.id}>评估结果待确认：{holdReasonLabel(hold.reason)}</p>)}
     {workflow?.revision?.appeals?.map((item) => <p className="warning-list" key={item.id}>异议处理中：{item.reason}</p>)}
     <div className="button-row">{canTrigger ? <button className="button" disabled={busy || contentRunning} onClick={async () => {
       setBusy(true); setError('');

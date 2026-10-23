@@ -42,9 +42,9 @@ try {
       const isB = u.pathname.endsWith(videoB);
       body = { id: isB ? videoB : videoA, title: isB ? '视频 B：独立结果' : '发布验收：弱网与播放器', status: isB ? 'submitted' : state,
         videoType: 'organic', isForAds: false, isTrial: false, createdAt: now, updatedAt: now, creator: user,
-        operationLogs: [], revisions: [], versionChain: [], allowedActions: state === 'submitted' ? ['trigger_content_review', 'export_report'] : ['submit_supervisor_review', 'export_report'] };
+        operationLogs: [], revisions: [], versionChain: [], allowedActions: ['trigger_content_review', 'submit_supervisor_review', 'export_report'] };
     } else if (u.pathname.endsWith('/file-url')) body = { url: `${base}/local-fixture.webm?generation=${++signatures}` };
-    else if (u.pathname.endsWith('/content-review') && route.request().method() === 'POST') {
+    else if ((u.pathname.endsWith('/content-review') || u.pathname.endsWith('/v11-content-review')) && route.request().method() === 'POST') {
       triggers++; state = 'ai_content_reviewing'; body = { reviewId: 'review-a', jobId: 'job-a', status: 'running', videoStatus: state };
     } else if (u.pathname === '/api/evaluation-jobs/job-a') {
       polls++;
@@ -60,7 +60,11 @@ try {
     else if (u.pathname.endsWith('/result-review/latest')) body = { review: null, videoStatus: state };
     else if (u.pathname.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: state };
     else if (u.pathname.endsWith('/final-evaluation/latest')) body = { evaluation: null, videoStatus: state };
-    else if (u.pathname.endsWith('/v11-content-review/latest')) body = { group: null };
+    else if (u.pathname.endsWith('/v11-content-review/latest')) body = { group: jobDone && !u.pathname.includes(videoB) ? {
+      id: 'v11-group-a', status: 'adopted', shadowMode: false, workflowRevision: { revision: 1 },
+      runs: [{ id: 'v11-run-a', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: '85', contentRating: 'A+', stale: false }],
+      decision: { id: 'v11-decision-a', totalScore: '85', contentRating: 'A+', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single' },
+    } : null };
     else if (u.pathname.endsWith('/v11-workflow')) body = { revision: null };
     else if (u.pathname.endsWith('/ratings/latest')) body = { data: null, comprehensive: null };
     else if (u.pathname.includes('/history')) body = { items: [], nextCursor: null };
@@ -91,8 +95,8 @@ try {
   await page.locator('video').evaluate(video => video.pause());
   await page.evaluate(() => { window.__task5Player = document.querySelector('video'); window.__task5Player.currentTime = 0.5; });
   await page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^历史评估$/ }) }).locator('summary').click();
-  await page.getByRole('button', { name: '触发内容评估', exact: true }).click();
-  await page.getByText('弱网恢复后的任务 A 内容结果').waitFor({ timeout: 25000 });
+  await page.getByRole('button', { name: '开始内容评估', exact: true }).click();
+  await page.getByTestId('v11-evaluation-panel').getByText('A+', { exact: true }).first().waitFor({ timeout: 25000 });
   assert.equal(triggers, 1, 'network recovery must never issue another paid-trigger POST');
   assert.equal(polls, 3);
   assert.equal(await page.evaluate(() => window.__task5Player === document.querySelector('video')), true, 'polling must retain player DOM');
@@ -120,7 +124,7 @@ try {
   await page.screenshot({ path: resolve(output, 'mobile-player-draft.png'), fullPage: true });
   page.once('dialog', dialog => dialog.accept()); await page.goto(`${base}/videos/${videoB}`);
   await page.getByRole('heading', { name: '视频 B：独立结果', exact: true }).waitFor();
-  assert.equal(await page.getByText('弱网恢复后的任务 A 内容结果').count(), 0);
+  assert.equal(await page.getByTestId('v11-evaluation-panel').getByText('A+', { exact: true }).count(), 0);
   assert.deepEqual(errors, []);
   const summary = { ok: true, browser: await browser.version(), triggers, polls, mediaBytes: media.length,
     tested: ['real decoded playback advances before and after renewal', 'two network failures with read-only recovery', 'same player across polling/tabs',

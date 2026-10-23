@@ -7,8 +7,20 @@ test('video detail exposes V1.1 runs, ratings, hold and appeal without replacing
   const detail = await readFile(resolve(__dirname, '../../app/videos/[id]/page.tsx'), 'utf8');
   const panel = await readFile(resolve(__dirname, '../components/v11-evaluation-panel.tsx'), 'utf8');
   assert.match(detail, /V11EvaluationPanel/);
-  for (const evidence of ['v11-content-review', 'v11-workflow', 'ratings/latest', 'Shadow', '流程挂起', '异议处理中', 'data-rating', 'comprehensive-rating']) assert.match(panel, new RegExp(evidence));
+  for (const evidence of ['v11-content-review', 'v11-workflow', 'ratings/latest', 'Shadow', '评估结果待确认', '异议处理中', 'data-rating', 'comprehensive-rating']) assert.match(panel, new RegExp(evidence));
   assert.match(panel, /reason\.trim\(\)\.length < 10/);
+});
+
+test('V1.1 hold is rendered as pending confirmation while the technical reason remains auditable', async () => {
+  const detail = await readFile(resolve(__dirname, '../../app/videos/[id]/page.tsx'), 'utf8');
+  const panel = await readFile(resolve(__dirname, '../components/v11-evaluation-panel.tsx'), 'utf8');
+  const list = await readFile(resolve(__dirname, '../../app/videos/page.tsx'), 'utf8');
+  assert.match(detail, /contentEvaluationDisplay/);
+  assert.match(detail, /index === 0 \? contentDisplay\.state/);
+  assert.match(panel, /holdReasonLabel/);
+  assert.match(panel, /评估结果待确认/);
+  assert.match(panel, /holdType/);
+  assert.match(list, /contentEvaluationDisplay/);
 });
 
 test('video detail uses V1.1 as the only active content evaluation trigger', async () => {
