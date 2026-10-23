@@ -143,7 +143,7 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
       return { rawResponse: JSON.stringify({ dimensions: V11_CONTENT_DIMENSIONS.map(({ code }) => ({
         dimension: code, observationStatus: 'observed', anchor: 3, facts: [`${code} observed`],
         factClaims: [{ key: V11_FACT_CLAIMS[code][0], state: 'present', evidenceReferences: ['00:00-00:01'] }],
-        evidence: [{ startSeconds: 0, endSeconds: 1, reference: '00:00-00:01', description: `${code} evidence` }], observation: `${code} observation`,
+        evidence: [{ startSeconds: 0, endSeconds: 1, reference: '00:00-00:01', description: `${code} evidence` }], observation: `${code} observation`, improvementSuggestions: [],
       })), compliance: { status: 'clear', facts: [] } }) };
     } };
     const service = new V11ContentService(db as any, permissions, logs,

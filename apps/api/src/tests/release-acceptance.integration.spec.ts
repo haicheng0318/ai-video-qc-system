@@ -266,9 +266,10 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
         reason: 'Synthetic release benchmark approval.',
       }), 201);
       const { video, group } = await createStableDecision('V1.1 formal business path');
-      await json(await req(`/videos/${video.id}/supervisor-review`, 'admin', 'POST', {
+      const legacySupervisorPost = await req(`/videos/${video.id}/supervisor-review`, 'admin', 'POST', {
         decision: 'approved_for_publish', comment: 'Synthetic supervisor approval',
-      }), 201);
+      });
+      assert.equal(legacySupervisorPost.status, 409);
       const metric = await json(await req(`/videos/${video.id}/result-metrics`, 'admin', 'POST', {
         baseMetricId: null, dataStartDate: '2026-10-01', dataEndDate: '2026-10-02', views: 1000,
       }), 201);

@@ -14,7 +14,8 @@
     "test:browser:v11": "node scripts/v11-browser-acceptance.mjs",
     "test:browser:ui2": "node scripts/ui2-browser-acceptance.mjs",
     "test:browser:admin-credentials": "node scripts/admin-credential-browser-acceptance.mjs",
-    "test:browser:video-month": "node scripts/video-list-month-browser-acceptance.mjs"
+    "test:browser:video-month": "node scripts/video-list-month-browser-acceptance.mjs",
+    "test:browser:v120": "node scripts/v120-browser-acceptance.mjs"
   },
   "dependencies": {
     "@ai-video-qc/shared": "*",

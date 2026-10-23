@@ -46,6 +46,12 @@ enum VideoStatus {
   negative_case
 }
 
+enum VideoRecordState {
+  active
+  hidden
+  trashed
+}
+
 enum VideoType {
   product_card
   qianchuan_ad
@@ -93,6 +99,7 @@ model User {
   manager                 User?                  @relation("UserManager", fields: [managerId], references: [id])
   reports                 User[]                 @relation("UserManager")
   videos                  Video[]                @relation("VideoCreator")
+  videosRecordStateChanged Video[]               @relation("VideoRecordStateActor")
   supervisorReviews       SupervisorReview[]
   resultMetrics           VideoResultMetric[]
   finalConfirmations      FinalVideoEvaluation[] @relation("FinalConfirmedBy")
@@ -123,6 +130,8 @@ model Video {
   filePath              String                 @map("file_path") @db.Text
   fileUrl               String?                @map("file_url") @db.Text
   coverUrl              String?                @map("cover_url") @db.Text
+  coverPath             String?                @map("cover_path") @db.Text
+  coverSource           String?                @map("cover_source") @db.VarChar(20)
   mimeType              String                 @map("mime_type") @db.VarChar(100)
   fileSizeBytes         BigInt                 @map("file_size_bytes")
   duration              Int?
@@ -138,11 +147,15 @@ model Video {
   relatedRequirement    String?                @map("related_requirement") @db.Text
   creatorId             String                 @map("creator_id") @db.Uuid
   status                VideoStatus            @default(submitted)
+  recordState           VideoRecordState       @default(active) @map("record_state")
+  recordStateChangedAt  DateTime?              @map("record_state_changed_at")
+  recordStateChangedById String?               @map("record_state_changed_by_id") @db.Uuid
   parentVideoId         String?                @map("parent_video_id") @db.Uuid
   version               Int                    @default(1)
   createdAt             DateTime               @default(now()) @map("created_at")
   updatedAt             DateTime               @updatedAt @map("updated_at")
   creator               User                   @relation("VideoCreator", fields: [creatorId], references: [id])
+  recordStateChangedBy  User?                  @relation("VideoRecordStateActor", fields: [recordStateChangedById], references: [id], onDelete: Restrict)
   parentVideo           Video?                 @relation("VideoRevision", fields: [parentVideoId], references: [id])
   revisions             Video[]                @relation("VideoRevision")
   aiContentReviews      AiContentReview[]
@@ -165,6 +178,7 @@ model Video {
 
   @@index([creatorId])
   @@index([status])
+  @@index([recordState, createdAt])
   @@index([videoType])
   @@map("videos")
 }
@@ -631,6 +645,7 @@ model V11EvaluationInputRevision {
   promptVersion            String   @map("prompt_version") @db.VarChar(80)
   schemaVersion            String   @map("schema_version") @db.VarChar(80)
   rubricVersion            String   @map("rubric_version") @db.VarChar(80)
+  factClaimVersion         String?  @map("fact_claim_version") @db.VarChar(80)
   ratingVersion            String   @map("rating_version") @db.VarChar(80)
   preprocessingVersion     String   @map("preprocessing_version") @db.VarChar(80)
   referenceSetVersion      String   @map("reference_set_version") @db.VarChar(80)

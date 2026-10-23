@@ -6,6 +6,7 @@ import { apiFetch } from '../../lib/api';
 import { PolicySettings } from './policy-settings';
 import { useUnsavedChanges } from '../../lib/unsaved-changes';
 import { RuntimeFacts, RuntimeTable } from './runtime-panels';
+import { PRODUCT_VERSION } from '@ai-video-qc/shared';
 
 const sections = [['overview', '运行总览'], ['jobs', '评估任务'], ['ai', 'AI 配置与健康'], ['storage', '存储与清理'], ['usage', '调用与费用'], ['settings', '设置与版本'], ['logs', '操作日志'], ['security', '安全事件'], ['sessions', '会话中心'], ['dependencies', '依赖状态']] as const;
 const emptyFilters = { stage: '', status: '', scope: '', modelName: '', actionType: '', targetType: '', targetId: '', result: '', userId: '', videoId: '', from: '', to: '', page: 1 };
@@ -55,7 +56,7 @@ export function OperationsConsole() {
   async function openJob(id: string) { const current = ++detailSerial.current; setError(''); try { const value = await apiFetch<any>(`/api/admin/operations/jobs/${id}`); if (current === detailSerial.current) { setDetail(value); setReason(''); setConfirmed(false); } } catch (e) { if (current === detailSerial.current) setError(e instanceof Error ? e.message : '加载失败'); } }
   const safetyForm = <><label>操作原因<input value={reason} onChange={e => setReason(e.target.value)} maxLength={500} required /></label><label className="checkbox-label"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />我已检查记录并确认本次操作{section === 'jobs' ? '，重试可能产生新费用，并使用原提交人的额度' : ''}</label></>;
   const canAct = confirmed && Boolean(reason.trim()) && !busy;
-  return <main className="page" id="main-content"><div className="page-title"><div><p className="eyebrow">系统管理</p><h1>管理运行中心</h1><p className="muted">任务与资源观察、费用采集及配置审计。时间统一按上海时区显示。</p></div><button className="secondary-button" onClick={() => { if (!dirty || window.confirm('刷新将丢弃未保存编辑，确认继续？')) { dirtyKeys.current.clear(); setDirty(false); settingsLoaded.current = false; resetSettingsForms(n => n + 1); refresh(n => n + 1); } }} disabled={loading || busy}>刷新</button></div>
+  return <main className="page" id="main-content"><div className="page-title"><div><p className="eyebrow">系统管理</p><h1>管理运行中心</h1><p className="muted">任务与资源观察、费用采集及配置审计。时间统一按上海时区显示。</p><p className="muted">Product Version：V{PRODUCT_VERSION}{process.env.NEXT_PUBLIC_BUILD_SHA ? ` · Build ${process.env.NEXT_PUBLIC_BUILD_SHA.slice(0, 8)}` : ''}</p></div><button className="secondary-button" onClick={() => { if (!dirty || window.confirm('刷新将丢弃未保存编辑，确认继续？')) { dirtyKeys.current.clear(); setDirty(false); settingsLoaded.current = false; resetSettingsForms(n => n + 1); refresh(n => n + 1); } }} disabled={loading || busy}>刷新</button></div>
     <nav className="admin-navigation section-gap" aria-label="系统管理分组">
       <div><h2>系统总览</h2><div className="runtime-tabs">{sections.filter(([key]) => key === 'overview' || key === 'dependencies').map(([key, label]) => <button key={key} className={section === key ? 'primary-button' : 'secondary-button'} aria-current={section === key ? 'page' : undefined} onClick={() => choose(key)} disabled={busy}>{label}</button>)}</div></div>
       <div><h2>用户与权限</h2><div className="runtime-tabs"><Link className="secondary-button" href="/admin/users">用户与额度</Link><Link className="secondary-button" href="/admin/roles">角色权限</Link></div></div>

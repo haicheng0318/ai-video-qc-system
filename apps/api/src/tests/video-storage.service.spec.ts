@@ -12,6 +12,7 @@ const environmentNames = [
   'COS_REGION',
   'COS_BUCKET',
   'COS_VIDEO_PREFIX',
+  'COS_COVER_PREFIX',
   'VIDEO_UPLOAD_TEMP_DIR',
 ] as const;
 
@@ -24,9 +25,11 @@ test('COS storage uploads privately, materializes for AI, signs reads and delete
   const fakeCos = {
     putObject: async (params: Record<string, unknown>) => {
       calls.push({ action: 'put', params });
-      const body = params.Body as NodeJS.ReadableStream;
-      body.resume();
-      await finished(body);
+      const body = params.Body;
+      if (body && typeof body === 'object' && 'resume' in body) {
+        (body as NodeJS.ReadableStream).resume();
+        await finished(body as NodeJS.ReadableStream);
+      }
       return {};
     },
     deleteObject: async (params: Record<string, unknown>) => {
@@ -68,6 +71,12 @@ test('COS storage uploads privately, materializes for AI, signs reads and delete
     assert.match(storedPath, /^cos:\/\/ai-video-qc-test-1234567890\/ai-video-qc\/videos\/.+\.mp4$/);
     assert.equal(existsSync(uploadPath), false);
     assert.equal(calls[0].params.ACL, 'private');
+
+    const coverPath = await service.storeCover('video-id', Buffer.from('cover-bytes'), 'webp', 'image/webp');
+    const coverUpload = calls.find((call) => call.action === 'put' && call.params.ContentType === 'image/webp');
+    assert.match(coverPath, /^cos:\/\/ai-video-qc-test-1234567890\/ai-video-qc\/videos\/covers\//);
+    assert.equal(coverUpload?.params.ACL, 'private');
+    assert.equal(coverUpload?.params.ContentType, 'image/webp');
 
     const signedUrl = await service.createReadUrl(storedPath);
     assert.equal(signedUrl, 'https://private.example.test/signed-video');

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
-import { uploadVideoDirectly, usesDirectVideoUpload } from '@/lib/direct-video-upload';
+import { uploadVideoDirectly, uploadVideoMultipartWithProgress, usesDirectVideoUpload } from '@/lib/direct-video-upload';
 import { useUnsavedChanges } from '@/lib/unsaved-changes';
 
 const videoTypes = [
@@ -33,6 +33,7 @@ export default function NewVideoPage() {
     setError('');
     setSubmitting(true);
     setProgress(null);
+    setPhase('正在准备视频…');
     controller.current = new AbortController();
 
     try {
@@ -44,12 +45,15 @@ export default function NewVideoPage() {
           onProgress: (loaded, total) => setProgress(Math.round((loaded / total) * 100)),
           onPhase: (next) => setPhase(next === 'ticket' ? '正在申请安全上传凭证…' : next === 'uploading' ? '正在上传视频…' : '正在核验并登记视频…'),
         })
-        : await apiFetch<{ id: string }>('/api/videos', {
-          method: 'POST', headers: { 'Idempotency-Key': operationId.current }, body: form,
+        : await uploadVideoMultipartWithProgress(form, '/api/videos', operationId.current, {
+          operationId: operationId.current,
           signal: controller.current.signal,
+          onProgress: (loaded, total) => setProgress(Math.round((loaded / total) * 100)),
+          onPhase: (next) => setPhase(next === 'uploading' ? '正在上传视频…' : next === 'cover' ? '视频已登记，正在尝试处理封面…' : '正在核验上传文件…'),
         });
       operationId.current = crypto.randomUUID();
       setDirty(false);
+      if (result.coverGenerationFailed) sessionStorage.setItem(`v120-cover-failed:${result.id}`, '1');
       router.push(`/videos/${result.id}`);
     } catch (err) {
       setError(err instanceof DOMException && err.name === 'AbortError'

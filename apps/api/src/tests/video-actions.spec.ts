@@ -8,7 +8,8 @@ const video = (status: VideoStatus, creatorId = 'creator') => ({ status, creator
 
 test('server action list is status, ownership and role aware', () => {
   assert.deepEqual(allowedVideoActions(actor(UserRole.director, 'creator'), video(VideoStatus.submitted)), ['trigger_content_review', 'export_report']);
-  assert.deepEqual(allowedVideoActions(actor(UserRole.supervisor, 'creator'), { ...video(VideoStatus.pending_supervisor_review), creatorManagerId: 'boss' }), ['submit_supervisor_review', 'export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.supervisor, 'creator'), { ...video(VideoStatus.pending_supervisor_review), creatorManagerId: 'boss' }), ['submit_result_metrics', 'export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.admin), video(VideoStatus.pending_supervisor_review)), ['submit_result_metrics', 'export_report']);
   assert.deepEqual(allowedVideoActions(actor(UserRole.operator, 'creator'), video(VideoStatus.pending_result_data), { hasMetric: true }), ['submit_result_metrics', 'trigger_result_review', 'export_report']);
   assert.deepEqual(allowedVideoActions(actor(UserRole.director), video(VideoStatus.pending_result_data)), ['export_report']);
 });

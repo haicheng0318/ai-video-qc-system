@@ -63,10 +63,10 @@ test('video list and card prefer current V1.1 data and comprehensive ratings', a
   assert.match(list, /comprehensive\?\.comprehensiveRating/);
   assert.ok(list.indexOf('v11DataDecisions?.[0]?.dataRating') < list.indexOf('aiResultReviews?.[0]?.dataGrade'));
   assert.ok(list.indexOf('comprehensive?.comprehensiveRating') < list.indexOf('finalVideoEvaluations?.[0]?.finalGrade'));
-  assert.match(list, /name="dataRating"/);
-  assert.match(list, /name="comprehensiveRating"/);
-  assert.match(list, /'dataRating'/);
-  assert.match(list, /'comprehensiveRating'/);
+  assert.match(list, /name="businessStatus"/);
+  assert.match(list, /name="videoType"/);
+  assert.doesNotMatch(list, /name="dataRating"/);
+  assert.doesNotMatch(list, /name="comprehensiveRating"/);
 });
 
 test('administrator can resolve R and confirm a non-R comprehensive decision without editing its rating', async () => {

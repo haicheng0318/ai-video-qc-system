@@ -142,6 +142,7 @@ export class CasesService {
         ] } : {}),
         video: { AND: [
           visibility,
+          { recordState: 'active' },
           {
             ...(query.brand ? { brand: query.brand.trim() } : {}),
             ...(query.platform ? { platform: query.platform.trim() } : {}),

@@ -1,9 +1,10 @@
 import './globals.css';
 import { AuthBoundary } from '@/components/auth-boundary';
 import { AppShell } from '@/components/app-shell';
+import { PRODUCT_VERSION } from '@ai-video-qc/shared';
 
 export const metadata = {
-  title: 'AI短视频质检评估系统 V1.01',
+  title: `AI短视频质检评估系统 V${PRODUCT_VERSION}`,
   description: '内容中台 AI 短视频质检与有效产出评定系统',
 };
 

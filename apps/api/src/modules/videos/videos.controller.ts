@@ -28,6 +28,12 @@ import { videoUploadInterceptor } from './video-upload.config';
 import { CreateDirectUploadTicketDto } from './dto/create-direct-upload-ticket.dto';
 import { CreateDirectVideoDto } from './dto/create-direct-video.dto';
 import { CreateDirectVideoRevisionDto } from './dto/create-direct-video-revision.dto';
+import { VideoManagementDto } from './dto/video-management.dto';
+import { Roles } from '../permissions/roles.decorator';
+import { RolesGuard } from '../permissions/roles.guard';
+import { UserRole } from '@prisma/client';
+import { memoryStorage } from 'multer';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('videos')
 @UseGuards(JwtAuthGuard)
@@ -113,6 +119,47 @@ export class VideosController {
   @Get()
   list(@CurrentUser() user: AuthenticatedUser, @Query() query: VideoListQueryDto) {
     return this.videosService.list(user, query);
+  }
+
+  @Post(':id/hide')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.admin)
+  hide(@Param('id', ParseUUIDPipe) id: string, @Body() body: VideoManagementDto, @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.videosService.manageRecordState(id, 'hidden', body.reason, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+  }
+
+  @Post(':id/trash')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.admin)
+  trash(@Param('id', ParseUUIDPipe) id: string, @Body() body: VideoManagementDto, @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.videosService.manageRecordState(id, 'trashed', body.reason, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+  }
+
+  @Post(':id/restore')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.admin)
+  restore(@Param('id', ParseUUIDPipe) id: string, @Body() body: VideoManagementDto, @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.videosService.manageRecordState(id, 'active', body.reason, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+  }
+
+  @Post(':id/cover')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }))
+  uploadCover(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File, @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.videosService.uploadCover(id, file, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+  }
+
+  @Post(':id/cover/regenerate')
+  regenerateCover(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser, @Req() request: Request) {
+    return this.videosService.regenerateCover(id, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+  }
+
+  @Get(':id/cover')
+  async cover(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser, @Req() request: Request, @Res() response: Response) {
+    const cover = await this.videosService.prepareCoverFile(id, user, { ipAddress: request.ip, userAgent: request.headers['user-agent'] });
+    if (!cover) throw new NotFoundException('Video cover not found.');
+    response.setHeader('Content-Type', cover.contentType);
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.sendFile(cover.path, (error) => { void cover.cleanup(); if (error && !response.headersSent) response.status(404).end(); });
   }
 
   @Post(':id/content-review')
