@@ -5,7 +5,7 @@ import { UserRole, VideoStatus, VideoType } from '@prisma/client';
 import { PermissionsService } from '../modules/permissions/permissions.service';
 
 const actor = (role: UserRole) => ({ id: `${role}-id`, account: role, name: role, role, managerId: null });
-const video = (creatorId: string) => ({ id: '00000000-0000-4000-8000-000000000202', creatorId, videoType: VideoType.organic, isForAds: false, status: VideoStatus.pending_rule_engine }) as never;
+const video = (creatorId: string) => ({ id: '00000000-0000-4000-8000-000000000202', creatorId, videoType: VideoType.organic, isForAds: false, status: VideoStatus.pending_rule_engine, recordState: 'active' }) as never;
 
 test('admin can execute rule engine globally', async () => {
   await new PermissionsService({} as never, { create: async () => undefined } as never).assertCanExecuteRuleEngine(actor(UserRole.admin), video('another-user'), {});

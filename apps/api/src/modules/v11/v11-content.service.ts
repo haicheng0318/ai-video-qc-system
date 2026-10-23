@@ -11,7 +11,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VideoStorageService } from '../storage/video-storage.service';
 import { calculateV11ContentScore, V11_CONTENT_RATING_VERSION } from './content-scoring';
 import { buildV11ContentPrompt } from './content-prompt';
+import { V11_FACT_CLAIM_VERSION } from './fact-claims';
 import { assertEvidenceWithinDuration, V11ContentModelOutputSchema, v11ContentResponseJsonSchema } from './content-schema';
+import { buildAdoptedContentDiagnostics } from './content-diagnostics';
 import { createMediaManifest } from './media-manifest';
 import { decideFirstRunReview, decideReviewProgress, ReviewRun } from './review-engine';
 import { evaluateContentGate } from './gate-engine';
@@ -272,6 +274,7 @@ export class V11ContentService {
           promptVersion: V11_PROMPT_VERSION,
           schemaVersion: V11_SCHEMA_VERSION,
           rubricVersion: V11_RUBRIC_VERSION,
+          factClaimVersion: V11_FACT_CLAIM_VERSION,
           ratingVersion: V11_CONTENT_RATING_VERSION,
           preprocessingVersion: V11_PREPROCESSING_VERSION,
           referenceSetVersion: V11_REFERENCE_SET_VERSION,
@@ -510,17 +513,14 @@ export class V11ContentService {
           await tx.v11WorkflowHold.updateMany({ where: { groupId: run.groupId, holdType: 'appeal', status: 'active' }, data: { status: 'resolved', resolvedAt: new Date() } });
         }
         if (!run.group.shadowMode) {
-          const policy = await readPolicy(tx, 'v11_workflow_gates');
           const [hasHold, hasAppeal] = await Promise.all([
             tx.v11WorkflowHold.count({ where: { workflowRevisionId: run.group.workflowRevisionId, status: 'active' } }),
             tx.v11Appeal.count({ where: { workflowRevisionId: run.group.workflowRevisionId, status: 'active' } }),
           ]);
-          const gate = evaluateContentGate({ manualEnabled: policy.manualContentReviewEnabled, rating: progress.contentRating, stable: true, inputComplete: true, complianceStatus: worstCompliance(succeeded.map((item) => item.complianceStatus!)), hasHold: hasHold > 0, hasAppeal: hasAppeal > 0, stale: false });
+          const gate = evaluateContentGate({ manualEnabled: false, rating: progress.contentRating, stable: true, inputComplete: true, complianceStatus: worstCompliance(succeeded.map((item) => item.complianceStatus!)), hasHold: hasHold > 0, hasAppeal: hasAppeal > 0, stale: false });
           if (gate.decision === 'approved' || gate.decision === 'revision_required') {
             await tx.v11WorkflowGateDecision.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, stage: 'content', decision: gate.decision, decisionSource: 'system', reason: gate.decision === 'approved' ? '稳定、完整且合规清晰的内容评估通过自动关卡。' : '内容评级为 C/D，自动进入优化返修。', performanceEligible: false } });
             await tx.video.update({ where: { id: job.videoId }, data: { status: gate.decision === 'approved' ? 'approved_for_publish' : 'revision_required' } });
-          } else if (gate.decision === 'manual_review') {
-            await tx.video.update({ where: { id: job.videoId }, data: { status: 'pending_supervisor_review' } });
           }
         }
         await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_decision', targetId: decision.id, actionType: run.group.shadowMode ? 'v11_content_shadow_completed' : 'v11_content_review_completed', result: 'success', afterValue: { contentRating: progress.contentRating, totalScore: progress.totalScore, runCount: succeeded.length, shadowMode: run.group.shadowMode } }, tx);
@@ -554,8 +554,18 @@ export class V11ContentService {
         ? { ...businessWhere, decision: { is: { id: workflow.activeContentDecisionId } } }
         : businessWhere,
       ...(workflow?.activeContentDecisionId ? {} : { orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }] }),
-      include: { runs: { orderBy: { runNumber: 'asc' }, select: { id: true, runNumber: true, runRole: true, status: true, totalScore: true, contentRating: true, complianceStatus: true, stale: true, completedAt: true } }, decision: { select: { id: true, totalScore: true, contentRating: true, complianceStatus: true, inputComplete: true, stable: true, decisionSource: true, adoptionMethod: true, decidedAt: true } }, workflowRevision: { select: { revision: true, status: true } } },
+      include: { inputRevision: { select: { factClaimVersion: true } }, runs: { orderBy: { runNumber: 'asc' }, select: { id: true, runNumber: true, runRole: true, status: true, totalScore: true, contentRating: true, complianceStatus: true, stale: true, completedAt: true, modelProvider: true, modelName: true, promptVersion: true, schemaVersion: true, rubricVersion: true, structuredOutput: true } }, decision: { select: { id: true, sourceRunIds: true, adoptedDimensions: true, totalScore: true, contentRating: true, complianceStatus: true, inputComplete: true, stable: true, decisionSource: true, adoptionMethod: true, decidedAt: true } }, workflowRevision: { select: { revision: true, status: true } } },
     });
-    return { shadowMode: group?.shadowMode ?? false, group };
+    const responseGroup = !group ? group : user.role === UserRole.admin
+      ? { ...group, runs: group.runs.map((run) => ({ ...run, factClaimVersion: group.inputRevision?.factClaimVersion ?? null })) }
+      : { ...group, inputRevision: undefined, runs: group.runs.map(({ structuredOutput: _structuredOutput, modelProvider: _modelProvider, modelName: _modelName, promptVersion: _promptVersion, schemaVersion: _schemaVersion, rubricVersion: _rubricVersion, ...run }) => run) };
+    if (!group?.decision) return { shadowMode: group?.shadowMode ?? false, group: responseGroup, diagnostics: null };
+    const diagnostics = buildAdoptedContentDiagnostics({
+      runs: group.runs ?? [],
+      sourceRunIds: group.decision.sourceRunIds,
+      adoptedDimensions: group.decision.adoptedDimensions,
+      decisionTotalScore: group.decision.totalScore,
+    });
+    return { shadowMode: group.shadowMode, group: responseGroup, ...diagnostics };
   }
 }

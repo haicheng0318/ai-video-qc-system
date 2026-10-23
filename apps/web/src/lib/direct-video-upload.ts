@@ -1,3 +1,5 @@
+import { apiBaseUrl } from './api';
+
 type ApiRequest = (path: string, init?: RequestInit) => Promise<unknown>;
 
 type UploadTicket = {
@@ -11,8 +13,44 @@ export type UploadOptions = {
   operationId: string;
   signal?: AbortSignal;
   onProgress?: (loaded: number, total: number) => void;
-  onPhase?: (phase: 'ticket' | 'uploading' | 'confirming') => void;
+  onPhase?: (phase: 'ticket' | 'uploading' | 'confirming' | 'cover') => void;
 };
+
+export async function uploadVideoMultipartWithProgress(
+  formData: FormData,
+  path: string,
+  operationId: string,
+  options: UploadOptions = { operationId },
+): Promise<{ id: string; coverGenerationFailed?: boolean }> {
+  const file = requiredVideoFile(formData);
+  await validateVideoFile(file);
+  options.onPhase?.('uploading');
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    xhr.open('POST', `${apiBaseUrl}${path}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('X-QC-CSRF', '1');
+    xhr.setRequestHeader('Idempotency-Key', operationId);
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) options.onProgress?.(event.loaded, event.total); };
+    xhr.onload = () => {
+      options.signal?.removeEventListener('abort', abort);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        options.onPhase?.('cover');
+        try { resolve(JSON.parse(xhr.responseText) as { id: string }); }
+        catch { reject(new Error('服务器返回了无法识别的上传结果。')); }
+      } else {
+        let message = `视频上传失败（${xhr.status}）。`;
+        try { const payload = JSON.parse(xhr.responseText) as { message?: string | string[] }; message = Array.isArray(payload.message) ? payload.message.join('；') : payload.message || message; } catch {}
+        reject(new Error(message));
+      }
+    };
+    xhr.onerror = () => { options.signal?.removeEventListener('abort', abort); reject(new Error('视频上传网络中断，请保持页面并重试。')); };
+    xhr.onabort = () => { options.signal?.removeEventListener('abort', abort); reject(new DOMException('上传已取消', 'AbortError')); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort(); else xhr.send(formData);
+  });
+}
 
 function requiredVideoFile(formData: FormData) {
   const file = formData.get('file');
@@ -63,7 +101,7 @@ export async function uploadVideoDirectly(
   formData: FormData,
   finalizePath: string,
   options: UploadOptions = { operationId: crypto.randomUUID() },
-): Promise<{ id: string }> {
+): Promise<{ id: string; coverGenerationFailed?: boolean }> {
   const file = requiredVideoFile(formData);
   await validateVideoFile(file);
   options.onPhase?.('ticket');
@@ -82,6 +120,7 @@ export async function uploadVideoDirectly(
   }
 
   options.onPhase?.('confirming');
+  options.onPhase?.('cover');
   return request(finalizePath, {
     method: 'POST',
     headers: { 'Idempotency-Key': options.operationId },
@@ -92,5 +131,5 @@ export async function uploadVideoDirectly(
       mimeType: file.type,
       fileSizeBytes: file.size,
     }),
-  }) as Promise<{ id: string }>;
+  }) as Promise<{ id: string; coverGenerationFailed?: boolean }>;
 }

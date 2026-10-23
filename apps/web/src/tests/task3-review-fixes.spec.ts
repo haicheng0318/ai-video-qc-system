@@ -129,7 +129,10 @@ test('dirty guards stay enabled during submission until success is known', async
 
 test('multipart upload binds the cancel signal to the actual request', async () => {
   const source = await readFile(resolve(__dirname, '../../app/videos/new/page.tsx'), 'utf8');
-  assert.match(source, /apiFetch<\{ id: string \}>\('\/api\/videos',[\s\S]*?signal: controller\.current\.signal/);
+  assert.match(source, /uploadVideoMultipartWithProgress\(form,[\s\S]*?signal: controller\.current\.signal/);
+  const uploader = await readFile(resolve(__dirname, '../lib/direct-video-upload.ts'), 'utf8');
+  assert.match(uploader, /xhr\.upload\.onprogress/);
+  assert.match(uploader, /options\.signal\?\.addEventListener\('abort', abort/);
 });
 
 test('browser acceptance blocks redirects, service workers and every external browser request', async () => {

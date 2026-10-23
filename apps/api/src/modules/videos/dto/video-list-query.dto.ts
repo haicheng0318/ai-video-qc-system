@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
-import { VideoStatus, VideoType } from '@prisma/client';
+import { VideoRecordState, VideoStatus, VideoType } from '@prisma/client';
 
 export class VideoListQueryDto {
   @IsOptional()
@@ -25,6 +25,14 @@ export class VideoListQueryDto {
   @IsOptional()
   @IsEnum(VideoStatus)
   status?: VideoStatus;
+
+  @IsOptional()
+  @IsIn(['pending', 'processing', 'waiting_data', 'completed', 'exception'])
+  businessStatus?: 'pending' | 'processing' | 'waiting_data' | 'completed' | 'exception';
+
+  @IsOptional()
+  @IsEnum(VideoRecordState)
+  recordState?: VideoRecordState;
 
   @IsOptional()
   @IsEnum(VideoType)

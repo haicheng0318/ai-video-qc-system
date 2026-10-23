@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
+import { FormEvent, use, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { VideoPlayer } from '@/components/video-player';
 import { ApiUser } from '@/lib/api';
 import { loadVideoDetailRequests } from '@/lib/video-detail-loader';
-import { SupervisorReviewPanel, SupervisorReviewView } from '@/components/supervisor-review-panel';
+import { SupervisorReviewView } from '@/components/supervisor-review-panel';
 import { VideoRevisionPanel } from '@/components/video-revision-panel';
 import { VideoVersionChain } from '@/components/video-version-chain';
 import { ResultMetricsPanel } from '@/components/result-metrics-panel';
@@ -69,6 +70,7 @@ type VideoDetail = {
   platform?: string;
   videoType: VideoType;
   status: string;
+  coverUrl?: string | null;
   scriptDescription?: string;
   isForAds: boolean;
   isEventVideo: boolean;
@@ -97,24 +99,24 @@ type VideoDetail = {
 };
 
 type VersionLink = { id: string; title: string; status: string; version: number };
-type DetailTab = 'content' | 'metrics' | 'final' | 'versions' | 'logs';
-const detailTabs: Array<[DetailTab, string]> = [['content', '评估结果'], ['metrics', '数据表现'], ['final', '综合决策'], ['versions', '版本记录'], ['logs', '操作记录']];
+type DetailTab = 'content' | 'metrics' | 'final' | 'records';
+const detailTabs: Array<[DetailTab, string]> = [['content', '内容评估'], ['metrics', '数据表现'], ['final', '综合结果'], ['records', '记录']];
 const actionTabs: Record<string, DetailTab> = {
-  trigger_content_review: 'content', submit_supervisor_review: 'content', upload_revision: 'content',
+  trigger_content_review: 'content', upload_revision: 'content',
   submit_result_metrics: 'metrics', trigger_result_review: 'metrics', execute_rule_engine: 'final',
   trigger_final_evaluation: 'final', confirm_final_evaluation: 'final', mark_case: 'final',
 };
 const workflowSteps = [
   { label: '内容评估', statuses: ['submitted', 'ai_content_reviewing', 'ai_content_failed'] },
-  { label: '主管审核', statuses: ['pending_supervisor_review', 'revision_required', 'invalid_content'] },
-  { label: '数据表现', statuses: ['approved_for_publish', 'pending_result_data', 'pending_data'] },
+  { label: '内容优化', statuses: ['pending_supervisor_review', 'revision_required', 'invalid_content'] },
+  { label: '数据表现', statuses: ['approved_for_publish', 'pending_supervisor_review', 'pending_result_data', 'pending_data'] },
   { label: 'AI复盘', statuses: ['ai_result_reviewing', 'ai_result_failed'] },
   { label: '综合判断', statuses: ['pending_rule_engine', 'pending_final_evaluation', 'final_evaluation_failed'] },
   { label: '负责人确认', statuses: ['pending_final_confirmation', 'final_effective', 'final_low_effective', 'final_invalid'] },
 ];
 
 const actionLabels: Record<string, string> = {
-  trigger_content_review: '可开始内容评估', submit_supervisor_review: '可进行主管初审', upload_revision: '可上传返修版本',
+  trigger_content_review: '可开始内容评估', upload_revision: '可上传返修版本',
   submit_result_metrics: '可补充运营/投放数据', trigger_result_review: '可开始数据复盘', execute_rule_engine: '可执行规则判断',
   trigger_final_evaluation: '可生成最终评定建议', confirm_final_evaluation: '等待负责人确认', mark_case: '可进行案例库标记',
 };
@@ -137,6 +139,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const [contentReview, setContentReview] = useState<ContentReview | null>(null);
   const [error, setError] = useState('');
   const [latestError, setLatestError] = useState('');
+  const [coverNotice, setCoverNotice] = useState(false);
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [supervisorReview, setSupervisorReview] = useState<SupervisorReviewView | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('content');
@@ -167,9 +170,13 @@ function VideoDetail({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     active.current = true;
+    if (sessionStorage.getItem(`v120-cover-failed:${params.id}`) === '1') {
+      sessionStorage.removeItem(`v120-cover-failed:${params.id}`);
+      setCoverNotice(true);
+    }
     loadVideo().catch(() => { if (active.current) setError('详情暂时无法加载，请检查网络后重试。'); });
     return () => { active.current = false; };
-  }, [loadVideo]);
+  }, [loadVideo, params.id]);
 
   if (error) {
     return (
@@ -191,7 +198,6 @@ function VideoDetail({ params }: { params: { id: string } }) {
 
   const allowedActions = video.allowedActions || [];
   const canTriggerReview = allowedActions.includes('trigger_content_review');
-  const canReview = allowedActions.includes('submit_supervisor_review');
   const canUploadRevision = allowedActions.includes('upload_revision');
   const latestDataReview = video.aiResultReviews?.[0];
   const latestFinal = video.finalVideoEvaluations?.[0];
@@ -200,6 +206,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
   const workflowIndex = workflowSteps.findIndex((step) => step.statuses.includes(video.status));
   const workflowComplete = ['final_effective', 'final_low_effective', 'final_invalid'].includes(video.status);
   const contentDisplay = contentEvaluationDisplay({ videoStatus: video.status, ...v11ContentState });
+  const canManageCover = currentUser?.role === 'admin' || currentUser?.id === video.creator?.id;
 
   return (
     <main className="page" id="main-content">
@@ -219,6 +226,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
       </div>
       <div id="v11-detail-summary" />
       <div className="detail-grid">
+        {coverNotice ? <p className="notice-banner" role="status">视频上传成功，封面生成失败，可稍后重新生成。</p> : null}
         <VideoPlayer videoId={params.id} />
         <aside className="panel">
           <h2>基础信息</h2>
@@ -230,6 +238,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
           <p>用于投放：{video.isForAds ? '是' : '否'}</p>
           <p>节点视频：{video.isEventVideo ? '是' : '否'}</p>
           <p>节点名称：{video.eventName || '-'}</p>
+          {canManageCover ? <CoverManager videoId={video.id} coverUrl={video.coverUrl || null} onSaved={() => void loadVideo()} /> : null}
         </aside>
       </div>
       <details className="legacy-summary section-gap">
@@ -256,7 +265,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         })}
       </ol>
       <nav className="detail-tabs" aria-label="视频评估详情" role="tablist">
-        {detailTabs.map(([value, label], index) => <button key={value} id={`detail-tab-${value}`} type="button" role="tab" tabIndex={activeTab === value ? 0 : -1} className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} aria-controls={`detail-panel-${value}${value === 'content' ? ' detail-panel-supervisor' : value === 'metrics' ? ' detail-panel-result' : value === 'final' ? ' detail-panel-confirmation' : ''}`} onClick={() => setActiveTab(value)} onKeyDown={(event) => {
+        {detailTabs.map(([value, label], index) => <button key={value} id={`detail-tab-${value}`} type="button" role="tab" tabIndex={activeTab === value ? 0 : -1} className={activeTab === value ? 'active' : ''} aria-selected={activeTab === value} aria-controls={`detail-panel-${value}${value === 'metrics' ? ' detail-panel-result' : value === 'final' ? ' detail-panel-confirmation' : ''}`} onClick={() => setActiveTab(value)} onKeyDown={(event) => {
           const target = event.key === 'Home' ? 0 : event.key === 'End' ? detailTabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % detailTabs.length : event.key === 'ArrowLeft' ? (index + detailTabs.length - 1) % detailTabs.length : -1;
           if (target < 0) return;
           event.preventDefault();
@@ -321,15 +330,6 @@ function VideoDetail({ params }: { params: { id: string } }) {
         ) : null}
         {currentUser?.role === 'admin' ? <details className="section-gap"><summary>技术详情</summary><dl><dt>Review ID</dt><dd>{contentReview?.id || '-'}</dd><dt>Model Provider</dt><dd>{contentReview?.modelProvider || '-'}</dd><dt>Model Name</dt><dd>{contentReview?.modelName || '-'}</dd><dt>Prompt Version</dt><dd>{contentReview?.promptVersion || '-'}</dd><dt>Scoring Version</dt><dd>{contentReview?.scoringVersion || '-'}</dd></dl></details> : null}
       </details>
-      </div>
-      <div id="detail-panel-supervisor" role="region" aria-label="主管审核" hidden={activeTab !== 'content'}>
-      <h2>主管审核</h2>
-      <SupervisorReviewPanel
-        videoId={video.id}
-        canReview={canReview}
-        review={supervisorReview || video.supervisorReview || null}
-        onCompleted={loadVideo}
-      />
       {canUploadRevision && (supervisorReview || video.supervisorReview) ? (
         <VideoRevisionPanel
           parentVideoId={video.id}
@@ -337,15 +337,6 @@ function VideoDetail({ params }: { params: { id: string } }) {
           requirements={(supervisorReview || video.supervisorReview)?.revisionRequirements || []}
         />
       ) : null}
-      </div>
-      <div id="detail-panel-versions" role="tabpanel" aria-labelledby="detail-tab-versions" hidden={activeTab !== 'versions'}>
-      <h2>版本历史</h2>
-      <VideoVersionChain
-        currentId={video.id}
-        chain={video.versionChain || []}
-        parent={video.parentVideo || null}
-        revisions={video.revisions || []}
-      />
       </div>
       <div id="detail-panel-metrics" role="tabpanel" aria-labelledby="detail-tab-metrics" hidden={activeTab !== 'metrics'}>
       <h2>运营投放数据</h2>
@@ -399,7 +390,13 @@ function VideoDetail({ params }: { params: { id: string } }) {
         allowedActions={allowedActions}
       />
       </div>
-      <div id="detail-panel-logs" role="tabpanel" aria-labelledby="detail-tab-logs" hidden={activeTab !== 'logs'}>
+      <div id="detail-panel-records" role="tabpanel" aria-labelledby="detail-tab-records" hidden={activeTab !== 'records'}>
+      <section className="panel section-gap">
+        <h2>版本记录</h2>
+        <VideoVersionChain currentId={video.id} chain={video.versionChain || []} parent={video.parentVideo || null} revisions={video.revisions || []} />
+        <h3>历史主管审核</h3>
+        {supervisorReview || video.supervisorReview ? <p>{displayLabel(videoStatusLabels, (supervisorReview || video.supervisorReview)!.decision)} · {(supervisorReview || video.supervisorReview)!.comment || '无补充说明'} · {formatShanghaiDateTime((supervisorReview || video.supervisorReview)!.reviewedAt)}</p> : <p className="muted">暂无历史主管审核记录。</p>}
+      </section>
       <section className="panel section-gap">
         <h2>操作日志</h2>
         <table className="table">
@@ -424,4 +421,27 @@ function VideoDetail({ params }: { params: { id: string } }) {
       </div>
     </main>
   );
+}
+
+function CoverManager({ videoId, coverUrl, onSaved }: { videoId: string; coverUrl: string | null; onSaved: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function upload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = new FormData(form).get('file');
+    if (!(file instanceof File)) { setError('请选择封面图片。'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('封面图片不能超过 5MB。'); return; }
+    setBusy(true); setError('');
+    try { const body = new FormData(); body.set('file', file); await apiFetch(`/api/videos/${videoId}/cover`, { method: 'POST', body }); form.reset(); onSaved(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '封面上传失败。'); }
+    finally { setBusy(false); }
+  }
+  async function regenerate() {
+    setBusy(true); setError('');
+    try { await apiFetch(`/api/videos/${videoId}/cover/regenerate`, { method: 'POST' }); onSaved(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '默认封面生成失败。'); }
+    finally { setBusy(false); }
+  }
+  return <section className="cover-manager"><h3>视频封面</h3>{coverUrl ? <Image src={coverUrl} alt="当前视频封面" width={1280} height={720} unoptimized priority={false} /> : <p className="muted">尚无封面</p>}<form onSubmit={upload}><label className="form-field">上传自定义封面<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required disabled={busy} /></label><small className="muted">JPG、PNG 或 WEBP，最大 5MB</small><button className="button secondary" type="submit" disabled={busy}>上传封面</button></form><button className="button secondary" type="button" onClick={() => void regenerate()} disabled={busy}>重新生成默认封面</button>{error ? <p className="error" role="alert">{error}</p> : null}</section>;
 }

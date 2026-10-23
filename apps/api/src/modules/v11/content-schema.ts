@@ -32,6 +32,7 @@ const observedDimensionSchema = z.object({
   factClaims: z.array(factClaimSchema).min(1).max(20),
   evidence: z.array(evidenceSchema).min(1).max(20),
   observation: z.string().trim().min(1).max(1500),
+  improvementSuggestions: z.array(z.string().trim().min(1).max(500)).max(3),
 }).strict();
 
 const unknownDimensionSchema = z.object({
@@ -42,6 +43,7 @@ const unknownDimensionSchema = z.object({
   factClaims: z.array(factClaimSchema).max(20),
   evidence: z.array(evidenceSchema).max(20),
   observation: z.string().trim().min(1).max(1500),
+  improvementSuggestions: z.array(z.string().trim().min(1).max(500)).max(3),
 }).strict();
 
 export const V11ContentModelOutputSchema = z.object({
@@ -121,7 +123,7 @@ function factClaimJsonSchema(dimension: (typeof V11_CONTENT_DIMENSIONS)[number][
 
 const dimensionJsonSchemas = V11_CONTENT_DIMENSIONS.map(({ code }) => ({
   type: 'object',
-  required: ['dimension', 'observationStatus', 'anchor', 'facts', 'factClaims', 'evidence', 'observation'],
+  required: ['dimension', 'observationStatus', 'anchor', 'facts', 'factClaims', 'evidence', 'observation', 'improvementSuggestions'],
   properties: {
     dimension: { type: 'string', const: code },
     observationStatus: { type: 'string', enum: ['observed', 'unknown'] },
@@ -130,6 +132,7 @@ const dimensionJsonSchemas = V11_CONTENT_DIMENSIONS.map(({ code }) => ({
     factClaims: { type: 'array', maxItems: 20, items: factClaimJsonSchema(code) },
     evidence: { type: 'array', items: evidenceJsonSchema },
     observation: { type: 'string' },
+    improvementSuggestions: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 500 } },
   },
   additionalProperties: false,
 }));

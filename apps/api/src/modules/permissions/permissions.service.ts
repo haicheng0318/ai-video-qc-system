@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { UserRole, Video } from '@prisma/client';
+import { UserRole, Video, VideoRecordState } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
@@ -20,7 +20,7 @@ export class PermissionsService {
     if (user.role === UserRole.admin) {
       return {};
     }
-    return { creatorId: user.id };
+    return { creatorId: user.id, recordState: VideoRecordState.active };
   }
 
   async assertCanAccessVideo(
@@ -28,8 +28,9 @@ export class PermissionsService {
     video: Video & { creator?: { managerId: string | null } },
     requestMeta?: { ipAddress?: string; userAgent?: string; action?: string },
   ) {
-    const allowed =
-      user.role === UserRole.admin || video.creatorId === user.id;
+    const allowed = user.role === UserRole.admin
+      ? true
+      : video.creatorId === user.id && video.recordState === VideoRecordState.active;
 
     if (!allowed) {
       await this.operationLogsService.create({
@@ -52,6 +53,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       user.role === UserRole.admin || video.creatorId === user.id;
 
@@ -76,6 +78,7 @@ export class PermissionsService {
     video: Video & { creator?: { managerId: string | null } },
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       user.role === UserRole.admin ||
       (user.role === UserRole.supervisor &&
@@ -93,6 +96,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       video.creatorId === user.id || user.role === UserRole.admin;
 
@@ -107,6 +111,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     if (!canManageResultData(user, video)) {
       await this.logVideoPermissionDenied(
         user,
@@ -123,6 +128,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     if (!canManageResultData(user, video)) {
       await this.logVideoPermissionDenied(
         user,
@@ -139,6 +145,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Rule engine execution denied.', requestMeta);
@@ -151,6 +158,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'AI final evaluation trigger denied.', requestMeta);
@@ -163,6 +171,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Final confirmation denied.', requestMeta);
@@ -175,6 +184,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Case marking denied.', requestMeta);
@@ -221,5 +231,11 @@ export class PermissionsService {
       ipAddress: requestMeta?.ipAddress,
       userAgent: requestMeta?.userAgent,
     });
+  }
+
+  private assertVideoActive(video: Video) {
+    if (video.recordState !== VideoRecordState.active) {
+      throw new ForbiddenException('该视频已隐藏或移入回收站，不能执行此操作。');
+    }
   }
 }

@@ -25,6 +25,7 @@ type MetricValues = Partial<Record<ResultMetricField, MetricValue>>;
 
 const allowedStatuses = new Set<VideoStatus>([
   VideoStatus.approved_for_publish,
+  VideoStatus.pending_supervisor_review,
   VideoStatus.pending_result_data,
   VideoStatus.ai_result_failed,
   VideoStatus.pending_data,

@@ -10,6 +10,7 @@ const video = {
   title: 'Video',
   creatorId: 'director-id',
   status: VideoStatus.pending_supervisor_review,
+  recordState: 'active',
   videoType: VideoType.product_card,
   creator: { managerId: 'supervisor-id' },
 } as unknown as Video & { creator: { managerId: string | null } };

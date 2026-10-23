@@ -1,33 +1,17 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, VideoStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  CreateSupervisorReviewDto,
-  SupervisorReviewDecision,
-} from './dto/create-supervisor-review.dto';
+import { CreateSupervisorReviewDto } from './dto/create-supervisor-review.dto';
 
 type RequestMeta = { ipAddress?: string; userAgent?: string };
-
-const decisionStatus: Record<SupervisorReviewDecision, VideoStatus> = {
-  [SupervisorReviewDecision.ApprovedForPublish]: VideoStatus.approved_for_publish,
-  [SupervisorReviewDecision.RevisionRequired]: VideoStatus.revision_required,
-  [SupervisorReviewDecision.InvalidContent]: VideoStatus.invalid_content,
-};
-
-const decisionAction: Record<SupervisorReviewDecision, string> = {
-  [SupervisorReviewDecision.ApprovedForPublish]: OperationLogAction.SupervisorReviewApproved,
-  [SupervisorReviewDecision.RevisionRequired]: OperationLogAction.SupervisorReviewRevisionRequired,
-  [SupervisorReviewDecision.InvalidContent]: OperationLogAction.SupervisorReviewInvalidContent,
-};
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -42,97 +26,12 @@ export class SupervisorReviewsService {
   ) {}
 
   async create(
-    videoId: string,
-    dto: CreateSupervisorReviewDto,
-    user: AuthenticatedUser,
-    requestMeta: RequestMeta,
+    _videoId: string,
+    _dto: CreateSupervisorReviewDto,
+    _user: AuthenticatedUser,
+    _requestMeta: RequestMeta,
   ) {
-    const revisionRequirements = this.validateRequiredReason(dto);
-    const video = await this.findVideo(videoId);
-    await this.permissionsService.assertCanSubmitSupervisorReview(user, video, requestMeta);
-
-    try {
-      const review = await this.prisma.$transaction(async (transaction) => {
-        await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
-        const lockedVideo = await transaction.video.findUnique({
-          where: { id: videoId },
-          include: { creator: { select: { managerId: true } } },
-        });
-        if (!lockedVideo) throw new NotFoundException('Video not found.');
-
-        if (lockedVideo.status !== VideoStatus.pending_supervisor_review) {
-          throw new ConflictException('Video status does not allow supervisor review.');
-        }
-        const existingReview = await transaction.supervisorReview.findUnique({ where: { videoId } });
-        if (existingReview) throw new ConflictException('This video has already been reviewed.');
-
-        const workflow = await transaction.v11WorkflowRevision.findFirst({
-          where: { videoId, status: 'current', activeContentDecisionId: { not: null } },
-          orderBy: { revision: 'desc' },
-          select: { activeContentDecisionId: true },
-        });
-        const contentDecision = workflow?.activeContentDecisionId
-          ? await transaction.v11EvaluationDecision.findFirst({
-            where: {
-              id: workflow.activeContentDecisionId,
-              inputComplete: true,
-              stable: true,
-              group: { videoId, shadowMode: false },
-            },
-            select: { id: true, complianceStatus: true },
-          })
-          : null;
-        if (!contentDecision) {
-          throw new ConflictException('A current formal V1.1 content decision is required.');
-        }
-
-        const created = await transaction.supervisorReview.create({
-          data: {
-            videoId,
-            reviewerId: user.id,
-            v11ContentDecisionId: contentDecision.id,
-            decision: dto.decision,
-            isAllowedToPublish: dto.decision === SupervisorReviewDecision.ApprovedForPublish,
-            comment: dto.comment?.trim() || null,
-            revisionRequirements:
-              revisionRequirements.length > 0 ? revisionRequirements : Prisma.JsonNull,
-            reviewedAt: new Date(),
-          },
-          include: {
-            reviewer: { select: { id: true, name: true, account: true, role: true } },
-          },
-        });
-
-        await transaction.video.update({
-          where: { id: videoId },
-          data: { status: decisionStatus[dto.decision] },
-        });
-        await this.operationLogsService.create({
-          userId: user.id,
-          videoId,
-          targetType: 'supervisor_review',
-          targetId: created.id,
-          actionType: decisionAction[dto.decision],
-          result: 'success',
-          afterValue: {
-            decision: dto.decision,
-            v11ContentDecisionId: contentDecision.id,
-            comment: dto.comment?.trim() || null,
-          },
-          comment: 'Supervisor review submitted.',
-          ipAddress: requestMeta.ipAddress,
-          userAgent: requestMeta.userAgent,
-        }, transaction);
-
-        return created;
-      });
-      return this.toResponse(review);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('This video has already been reviewed.');
-      }
-      throw error;
-    }
+    throw new ConflictException('当前版本已取消日常人工内容审核。');
   }
 
   async latest(videoId: string, user: AuthenticatedUser, requestMeta: RequestMeta) {
@@ -162,39 +61,6 @@ export class SupervisorReviewsService {
       userAgent: requestMeta.userAgent,
     });
     return review ? this.toResponse(review) : null;
-  }
-
-  private async findVideo(videoId: string) {
-    if (!isUuid(videoId)) throw new NotFoundException('Video not found.');
-    const video = await this.prisma.video.findUnique({
-      where: { id: videoId },
-      include: { creator: { select: { managerId: true } } },
-    });
-    if (!video) throw new NotFoundException('Video not found.');
-    return video;
-  }
-
-  private validateRequiredReason(dto: CreateSupervisorReviewDto) {
-    const revisionRequirements = this.cleanRequirements(dto.revisionRequirements);
-    if (dto.decision === SupervisorReviewDecision.RevisionRequired) {
-      if (!dto.comment?.trim() || revisionRequirements.length === 0) {
-        throw new BadRequestException(
-          'Revision comment and at least one requirement are required.',
-        );
-      }
-    } else if (
-      dto.decision === SupervisorReviewDecision.InvalidContent &&
-      !dto.comment?.trim()
-    ) {
-      throw new BadRequestException(
-        'Invalid content reason is required.',
-      );
-    }
-    return revisionRequirements;
-  }
-
-  private cleanRequirements(requirements?: string[]) {
-    return requirements?.map((item) => item.trim()).filter(Boolean) || [];
   }
 
   private toResponse(review: {

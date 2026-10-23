@@ -1,10 +1,9 @@
-import { UserRole, VideoStatus, VideoType } from '@prisma/client';
+import { UserRole, VideoRecordState, VideoStatus, VideoType } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { canManageResultData } from '../permissions/permissions.service';
 
 export type VideoAction =
   | 'trigger_content_review'
-  | 'submit_supervisor_review'
   | 'upload_revision'
   | 'submit_result_metrics'
   | 'trigger_result_review'
@@ -20,6 +19,7 @@ type ActionVideo = {
   creatorManagerId?: string | null;
   videoType: VideoType;
   isForAds: boolean;
+  recordState?: VideoRecordState;
 };
 
 type ActionEvidence = {
@@ -36,15 +36,14 @@ type ActionEvidence = {
 };
 
 export function allowedVideoActions(user: AuthenticatedUser, video: ActionVideo, evidence: ActionEvidence = {}): VideoAction[] {
+  if (video.recordState && video.recordState !== VideoRecordState.active) return [];
   const actions: VideoAction[] = [];
   const administrator = user.role === UserRole.admin;
   const own = video.creatorId === user.id;
   if (new Set<VideoStatus>([VideoStatus.submitted, VideoStatus.ai_content_failed]).has(video.status) &&
     (administrator || own)) actions.push('trigger_content_review');
-  if (video.status === VideoStatus.pending_supervisor_review &&
-    (administrator || (own && [UserRole.content_owner, UserRole.supervisor].includes(user.role as 'content_owner' | 'supervisor')))) actions.push('submit_supervisor_review');
   if (video.status === VideoStatus.revision_required && (administrator || own)) actions.push('upload_revision');
-  if (new Set<VideoStatus>([VideoStatus.approved_for_publish, VideoStatus.pending_result_data, VideoStatus.ai_result_failed, VideoStatus.pending_data]).has(video.status) &&
+  if (new Set<VideoStatus>([VideoStatus.approved_for_publish, VideoStatus.pending_supervisor_review, VideoStatus.pending_result_data, VideoStatus.ai_result_failed, VideoStatus.pending_data]).has(video.status) &&
     canManageResultData(user, video as any)) actions.push('submit_result_metrics');
   if (new Set<VideoStatus>([VideoStatus.pending_result_data, VideoStatus.ai_result_failed]).has(video.status) && canManageResultData(user, video as any) && evidence.hasMetric &&
     !evidence.resultReviewRunning && !evidence.resultReviewCurrentSucceeded) actions.push('trigger_result_review');

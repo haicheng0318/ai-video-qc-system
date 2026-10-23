@@ -21,6 +21,7 @@ function validOutput() {
       factClaims: [{ key: V11_FACT_CLAIMS[code][0], state: 'present' as const, evidenceReferences: ['00:00-00:01'] }],
       evidence: [{ startSeconds: 0, endSeconds: 1, reference: '00:00-00:01', description: `${code} evidence` }],
       observation: `${code} observation`,
+      improvementSuggestions: [],
     })),
     compliance: { status: 'clear' as const, facts: [] },
   };

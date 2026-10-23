@@ -34,6 +34,7 @@ for (const role of Object.values(UserRole)) {
     const service = new DashboardService({ $queryRaw: async (query: any) => { calls.push(query); return [{}]; } } as any);
     await service.summary({}, user(role));
     const query = sqlText(calls[0]);
+    assert.match(query, /v\.record_state = 'active'/);
     if (role === UserRole.admin) assert.doesNotMatch(query, /AND v\.creator_id =/);
     else assert.match(query, /AND v\.creator_id =/);
   });

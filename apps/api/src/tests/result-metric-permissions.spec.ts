@@ -8,7 +8,7 @@ import { AuthenticatedUser } from '../types/authenticated-user';
 const user = (role: UserRole): AuthenticatedUser => ({ id: `${role}-id`, account: role, name: role, role, managerId: null });
 const video = (creatorId: string) => ({
   id: '00000000-0000-4000-8000-000000000040', creatorId, videoType: VideoType.organic,
-  isForAds: false, status: VideoStatus.approved_for_publish,
+  isForAds: false, status: VideoStatus.approved_for_publish, recordState: 'active',
 }) as Parameters<PermissionsService['assertCanSubmitResultMetrics']>[1];
 
 function harness() {

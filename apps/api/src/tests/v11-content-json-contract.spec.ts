@@ -30,6 +30,7 @@ function validOutput() {
         description: `${code} evidence`,
       }],
       observation: `${code} observation`,
+      improvementSuggestions: [],
     })),
     compliance: { status: 'clear' as const, facts: [] },
   };
@@ -69,6 +70,15 @@ test('complete JSON parses, validates, and reaches deterministic backend scoring
   assert.equal(scored.contentRating, 'B');
 });
 
+test('improvement suggestions are bounded UI guidance and do not affect formal scoring', () => {
+  const output: any = validOutput();
+  output.dimensions[0].improvementSuggestions = ['开场直接展示使用前后变化'];
+  const validated = V11ContentModelOutputSchema.parse(output);
+  assert.equal(calculateV11ContentScore(validated).totalScore, 75);
+  output.dimensions[0].improvementSuggestions = ['1', '2', '3', '4'];
+  assert.equal(V11ContentModelOutputSchema.safeParse(output).success, false);
+});
+
 test('strict schema rejects missing dimensions or compliance', () => {
   const valid = validOutput();
   const { dimensions: _dimensions, ...withoutDimensions } = valid;
@@ -88,7 +98,7 @@ test('strict schema rejects illegal fact keys and anchors', () => {
 });
 
 test('JSON contract prompt version changes the evaluation fingerprint', () => {
-  assert.equal(V11_PROMPT_VERSION, 'content-review-v1.1-json-contract-v4');
+  assert.equal(V11_PROMPT_VERSION, 'content-review-v1.2-actionable-diagnostics-v1');
   assert.equal(V11_RUBRIC_VERSION, 'content-rubric-v1.1-fact-claims-v3');
   const base = {
     ownerId: 'smoke-owner',

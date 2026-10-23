@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 
-export const V11_PROMPT_VERSION = 'content-review-v1.1-json-contract-v4';
-export const V11_SCHEMA_VERSION = 'content-review-schema-v1.1-fact-claims-v2';
+export const V11_PROMPT_VERSION = 'content-review-v1.2-actionable-diagnostics-v1';
+export const V11_SCHEMA_VERSION = 'content-review-schema-v1.1-fact-claims-v3';
 export const V11_RUBRIC_VERSION = 'content-rubric-v1.1-fact-claims-v3';
 export const V11_PREPROCESSING_VERSION = 'media-preprocess-v1.1';
 export const V11_REFERENCE_SET_VERSION = 'reference-set-v1.1';
