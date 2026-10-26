@@ -38,6 +38,8 @@ export default function NewVideoPage() {
 
     try {
       const form = new FormData(event.currentTarget);
+      const cover = form.get('cover');
+      form.delete('cover');
       const result = usesDirectVideoUpload()
         ? await uploadVideoDirectly(apiFetch, form, '/api/videos/direct', {
           operationId: operationId.current,
@@ -53,7 +55,15 @@ export default function NewVideoPage() {
         });
       operationId.current = crypto.randomUUID();
       setDirty(false);
-      if (result.coverGenerationFailed) sessionStorage.setItem(`v120-cover-failed:${result.id}`, '1');
+      let coverFailed = Boolean(result.coverGenerationFailed);
+      if (cover instanceof File && cover.size > 0) {
+        setPhase('视频已登记，正在上传自定义封面…');
+        const coverForm = new FormData();
+        coverForm.set('file', cover);
+        try { await apiFetch(`/api/videos/${result.id}/cover`, { method: 'POST', body: coverForm }); }
+        catch { coverFailed = true; }
+      }
+      if (coverFailed) sessionStorage.setItem(`v120-cover-failed:${result.id}`, '1');
       router.push(`/videos/${result.id}`);
     } catch (err) {
       setError(err instanceof DOMException && err.name === 'AbortError'
@@ -78,6 +88,11 @@ export default function NewVideoPage() {
           <label htmlFor="file">视频文件</label>
           <input id="file" name="file" type="file" accept="video/mp4,video/quicktime,video/webm" required />
           <small className="muted">支持 MP4、MOV、WEBM，最大 500 MB；提交后服务端会再次核验文件类型、大小和内容。</small>
+        </div>
+        <div className="form-field full">
+          <label htmlFor="cover">封面（可选）</label>
+          <input id="cover" name="cover" type="file" accept="image/jpeg,image/png,image/webp" />
+          <small className="muted">可上传 JPG、PNG 或 WEBP，最大 5 MB；不上传时系统尝试生成视频第 1 秒封面。</small>
         </div>
         {phase ? <div className="upload-progress full" role="status"><span>{phase}</span>{progress !== null ? <><progress max="100" value={progress}>{progress}%</progress><strong>{progress}%</strong></> : null}</div> : null}
         </section>

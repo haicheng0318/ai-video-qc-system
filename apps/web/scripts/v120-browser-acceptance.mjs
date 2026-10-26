@@ -15,6 +15,25 @@ const { chromium } = playwrightRequire('playwright');
 const output = resolve(process.env.V120_ACCEPTANCE_DIR || '/Volumes/拓展盘/数据迁移/AIQC-V1.2.0-review');
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, env: childEnv });
+const mediaPage = await browser.newPage();
+const syntheticVideo = Buffer.from(await mediaPage.evaluate(async () => {
+  const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
+  const context = canvas.getContext('2d');
+  const stream = canvas.captureStream(12);
+  const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+  const chunks = [];
+  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+  recorder.start();
+  const started = performance.now();
+  const draw = now => { context.fillStyle = `hsl(${Math.floor((now - started) / 12) % 360} 70% 55%)`; context.fillRect(0, 0, canvas.width, canvas.height); if (now - started < 1900) requestAnimationFrame(draw); else recorder.stop(); };
+  requestAnimationFrame(draw);
+  await new Promise(resolve => { recorder.onstop = resolve; });
+  stream.getTracks().forEach(track => track.stop());
+  return Array.from(new Uint8Array(await new Blob(chunks, { type: 'video/webm' }).arrayBuffer()));
+}));
+await mediaPage.close();
+assert(syntheticVideo.length > 0, 'browser generated a local synthetic WebM clip');
+if (process.env.V120_SYNTHETIC_VIDEO_OUT) await writeFile(resolve(process.env.V120_SYNTHETIC_VIDEO_OUT), syntheticVideo);
 const admin = { id: '00000000-0000-4000-8000-000000000001', name: '林予安', account: 'admin', role: 'admin' };
 const creator = { id: '00000000-0000-4000-8000-000000000002', name: '陈思远', account: 'creator', role: 'director' };
 const id = '00000000-0000-4000-8000-000000000011';
@@ -33,7 +52,7 @@ const dimensions = [
 const group = { status: 'adopted', shadowMode: false, runs: [{ id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: 76, contentRating: 'B', complianceStatus: 'clear', stale: false, completedAt: now }], decision: { id: 'decision-1', sourceRunIds: ['run-1'], adoptedDimensions: dimensions.map(d => ({ dimension: d.dimension, anchor: d.adoptedAnchor })), totalScore: 76, contentRating: 'B', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single', decidedAt: now }, workflowRevision: { revision: 1 } };
 const videos = [
   { id, title: '秋日新品 · 日常清洁场景', brand: '清研', product: '洁净系列', platform: '抖音', videoType: 'product_card', status: 'pending_result_data', recordState: 'active', createdAt: now, updatedAt: now, coverUrl: '/api/mock-cover', creator, v11EvaluationGroups: [group], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
-  { id: otherId, title: '夏日轻养主题', brand: '清研', product: '饮品系列', platform: '小红书', videoType: 'organic', status: 'final_effective', recordState: 'active', createdAt: '2026-08-15T04:00:00.000Z', updatedAt: now, coverUrl: '/api/mock-cover', creator, v11EvaluationGroups: [], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
+  { id: otherId, title: '夏日轻养主题', brand: '清研', product: '饮品系列', platform: '小红书', videoType: 'organic', status: 'final_effective', recordState: 'active', createdAt: '2026-08-15T04:00:00.000Z', updatedAt: now, coverUrl: null, creator, v11EvaluationGroups: [], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
 ];
 const calls = [];
 const requests = [];
@@ -51,6 +70,7 @@ async function installApi(context, role = 'admin') {
     if (!url.pathname.startsWith('/api/')) return route.continue();
     const method = request.method(), path = url.pathname;
     requests.push({ method, path, search: url.search });
+    if (/^\/api\/videos\/[0-9a-f-]+\/file$/.test(path)) return route.fulfill({ status: 200, contentType: 'video/webm', headers: { 'Accept-Ranges': 'bytes' }, body: syntheticVideo });
     if (path === '/api/mock-cover') return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#e8ecf2"/><rect x="48" y="48" width="864" height="444" rx="18" fill="#fff"/><circle cx="480" cy="205" r="76" fill="#6d28d9"/><path d="M458 160v90l76-45z" fill="#fff"/><text x="480" y="365" text-anchor="middle" font-size="40" font-family="sans-serif" fill="#263244">V1.2 合成视频封面</text></svg>' });
     let body = null, status = 200;
     if (path === '/api/auth/me') body = { user: currentUser };
@@ -88,7 +108,7 @@ async function installApi(context, role = 'admin') {
     else if (path.endsWith('/ratings/latest')) body = { data: null, comprehensive: null };
     else if (path.endsWith('/history')) body = { items: [], nextCursor: null };
     else if (path.endsWith('/cover/regenerate') && method === 'POST') { calls.push('cover-regenerate'); body = { success: true }; }
-    else if (path.endsWith('/cover') && method === 'POST') { calls.push('custom-cover'); body = { success: true }; }
+    else if (path.endsWith('/cover') && method === 'POST') { calls.push(path.includes('00000000-0000-4000-8000-000000000099') ? 'upload-cover' : 'custom-cover'); body = { success: true }; }
     else if (/\/(hide|trash|restore)$/.test(path) && method === 'POST') {
       calls.push(path.split('/').at(-1));
       const video = videos.find(item => path.startsWith(`/api/videos/${item.id}/`));
@@ -105,7 +125,7 @@ try {
   await installApi(browserContext);
   const page = await browserContext.newPage();
   const pageErrors = [];
-  page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('pageerror', error => pageErrors.push(`${page.url()}\n${error.stack || error.message}`));
   async function goto(path) { await page.goto(base + path); await page.locator('main h1').first().waitFor(); await page.waitForLoadState('networkidle'); }
   async function screenshot(name) { await page.screenshot({ path: resolve(output, name), fullPage: false }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name} overflow`); }
 
@@ -121,6 +141,11 @@ try {
   await screenshot('02-video-workspace.png');
   await page.getByRole('button', { name: '卡片', exact: true }).click();
   await page.locator('.video-card').first().waitFor();
+  await page.locator('.video-card video').waitFor();
+  await page.waitForFunction(() => {
+    const player = document.querySelector('.video-card video');
+    return player && player.readyState >= 1 && player.currentTime >= 0.95;
+  });
   await screenshot('03-video-card.png');
   await page.getByRole('button', { name: '列表', exact: true }).click();
   await page.locator('input[name=month]').fill('2026-08');
@@ -172,11 +197,13 @@ try {
   const syntheticUpload = Buffer.alloc(1_000_000, 0);
   syntheticUpload.write('ftyp', 4, 'ascii');
   await page.locator('#file').setInputFiles({ name: 'synthetic-smoke.mp4', mimeType: 'video/mp4', buffer: syntheticUpload });
+  await page.locator('#cover').setInputFiles({ name: 'synthetic-cover.png', mimeType: 'image/png', buffer: fakePng });
   await page.locator('#title').fill('V1.2.0 synthetic upload');
   const pendingUpload = page.waitForRequest(request => request.url().includes('/api/videos') && request.method() === 'POST');
   await page.getByRole('button', { name: /提交|上传/ }).last().click();
   await pendingUpload;
   await page.getByRole('status').filter({ hasText: /正在上传视频/ }).waitFor();
+  await waitForCall('upload-cover');
   await screenshot('06-upload-progress.png');
   await page.waitForURL(/\/videos\//);
   assert(requests.length >= uploadRoute);
@@ -217,8 +244,15 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await goto('/videos');
   await screenshot('08-mobile.png');
+  for (const width of [1440, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
+    for (const route of ['/videos', `/videos/${id}`]) {
+      await goto(route);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}px ${route} horizontal overflow`);
+    }
+  }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic cover display and lazy fallback', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'no daily supervisor UI; history read-only', '390 mobile no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);

@@ -127,7 +127,7 @@ test('custom cover accepts actual JPEG, PNG and WEBP bytes, regardless of declar
     const video = videoFile('/tmp/never-opened.mp4', 10);
     const tx = { video: { update: async ({ data }: { data: Record<string, unknown> }) => ({ ...video, ...data }) } };
     const prisma = { video: { findUnique: async () => video }, $transaction: async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx) } as unknown as PrismaService;
-    const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined } as never, { create: async () => undefined } as never, { storeCover: async (_id: string, _buffer: Buffer, extension: string, mime: string) => { stored = { extension, mime }; return `storage/videos/covers/test.${extension}`; } } as never);
+    const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined, assertVideoActive: () => undefined } as never, { create: async () => undefined } as never, { storeCover: async (_id: string, _buffer: Buffer, extension: string, mime: string) => { stored = { extension, mime }; return `storage/videos/covers/test.${extension}`; } } as never);
     (service as any).serializeVideo = (value: unknown) => value;
     await service.uploadCover(video.id, { buffer: fixture.bytes, size: fixture.bytes.length, mimetype: 'application/octet-stream' } as Express.Multer.File, testUser, {});
     assert.deepEqual(stored, { extension: fixture.extension, mime: fixture.mime });
@@ -137,9 +137,64 @@ test('custom cover accepts actual JPEG, PNG and WEBP bytes, regardless of declar
 test('custom cover rejects spoofed image MIME and files larger than 5MB', async () => {
   const video = videoFile('/tmp/never-opened.mp4', 10);
   const prisma = { video: { findUnique: async () => video } } as unknown as PrismaService;
-  const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined } as never, {} as never, { storeCover: async () => { throw new Error('must not store invalid data'); } } as never);
+  const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined, assertVideoActive: () => undefined } as never, {} as never, { storeCover: async () => { throw new Error('must not store invalid data'); } } as never);
   await assert.rejects(service.uploadCover(video.id, { buffer: Buffer.from('not an image'), size: 12, mimetype: 'image/jpeg' } as Express.Multer.File, testUser, {}), /真实 JPG、PNG 或 WEBP/);
   await assert.rejects(service.uploadCover(video.id, { buffer: Buffer.from([0xff, 0xd8, 0xff]), size: 5 * 1024 * 1024 + 1, mimetype: 'image/jpeg' } as Express.Multer.File, testUser, {}), /不能超过 5MB/);
+});
+
+test('hidden and trashed videos reject cover replacement and regeneration for admin', async () => {
+  let sideEffects = 0;
+  for (const recordState of ['hidden', 'trashed']) {
+    const video = { ...videoFile('/tmp/hidden.mp4', 10), recordState } as Video;
+    const prisma = { video: { findUnique: async () => video } } as unknown as PrismaService;
+    const permissions = {
+      assertCanAccessVideo: async () => undefined,
+      assertVideoActive: (candidate: Video) => {
+        if (candidate.recordState !== 'active') throw new ForbiddenException();
+      },
+    };
+    const storage = {
+      storeCover: async () => { sideEffects += 1; throw new Error('must not write cover'); },
+      materialize: async () => { sideEffects += 1; throw new Error('must not read video for regeneration'); },
+    };
+    const service = new VideosService(prisma, permissions as never, {} as never, storage as never);
+    const file = { buffer: Buffer.from([0xff, 0xd8, 0xff]), size: 3, mimetype: 'image/jpeg' } as Express.Multer.File;
+    await assert.rejects(service.uploadCover(video.id, file, { ...testUser, role: UserRole.admin }, {}), ForbiddenException);
+    await assert.rejects(service.regenerateCover(video.id, { ...testUser, role: UserRole.admin }, {}), ForbiddenException);
+  }
+  assert.equal(sideEffects, 0);
+});
+
+test('video serialization removes private coverPath but derives the authenticated cover URL first', () => {
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  const serialize = (service as any).serializeVideo.bind(service);
+  const result = serialize({ id: 'video-1', coverPath: 'storage/videos/covers/video-1.jpg' });
+  assert.equal(result.coverUrl, '/api/videos/video-1/cover');
+  assert.equal('coverPath' in result, false);
+});
+
+test('automatic current V1.2 revision gate authorizes revision upload without a SupervisorReview row', async () => {
+  const tx = {
+    supervisorReview: { findUnique: async () => null },
+    v11WorkflowGateDecision: { findFirst: async (args: any) => {
+      assert.deepEqual(args.where, {
+        videoId: 'video-1', stage: 'content', decision: 'revision_required', decisionSource: 'system',
+        workflowRevision: { status: 'current' },
+      });
+      return { id: 'automatic-gate' };
+    } },
+  };
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  assert.equal(await (service as any).hasRevisionRequiredDecision(tx, 'video-1'), true);
+});
+
+test('legacy SupervisorReview revision decision remains accepted', async () => {
+  const tx = {
+    supervisorReview: { findUnique: async () => ({ decision: VideoStatus.revision_required }) },
+    v11WorkflowGateDecision: { findFirst: async () => { throw new Error('legacy review should short-circuit'); } },
+  };
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  assert.equal(await (service as any).hasRevisionRequiredDecision(tx, 'video-1'), true);
 });
 
 test('video list search preserves supervisor team visibility scope', async () => {
@@ -358,6 +413,7 @@ function createRevisionHarness(options: {
         decision: VideoStatus.revision_required,
       },
     },
+    v11WorkflowGateDecision: { findFirst: async () => null },
   };
   const prisma = {
     video: { findUnique: async () => parent },
@@ -539,7 +595,7 @@ test('non-revision-required parent cannot accept revision', async () => {
   }
 });
 
-test('revision upload requires a matching supervisor review', async () => {
+test('revision upload requires a supervisor review or current automatic revision gate', async () => {
   const fixture = await createFixtureFile();
   const harness = createRevisionHarness({ hasReview: false });
   try {

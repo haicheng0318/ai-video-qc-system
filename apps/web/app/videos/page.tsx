@@ -109,7 +109,7 @@ function VideoCardCover({ video }: { video: Video }) {
     return () => observer.disconnect();
   }, [video.coverUrl]);
   return <div className="video-card-cover" ref={host}>
-    {video.coverUrl ? <Image src={video.coverUrl} alt="" width={1280} height={720} unoptimized priority={false} /> : visible ? <video src={`/api/videos/${video.id}/file`} preload="metadata" muted playsInline aria-hidden="true" /> : <span>视频封面</span>}
+    {video.coverUrl ? <Image src={video.coverUrl} alt="" width={1280} height={720} unoptimized priority={false} /> : visible ? <video src={`/api/videos/${video.id}/file`} preload="metadata" muted playsInline aria-hidden="true" onLoadedMetadata={(event) => { const player = event.currentTarget; player.currentTime = Math.min(1, Number.isFinite(player.duration) ? player.duration : 1); }} /> : <span>视频封面</span>}
   </div>;
 }
 
