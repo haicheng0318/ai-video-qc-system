@@ -3,7 +3,7 @@ export function assertIsolatedDatabase(value: string | undefined) {
   if (!value) throw Error('An explicit isolated acceptance database is required.');
   const url = new URL(value);
   if (url.protocol !== 'postgresql:' || url.hostname !== '127.0.0.1'
-    || !['55439', '55441'].includes(url.port)
+    || !['55439', '55441', '55443'].includes(url.port)
     || !/^\/(?:release_test|identity_test|queue_test|identity_queue_test|ops_test)$/.test(url.pathname)
     || url.hash || [...url.searchParams].some(([key, setting]) => key !== 'schema' || setting !== 'public')) {
     throw Error('Acceptance refuses production, non-loopback and non-test database targets.');

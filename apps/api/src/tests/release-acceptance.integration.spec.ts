@@ -13,6 +13,10 @@ import { V11_FACT_CLAIMS } from '../modules/v11/fact-claims';
 
 const url = process.env.RELEASE_TEST_DATABASE_URL;
 const mediaPath = process.env.RELEASE_TEST_MEDIA_PATH;
+const releaseAcceptanceRequired = process.env.RELEASE_ACCEPTANCE_REQUIRED === '1';
+if (releaseAcceptanceRequired && (!url || !mediaPath)) {
+  throw new Error('Required Release Acceptance needs RELEASE_TEST_DATABASE_URL and RELEASE_TEST_MEDIA_PATH; refusing to skip.');
+}
 
 type ClaimState = 'present' | 'absent' | 'uncertain';
 type OutputOptions = {
@@ -20,6 +24,7 @@ type OutputOptions = {
   audioPresent?: ClaimState;
   anchor?: number;
   actionAnchor?: number;
+  complianceStatus?: 'clear' | 'suspected' | 'confirmed';
 };
 
 function v11Output(options: OutputOptions = {}) {
@@ -39,14 +44,15 @@ function v11Output(options: OutputOptions = {}) {
         factClaims: [{ key, state, evidenceReferences: ['00:00-00:01'] }],
         evidence: [{ startSeconds: 0, endSeconds: 1, reference: '00:00-00:01', description: `${code} synthetic evidence` }],
         observation: `${code} synthetic observation`,
+        improvementSuggestions: [],
       };
     }),
-    compliance: { status: 'clear' as const, facts: [] },
+    compliance: { status: options.complianceStatus ?? 'clear' as const, facts: options.complianceStatus && options.complianceStatus !== 'clear' ? ['Synthetic compliance risk'] : [] },
   };
 }
 
 test('V1.1 release acceptance uses formal content decisions and keeps Legacy content read-only', {
-  skip: !url || !mediaPath,
+  skip: !releaseAcceptanceRequired,
   timeout: 240_000,
 }, async (t) => {
   configureLocalAcceptance(url!);
@@ -72,6 +78,9 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
   const passwordHash = await bcrypt.hash(password, 4);
   const media = await readFile(mediaPath!);
   assert.ok(media.length > 0, 'synthetic release media is required');
+  const mediaIsWebm = media.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  const mediaMime = mediaIsWebm ? 'video/webm' : 'video/mp4';
+  const mediaFilename = mediaIsWebm ? 'synthetic-release.webm' : 'synthetic-release.mp4';
   const outputs: ReturnType<typeof v11Output>[] = [];
   const calls = { content: 0, result: 0, final: 0 };
   const fetchOriginal = globalThis.fetch;
@@ -127,11 +136,18 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
     data.append('title', title);
     data.append('videoType', 'organic');
     data.append('platform', 'fixture');
-    data.append('file', new Blob([media], { type: 'video/mp4' }), 'synthetic-release.mp4');
+    data.append('file', new Blob([media], { type: mediaMime }), mediaFilename);
     return json(await fetch(`${base}/api/videos`, {
       method: 'POST',
       headers: { Cookie: users[role].cookie, Origin: 'http://localhost:3000', 'X-QC-CSRF': '1', 'Idempotency-Key': randomUUID() },
       body: data,
+    }), 201);
+  };
+  const uploadRevision = async (parentVideoId: string) => {
+    const data = new FormData();
+    data.append('file', new Blob([media], { type: mediaMime }), mediaIsWebm ? 'synthetic-revision.webm' : 'synthetic-revision.mp4');
+    return json(await fetch(`${base}/api/videos/${parentVideoId}/revisions`, {
+      method: 'POST', headers: { Cookie: users.director.cookie, Origin: 'http://localhost:3000', 'X-QC-CSRF': '1', 'Idempotency-Key': randomUUID() }, body: data,
     }), 201);
   };
   const drain = async () => {
@@ -184,7 +200,7 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
       assert.equal((await req(`/videos/${video.id}/content-review`, 'director', 'POST')).status, 409);
       assert.equal(await db.aiContentReview.count({ where: { videoId: video.id } }), 0);
       assert.equal(group.decision?.adoptionMethod, 'double_average');
-      assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'pending_supervisor_review');
+      assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'approved_for_publish');
       assert.equal((await req(`/videos/${video.id}/v11-content-review`, '', 'POST')).status, 401);
     });
 
@@ -226,6 +242,71 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
       outputs.push(v11Output(), v11Output());
       await drain();
       assert.equal((await latestGroup(video.id)).status, 'adopted');
+    });
+
+    await t.test('stable C/D automatic content gate permits revision upload without a SupervisorReview row', async () => {
+      const video = await upload('automatic revision gate fixture');
+      outputs.push(v11Output({ anchor: 0 }), v11Output({ anchor: 0 }));
+      await trigger(video.id);
+      await drain();
+      const group = await latestGroup(video.id);
+      assert.equal(group.status, 'adopted');
+      assert.equal(group.decision?.contentRating, 'D');
+      assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'revision_required');
+      assert.equal(await db.supervisorReview.count({ where: { videoId: video.id } }), 0);
+      assert.equal(await db.v11WorkflowGateDecision.count({ where: {
+        videoId: video.id, stage: 'content', decision: 'revision_required', decisionSource: 'system',
+        workflowRevision: { status: 'current' },
+      } }), 1);
+      const revision = await uploadRevision(video.id);
+      assert.equal(revision.parentVideoId, video.id);
+    });
+
+    await t.test('active holds, appeals and suspected/confirmed compliance block the entire data stage', async () => {
+      const cases = [
+        { name: 'active hold', apply: async (videoId: string, workflowRevisionId: string, groupId: string) => db.v11WorkflowHold.create({ data: { videoId, workflowRevisionId, groupId, holdType: 'manual', reason: 'Synthetic active hold' } }) },
+        { name: 'active appeal', apply: async (videoId: string, workflowRevisionId: string, groupId: string, decisionId: string) => {
+          await db.v11Appeal.create({ data: { videoId, workflowRevisionId, stage: 'content', resultId: decisionId, reason: 'Synthetic active appeal for release acceptance', submittedById: users.director.id } });
+          return db.v11WorkflowHold.create({ data: { videoId, workflowRevisionId, groupId, holdType: 'appeal', reason: 'Synthetic active appeal hold' } });
+        } },
+        { name: 'suspected compliance', apply: async (_videoId: string, _workflowRevisionId: string, _groupId: string, decisionId: string) => db.v11EvaluationDecision.update({ where: { id: decisionId }, data: { complianceStatus: 'suspected' } }) },
+        { name: 'confirmed compliance', apply: async (_videoId: string, _workflowRevisionId: string, _groupId: string, decisionId: string) => db.v11EvaluationDecision.update({ where: { id: decisionId }, data: { complianceStatus: 'confirmed' } }) },
+      ];
+      for (const scenario of cases) {
+        const { video, group } = await createStableDecision(`data-stage block: ${scenario.name}`);
+        const metric = await json(await req(`/videos/${video.id}/result-metrics`, 'admin', 'POST', {
+          baseMetricId: null, dataStartDate: '2026-10-01', dataEndDate: '2026-10-02', views: 1000,
+        }), 201);
+        await scenario.apply(video.id, group.workflowRevisionId, group.id, group.decision!.id);
+        const secondMetric = await req(`/videos/${video.id}/result-metrics`, 'admin', 'POST', {
+          baseMetricId: metric.id, dataStartDate: '2026-10-01', dataEndDate: '2026-10-02', views: 1200,
+        });
+        assert.equal(secondMetric.status, 409, `${scenario.name}: metric writes must be blocked`);
+        const review = await req(`/videos/${video.id}/result-review`, 'admin', 'POST', { resultMetricId: metric.id });
+        assert.equal(review.status, 409, `${scenario.name}: AI data review trigger must be blocked`);
+        assert.equal((await req(`/v11/videos/${video.id}/data-rating`, 'admin', 'POST')).status, 409, `${scenario.name}: deterministic data rating must be blocked`);
+        assert.equal((await req(`/v11/videos/${video.id}/comprehensive-rating`, 'admin', 'POST')).status, 409, `${scenario.name}: comprehensive rating must be blocked`);
+        assert.equal(await db.aiResultReview.count({ where: { videoId: video.id } }), 0, `${scenario.name}: no review record`);
+        assert.equal(await db.v11DataRatingDecision.count({ where: { videoId: video.id } }), 0, `${scenario.name}: no data rating record`);
+        assert.equal(await db.v11ComprehensiveDecision.count({ where: { videoId: video.id } }), 0, `${scenario.name}: no comprehensive decision`);
+        assert.equal(await db.evaluationJob.count({ where: { videoId: video.id, stage: 'result' } }), 0, `${scenario.name}: no job`);
+      }
+    });
+
+    await t.test('hidden and trashed records remain admin-readable but business-frozen', async () => {
+      const { video } = await createStableDecision('hidden/trash freeze fixture');
+      const assertFrozenReadOnly = async (state: 'hide' | 'trash') => {
+        await json(await req(`/videos/${video.id}/${state}`, 'admin', 'POST', { reason: `Synthetic ${state} release check` }), 201);
+        assert.equal((await req(`/videos/${video.id}`)).status, 200, `admin detail remains readable while ${state}d`);
+        assert.equal((await req(`/videos/${video.id}/file`)).status, 200, `admin original video remains readable while ${state}d`);
+        assert.equal((await req(`/videos/${video.id}/result-metrics`, 'admin', 'POST', {
+          baseMetricId: null, dataStartDate: '2026-10-01', dataEndDate: '2026-10-02', views: 1000,
+        })).status, 403, `${state}d video is business-frozen`);
+        assert.equal((await req(`/videos/${video.id}`, 'director')).status, 403, `non-admin cannot access ${state}d video`);
+        await json(await req(`/videos/${video.id}/restore`, 'admin', 'POST', { reason: `Synthetic ${state} release restore` }), 201);
+      };
+      await assertFrozenReadOnly('hide');
+      await assertFrozenReadOnly('trash');
     });
 
     await t.test('mixed instability and input holds fail closed without creating workflow, group, run or job', async () => {

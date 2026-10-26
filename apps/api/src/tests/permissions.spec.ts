@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { test } from 'node:test';
 import { UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../types/authenticated-user';
@@ -64,4 +64,34 @@ test('denied video access is logged and rejected', async () => {
   assert.equal(logInput?.result, 'denied');
   assert.equal(logInput?.targetType, 'video');
   assert.equal(logInput?.targetId, 'video-id');
+});
+
+test('data stage is blocked by any active workflow hold or appeal and by suspected/confirmed compliance', async () => {
+  let workflow: any = { id: 'workflow', activeContentDecisionId: 'decision', holds: [], appeals: [] };
+  let complianceStatus = 'clear';
+  const db: any = {
+    v11WorkflowRevision: { findFirst: async () => workflow },
+    v11EvaluationDecision: { findUnique: async () => ({ complianceStatus, inputComplete: true, stable: true }) },
+  };
+  const service = new PermissionsService(db, {} as OperationLogsService);
+  await service.assertDataStageOpen('video');
+  for (const status of ['suspected', 'confirmed']) {
+    complianceStatus = status;
+    await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
+  }
+  complianceStatus = 'clear';
+  for (const blocker of ['hold', 'appeal']) {
+    workflow = { ...workflow, holds: blocker === 'hold' ? [{ id: 'hold' }] : [], appeals: blocker === 'appeal' ? [{ id: 'appeal' }] : [] };
+    await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
+  }
+  workflow = { ...workflow, holds: [], appeals: [] };
+  await service.assertDataStageOpen('video');
+});
+
+test('administrator can access hidden/trashed video for read-only detail and original-file use while record state still blocks writes', async () => {
+  const service = new PermissionsService({} as PrismaService, {} as OperationLogsService);
+  for (const recordState of ['hidden', 'trashed']) {
+    await service.assertCanAccessVideo(user(UserRole.admin), { id: 'v', creatorId: 'owner', recordState } as any);
+    assert.throws(() => service.assertVideoActive({ recordState } as any), ForbiddenException);
+  }
 });
