@@ -38,6 +38,7 @@ const admin = { id: '00000000-0000-4000-8000-000000000001', name: '林予安', a
 const creator = { id: '00000000-0000-4000-8000-000000000002', name: '陈思远', account: 'creator', role: 'director' };
 const id = '00000000-0000-4000-8000-000000000011';
 const otherId = '00000000-0000-4000-8000-000000000012';
+const revisionId = '00000000-0000-4000-8000-000000000013';
 const now = '2026-10-20T02:30:00.000Z';
 const dimensions = [
   ['opening_hook', 2.5, '开场展示了产品，但核心利益点出现较晚。', ['前3秒说明主要利益点。']],
@@ -85,10 +86,19 @@ async function installApi(context, role = 'admin') {
       calls.push('video-upload');
       await new Promise(resolve => setTimeout(resolve, 450));
       body = { id: '00000000-0000-4000-8000-000000000099', coverGenerationFailed: false };
-    } else if (path === `/api/videos/${id}`) body = { ...videos[0], isForAds: false, isEventVideo: false, eventName: '', version: 1, allowedActions: ['submit_result_metrics'], aiContentReviews: [], supervisorReview: { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now }, resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], revisions: [], versionChain: [], latestResultMetricId: null };
+    } else if (path === `/api/videos/${revisionId}/revisions` && method === 'POST') {
+      calls.push('revision-upload');
+      body = { id: '00000000-0000-4000-8000-000000000014' };
+    } else if (path === '/api/videos/00000000-0000-4000-8000-000000000014') body = {
+      ...videos[0], id: '00000000-0000-4000-8000-000000000014', status: 'submitted', coverUrl: null,
+      allowedActions: [], aiContentReviews: [], supervisorReview: null, resultMetrics: [], aiResultReviews: [],
+      ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null,
+    };
+    else if (path === `/api/videos/${revisionId}`) body = { ...videos[0], id: revisionId, status: 'revision_required', coverUrl: null, allowedActions: ['upload_revision'], supervisorReview: null, isForAds: false, isEventVideo: false, eventName: '', version: 1, aiContentReviews: [], resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null };
+    else if (path === `/api/videos/${id}`) body = { ...videos[0], isForAds: false, isEventVideo: false, eventName: '', version: 1, allowedActions: ['submit_result_metrics'], aiContentReviews: [], supervisorReview: { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now }, resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], revisions: [], versionChain: [], latestResultMetricId: null };
     else if (path.endsWith('/file-url')) body = { url: null };
     else if (path.endsWith('/content-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
-    else if (path.endsWith('/supervisor-review/latest')) body = { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now };
+    else if (path.endsWith('/supervisor-review/latest')) body = path.includes(revisionId) ? null : { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now };
     else if (path.endsWith('/result-metrics/latest')) body = null;
     else if (path.endsWith('/result-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: 'pending_result_data' };
@@ -192,6 +202,15 @@ try {
   assert((await page.locator('#detail-panel-records').innerText()).includes('历史主管审核'));
   await page.getByRole('tab', { name: '内容评估' }).click();
 
+  await goto(`/videos/${revisionId}`);
+  await page.getByRole('heading', { name: '上传返修版本' }).waitFor();
+  assert((await page.locator('main').innerText()).includes('V1.2 内容评估自动关卡要求优化返修。'));
+  await page.locator('#revision-file').setInputFiles({ name: 'synthetic-revision.webm', mimeType: 'video/webm', buffer: syntheticVideo });
+  await page.getByRole('button', { name: '上传返修版本', exact: true }).click();
+  await waitForCall('revision-upload');
+  await page.waitForFunction(() => location.pathname === '/videos/00000000-0000-4000-8000-000000000014');
+  await goto(`/videos/${id}`);
+
   await goto('/videos/new');
   const uploadRoute = requests.length;
   const syntheticUpload = Buffer.alloc(1_000_000, 0);
@@ -252,7 +271,7 @@ try {
     }
   }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);

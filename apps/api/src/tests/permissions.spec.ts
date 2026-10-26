@@ -66,8 +66,8 @@ test('denied video access is logged and rejected', async () => {
   assert.equal(logInput?.targetId, 'video-id');
 });
 
-test('data stage is blocked by any active workflow hold or appeal and by suspected/confirmed compliance', async () => {
-  let workflow: any = { id: 'workflow', activeContentDecisionId: 'decision', holds: [], appeals: [] };
+test('formal data stage requires approved content gate and is blocked by holds, appeals and suspected/confirmed compliance', async () => {
+  let workflow: any = { id: 'workflow', activeContentDecisionId: 'decision', holds: [], appeals: [], gateDecisions: [{ stage: 'content', decision: 'approved' }] };
   let complianceStatus = 'clear';
   const db: any = {
     v11WorkflowRevision: { findFirst: async () => workflow },
@@ -80,12 +80,21 @@ test('data stage is blocked by any active workflow hold or appeal and by suspect
     await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
   }
   complianceStatus = 'clear';
+  for (const decision of ['revision_required', 'hold', 'manual_review']) {
+    workflow = { ...workflow, gateDecisions: [{ stage: 'content', decision }] };
+    await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
+  }
+  workflow = { ...workflow, gateDecisions: [] };
+  await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
+  workflow = { ...workflow, gateDecisions: [{ stage: 'content', decision: 'approved' }] };
   for (const blocker of ['hold', 'appeal']) {
     workflow = { ...workflow, holds: blocker === 'hold' ? [{ id: 'hold' }] : [], appeals: blocker === 'appeal' ? [{ id: 'appeal' }] : [] };
     await assert.rejects(service.assertDataStageOpen('video'), ConflictException);
   }
   workflow = { ...workflow, holds: [], appeals: [] };
   await service.assertDataStageOpen('video');
+  db.v11WorkflowRevision.findFirst = async () => null;
+  await service.assertDataStageOpen('legacy-video');
 });
 
 test('administrator can access hidden/trashed video for read-only detail and original-file use while record state still blocks writes', async () => {

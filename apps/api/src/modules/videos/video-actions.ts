@@ -33,6 +33,8 @@ type ActionEvidence = {
   finalCurrentSucceeded?: boolean;
   finalSucceeded?: boolean;
   finalConfirmed?: boolean;
+  currentFormalV11ContentDecision?: boolean;
+  legacyRuleEngineSourceAvailable?: boolean;
 };
 
 export function allowedVideoActions(user: AuthenticatedUser, video: ActionVideo, evidence: ActionEvidence = {}): VideoAction[] {
@@ -47,7 +49,8 @@ export function allowedVideoActions(user: AuthenticatedUser, video: ActionVideo,
     canManageResultData(user, video as any)) actions.push('submit_result_metrics');
   if (new Set<VideoStatus>([VideoStatus.pending_result_data, VideoStatus.ai_result_failed]).has(video.status) && canManageResultData(user, video as any) && evidence.hasMetric &&
     !evidence.resultReviewRunning && !evidence.resultReviewCurrentSucceeded) actions.push('trigger_result_review');
-  if (video.status === VideoStatus.pending_rule_engine && (administrator || own) && evidence.resultReviewSucceeded && !evidence.ruleCurrent) actions.push('execute_rule_engine');
+  if (video.status === VideoStatus.pending_rule_engine && (administrator || own) && evidence.resultReviewSucceeded && !evidence.ruleCurrent
+    && (!evidence.currentFormalV11ContentDecision || evidence.legacyRuleEngineSourceAvailable)) actions.push('execute_rule_engine');
   if (new Set<VideoStatus>([VideoStatus.pending_final_evaluation, VideoStatus.final_evaluation_failed]).has(video.status) && (administrator || own) && evidence.ruleSufficient &&
     !evidence.finalRunning && !evidence.finalCurrentSucceeded) actions.push('trigger_final_evaluation');
   if (video.status === VideoStatus.pending_final_confirmation && (administrator || (own && user.role === UserRole.content_owner)) && evidence.finalSucceeded && !evidence.finalConfirmed) actions.push('confirm_final_evaluation');

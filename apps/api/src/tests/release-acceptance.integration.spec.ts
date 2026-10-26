@@ -260,6 +260,26 @@ test('V1.1 release acceptance uses formal content decisions and keeps Legacy con
       } }), 1);
       const revision = await uploadRevision(video.id);
       assert.equal(revision.parentVideoId, video.id);
+      await db.videoResultMetric.create({ data: { videoId: video.id, videoType: 'organic', views: 1000 } });
+      assert.equal((await req(`/v11/videos/${video.id}/data-rating`, 'admin', 'POST')).status, 409, 'C/D content gate blocks a historical metric from advancing to data rating');
+      assert.equal(await db.v11DataRatingDecision.count({ where: { videoId: video.id } }), 0);
+    });
+
+    await t.test('suspected and confirmed compliance create explicit formal holds and fail the content gate', async () => {
+      for (const complianceStatus of ['suspected', 'confirmed'] as const) {
+        const video = await upload(`formal compliance hold: ${complianceStatus}`);
+        outputs.push(v11Output({ anchor: 4, complianceStatus }), v11Output({ anchor: 4, complianceStatus }));
+        await trigger(video.id);
+        await drain();
+        const group = await latestGroup(video.id);
+        assert.ok(group.decision, 'formal content decision is preserved for diagnostics');
+        assert.equal(group.decision?.complianceStatus, complianceStatus);
+        assert.equal(group.status, 'hold');
+        assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'ai_content_failed');
+        assert.ok(group.holds.some((hold: any) => hold.status === 'active' && hold.holdType === 'compliance' && hold.reason.includes(complianceStatus)));
+        assert.equal(await db.v11WorkflowGateDecision.count({ where: { videoId: video.id, stage: 'content', decision: 'hold', workflowRevision: { status: 'current' } } }), 1);
+        assert.equal((await req(`/v11/videos/${video.id}/data-rating`, 'admin', 'POST')).status, 409);
+      }
     });
 
     await t.test('active holds, appeals and suspected/confirmed compliance block the entire data stage', async () => {

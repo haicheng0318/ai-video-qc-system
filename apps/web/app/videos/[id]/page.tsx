@@ -330,7 +330,7 @@ function VideoDetail({ params }: { params: { id: string } }) {
         ) : null}
         {currentUser?.role === 'admin' ? <details className="section-gap"><summary>技术详情</summary><dl><dt>Review ID</dt><dd>{contentReview?.id || '-'}</dd><dt>Model Provider</dt><dd>{contentReview?.modelProvider || '-'}</dd><dt>Model Name</dt><dd>{contentReview?.modelName || '-'}</dd><dt>Prompt Version</dt><dd>{contentReview?.promptVersion || '-'}</dd><dt>Scoring Version</dt><dd>{contentReview?.scoringVersion || '-'}</dd></dl></details> : null}
       </details>
-      {canUploadRevision && (supervisorReview || video.supervisorReview) ? (
+      {canUploadRevision ? (
         <VideoRevisionPanel
           parentVideoId={video.id}
           comment={(supervisorReview || video.supervisorReview)?.comment || null}

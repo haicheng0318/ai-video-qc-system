@@ -493,6 +493,7 @@ export class V11ContentService {
           return;
         }
         const adoptedDimensions = Object.entries(progress.anchors).map(([dimension, anchor]) => ({ dimension, anchor }));
+        const complianceStatus = worstCompliance(succeeded.map((item) => item.complianceStatus!));
         const decision = await tx.v11EvaluationDecision.create({ data: {
           groupId: run.groupId,
           workflowRevisionId: run.group.workflowRevisionId,
@@ -500,7 +501,7 @@ export class V11ContentService {
           adoptedDimensions,
           totalScore: progress.totalScore,
           contentRating: progress.contentRating,
-          complianceStatus: worstCompliance(succeeded.map((item) => item.complianceStatus!)),
+          complianceStatus,
           inputComplete: true,
           stable: true,
           decisionSource: 'system',
@@ -513,17 +514,25 @@ export class V11ContentService {
           await tx.v11WorkflowHold.updateMany({ where: { groupId: run.groupId, holdType: 'appeal', status: 'active' }, data: { status: 'resolved', resolvedAt: new Date() } });
         }
         if (!run.group.shadowMode) {
+          const complianceHeld = complianceStatus !== 'clear';
           const [hasHold, hasAppeal] = await Promise.all([
             tx.v11WorkflowHold.count({ where: { workflowRevisionId: run.group.workflowRevisionId, status: 'active' } }),
             tx.v11Appeal.count({ where: { workflowRevisionId: run.group.workflowRevisionId, status: 'active' } }),
           ]);
-          const gate = evaluateContentGate({ manualEnabled: false, rating: progress.contentRating, stable: true, inputComplete: true, complianceStatus: worstCompliance(succeeded.map((item) => item.complianceStatus!)), hasHold: hasHold > 0, hasAppeal: hasAppeal > 0, stale: false });
+          const gate = evaluateContentGate({ manualEnabled: false, rating: progress.contentRating, stable: true, inputComplete: true, complianceStatus, hasHold: hasHold > 0, hasAppeal: hasAppeal > 0, stale: false });
           if (gate.decision === 'approved' || gate.decision === 'revision_required') {
             await tx.v11WorkflowGateDecision.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, stage: 'content', decision: gate.decision, decisionSource: 'system', reason: gate.decision === 'approved' ? '稳定、完整且合规清晰的内容评估通过自动关卡。' : '内容评级为 C/D，自动进入优化返修。', performanceEligible: false } });
             await tx.video.update({ where: { id: job.videoId }, data: { status: gate.decision === 'approved' ? 'approved_for_publish' : 'revision_required' } });
+          } else if (gate.decision === 'hold' && complianceHeld) {
+            const reason = `内容合规状态为 ${complianceStatus}，需人工核查后再进入后续流程。`;
+            await tx.v11WorkflowGateDecision.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, stage: 'content', decision: 'hold', decisionSource: 'system', reason, performanceEligible: false } });
+            await tx.v11WorkflowHold.create({ data: { videoId: job.videoId, workflowRevisionId: run.group.workflowRevisionId, groupId: run.groupId, holdType: 'compliance', reason } });
+            await tx.v11EvaluationGroup.update({ where: { id: run.groupId }, data: { status: 'hold' } });
+            await tx.video.update({ where: { id: job.videoId }, data: { status: VideoStatus.ai_content_failed } });
           }
         }
-        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_decision', targetId: decision.id, actionType: run.group.shadowMode ? 'v11_content_shadow_completed' : 'v11_content_review_completed', result: 'success', afterValue: { contentRating: progress.contentRating, totalScore: progress.totalScore, runCount: succeeded.length, shadowMode: run.group.shadowMode } }, tx);
+        const complianceHeld = !run.group.shadowMode && complianceStatus !== 'clear';
+        await this.logs.create({ userId: job.actorId, videoId: job.videoId, targetType: 'v11_evaluation_decision', targetId: decision.id, actionType: complianceHeld ? 'v11_content_review_held' : run.group.shadowMode ? 'v11_content_shadow_completed' : 'v11_content_review_completed', result: complianceHeld ? 'hold' : 'success', ...(complianceHeld ? { comment: `内容合规状态为 ${complianceStatus}，需人工核查后再进入后续流程。` } : {}), afterValue: { contentRating: progress.contentRating, totalScore: progress.totalScore, runCount: succeeded.length, shadowMode: run.group.shadowMode, ...(complianceHeld ? { complianceStatus } : {}) } }, tx);
         await this.jobs.finishCurrent(tx, 'succeeded');
       });
     } catch (error) {

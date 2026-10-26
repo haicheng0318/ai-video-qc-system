@@ -734,6 +734,12 @@ export class VideosService {
         creator: {
           select: { id: true, name: true, account: true, role: true },
         },
+        v11WorkflowRevisions: {
+          where: { status: 'current' },
+          orderBy: { revision: 'desc' },
+          take: 1,
+          select: { activeContentDecisionId: true, policySnapshot: true },
+        },
         aiContentReviews: {
           include: { scores: true },
           orderBy: { createdAt: 'desc' },
@@ -788,6 +794,15 @@ export class VideosService {
     const latestResult = detail.aiResultReviews[0];
     const latestRule = detail.ruleEngineResults[0];
     const latestFinal = detail.finalVideoEvaluations[0];
+    const currentWorkflow = detail.v11WorkflowRevisions[0];
+    const policySnapshot = currentWorkflow?.policySnapshot;
+    const currentFormalV11ContentDecision = Boolean(
+      currentWorkflow?.activeContentDecisionId
+      && policySnapshot && typeof policySnapshot === 'object' && !Array.isArray(policySnapshot)
+      && (policySnapshot as Prisma.JsonObject).shadowMode === false,
+    );
+    const legacyRuleEngineSourceAvailable = detail.supervisorReview?.decision === VideoStatus.approved_for_publish
+      && detail.aiContentReviews.some((review) => review.status === 'succeeded');
     const allowedActions = allowedVideoActions(user, {
       status: detail.status, creatorId: detail.creatorId, creatorManagerId: video.creator.managerId,
       videoType: detail.videoType, isForAds: detail.isForAds, recordState: detail.recordState,
@@ -795,6 +810,7 @@ export class VideosService {
       hasMetric: Boolean(latestMetric), resultReviewRunning: latestResult?.status === 'running',
       resultReviewCurrentSucceeded: latestResult?.status === 'succeeded' && latestResult.resultMetricId === latestMetric?.id,
       resultReviewSucceeded: latestResult?.status === 'succeeded',
+      currentFormalV11ContentDecision, legacyRuleEngineSourceAvailable,
       ruleCurrent: latestRule?.ruleVersion === 'rule-engine-v1' && latestRule.resultReviewId === latestResult?.id,
       ruleSufficient: latestRule?.dataSufficiency === 'sufficient', finalRunning: latestFinal?.status === 'running',
       finalCurrentSucceeded: latestFinal?.status === 'succeeded' && latestFinal.ruleEngineResultId === latestRule?.id,

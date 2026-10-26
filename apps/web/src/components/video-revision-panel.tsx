@@ -26,8 +26,9 @@ export function VideoRevisionPanel({
     setSubmitting(true);
     setError('');
     try {
-      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), (path) => {
+      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), async (path) => {
         setDirty(false);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         router.push(path);
       });
     } catch (err) {

@@ -136,11 +136,15 @@ export class PermissionsService {
       include: {
         holds: { where: { status: 'active' }, select: { id: true } },
         appeals: { where: { status: 'active' }, select: { id: true } },
+        gateDecisions: { where: { stage: 'content' }, select: { decision: true } },
       },
     });
     if (!workflow) return;
     if (workflow.holds.length || workflow.appeals.length || !workflow.activeContentDecisionId) {
       throw new ConflictException('内容评估仍有待处理事项，暂不能进入数据阶段。');
+    }
+    if (workflow.gateDecisions[0]?.decision !== 'approved') {
+      throw new ConflictException('内容评估尚未通过正式关卡，暂不能进入数据阶段。');
     }
     const decision = await db.v11EvaluationDecision.findUnique({
       where: { id: workflow.activeContentDecisionId },
