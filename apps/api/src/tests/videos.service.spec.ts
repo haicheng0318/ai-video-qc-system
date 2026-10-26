@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
-import { UserRole, Video, VideoStatus, VideoType } from '@prisma/client';
+import { UserRole, Video, VideoRecordState, VideoStatus, VideoType } from '@prisma/client';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { OperationLogsService } from '../modules/operation-logs/operation-logs.service';
@@ -65,6 +65,138 @@ test('video list applies bounded pagination and returns metadata while preservin
   assert.deepEqual(result, { items: [{ id: 'video-1' }], total: 41, page: 3, pageSize: 20 });
 });
 
+test('business status filters are SQL-backed and regular lists default to active records', async () => {
+  let captured: Record<string, any> | undefined;
+  const prisma = { video: { findMany: async ({ where }: { where: Record<string, any> }) => { captured = where; return []; }, count: async () => 0 }, $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops) } as unknown as PrismaService;
+  const service = new VideosService(prisma, { buildVideoVisibilityWhere: () => ({}) } as never, {} as never);
+  await service.list({ ...testUser, role: UserRole.admin }, { page: 1, pageSize: 20, businessStatus: 'completed' });
+  assert.equal(captured?.recordState, VideoRecordState.active);
+  assert.deepEqual(captured?.status.in, [VideoStatus.final_effective, VideoStatus.final_low_effective, VideoStatus.final_invalid]);
+});
+
+function recordStateHarness(options: { state?: VideoRecordState; activeJob?: boolean } = {}) {
+  const video = { id: 'v', recordState: options.state || VideoRecordState.active };
+  const writes: unknown[] = [];
+  const logs: unknown[] = [];
+  const tx = {
+    $queryRaw: async () => [],
+    video: { findUnique: async () => video, update: async ({ data }: { data: { recordState: VideoRecordState } }) => { video.recordState = data.recordState; writes.push(data); return { id: video.id, ...data, recordStateChangedAt: new Date() }; } },
+    evaluationJob: { findFirst: async () => options.activeJob ? { id: 'job' } : null },
+  };
+  const prisma = { $transaction: async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx) } as unknown as PrismaService;
+  const service = new VideosService(prisma, {} as never, { create: async (log: unknown) => { logs.push(log); } } as never);
+  return { service, video, writes, logs };
+}
+
+test('admin hide and restore updates record state and writes a reasoned audit record', async () => {
+  const harness = recordStateHarness();
+  const admin = { ...testUser, id: 'admin', role: UserRole.admin };
+  await harness.service.manageRecordState('v', VideoRecordState.hidden, 'duplicate upload', admin, {});
+  assert.equal(harness.video.recordState, VideoRecordState.hidden);
+  assert.equal((harness.logs[0] as any).actionType, 'video_hidden');
+  assert.deepEqual((harness.logs[0] as any).afterValue, { recordState: VideoRecordState.hidden, reason: 'duplicate upload' });
+  await harness.service.manageRecordState('v', VideoRecordState.active, 'restore requested', admin, {});
+  assert.equal(harness.video.recordState, VideoRecordState.active);
+  assert.equal((harness.logs[1] as any).actionType, 'video_restored');
+});
+
+test('hide and trash reject active evaluation jobs without changing state or logging success', async () => {
+  for (const next of [VideoRecordState.hidden, VideoRecordState.trashed]) {
+    const harness = recordStateHarness({ activeJob: true });
+    await assert.rejects(harness.service.manageRecordState('v', next, 'cleanup', { ...testUser, role: UserRole.admin }, {}), ConflictException);
+    assert.equal(harness.video.recordState, VideoRecordState.active);
+    assert.deepEqual(harness.writes, []);
+    assert.deepEqual(harness.logs, []);
+  }
+});
+
+test('record-state reason is required and bounded', async () => {
+  const harness = recordStateHarness();
+  await assert.rejects(harness.service.manageRecordState('v', VideoRecordState.hidden, ' ', { ...testUser, role: UserRole.admin }, {}));
+  await assert.rejects(harness.service.manageRecordState('v', VideoRecordState.hidden, 'x'.repeat(501), { ...testUser, role: UserRole.admin }, {}));
+});
+
+test('custom cover accepts actual JPEG, PNG and WEBP bytes, regardless of declared MIME', async () => {
+  const fixtures = [
+    { bytes: Buffer.from([0xff, 0xd8, 0xff, 0]), extension: 'jpg', mime: 'image/jpeg' },
+    { bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), extension: 'png', mime: 'image/png' },
+    { bytes: Buffer.from('RIFF0000WEBP'), extension: 'webp', mime: 'image/webp' },
+  ];
+  for (const fixture of fixtures) {
+    let stored: { extension: string; mime: string } | undefined;
+    const video = videoFile('/tmp/never-opened.mp4', 10);
+    const tx = { video: { update: async ({ data }: { data: Record<string, unknown> }) => ({ ...video, ...data }) } };
+    const prisma = { video: { findUnique: async () => video }, $transaction: async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx) } as unknown as PrismaService;
+    const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined, assertVideoActive: () => undefined } as never, { create: async () => undefined } as never, { storeCover: async (_id: string, _buffer: Buffer, extension: string, mime: string) => { stored = { extension, mime }; return `storage/videos/covers/test.${extension}`; } } as never);
+    (service as any).serializeVideo = (value: unknown) => value;
+    await service.uploadCover(video.id, { buffer: fixture.bytes, size: fixture.bytes.length, mimetype: 'application/octet-stream' } as Express.Multer.File, testUser, {});
+    assert.deepEqual(stored, { extension: fixture.extension, mime: fixture.mime });
+  }
+});
+
+test('custom cover rejects spoofed image MIME and files larger than 5MB', async () => {
+  const video = videoFile('/tmp/never-opened.mp4', 10);
+  const prisma = { video: { findUnique: async () => video } } as unknown as PrismaService;
+  const service = new VideosService(prisma, { assertCanAccessVideo: async () => undefined, assertVideoActive: () => undefined } as never, {} as never, { storeCover: async () => { throw new Error('must not store invalid data'); } } as never);
+  await assert.rejects(service.uploadCover(video.id, { buffer: Buffer.from('not an image'), size: 12, mimetype: 'image/jpeg' } as Express.Multer.File, testUser, {}), /真实 JPG、PNG 或 WEBP/);
+  await assert.rejects(service.uploadCover(video.id, { buffer: Buffer.from([0xff, 0xd8, 0xff]), size: 5 * 1024 * 1024 + 1, mimetype: 'image/jpeg' } as Express.Multer.File, testUser, {}), /不能超过 5MB/);
+});
+
+test('hidden and trashed videos reject cover replacement and regeneration for admin', async () => {
+  let sideEffects = 0;
+  for (const recordState of ['hidden', 'trashed']) {
+    const video = { ...videoFile('/tmp/hidden.mp4', 10), recordState } as Video;
+    const prisma = { video: { findUnique: async () => video } } as unknown as PrismaService;
+    const permissions = {
+      assertCanAccessVideo: async () => undefined,
+      assertVideoActive: (candidate: Video) => {
+        if (candidate.recordState !== 'active') throw new ForbiddenException();
+      },
+    };
+    const storage = {
+      storeCover: async () => { sideEffects += 1; throw new Error('must not write cover'); },
+      materialize: async () => { sideEffects += 1; throw new Error('must not read video for regeneration'); },
+    };
+    const service = new VideosService(prisma, permissions as never, {} as never, storage as never);
+    const file = { buffer: Buffer.from([0xff, 0xd8, 0xff]), size: 3, mimetype: 'image/jpeg' } as Express.Multer.File;
+    await assert.rejects(service.uploadCover(video.id, file, { ...testUser, role: UserRole.admin }, {}), ForbiddenException);
+    await assert.rejects(service.regenerateCover(video.id, { ...testUser, role: UserRole.admin }, {}), ForbiddenException);
+  }
+  assert.equal(sideEffects, 0);
+});
+
+test('video serialization removes private coverPath but derives the authenticated cover URL first', () => {
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  const serialize = (service as any).serializeVideo.bind(service);
+  const result = serialize({ id: 'video-1', coverPath: 'storage/videos/covers/video-1.jpg' });
+  assert.equal(result.coverUrl, '/api/videos/video-1/cover');
+  assert.equal('coverPath' in result, false);
+});
+
+test('automatic current V1.2 revision gate authorizes revision upload without a SupervisorReview row', async () => {
+  const tx = {
+    supervisorReview: { findUnique: async () => null },
+    v11WorkflowGateDecision: { findFirst: async (args: any) => {
+      assert.deepEqual(args.where, {
+        videoId: 'video-1', stage: 'content', decision: 'revision_required', decisionSource: 'system',
+        workflowRevision: { status: 'current' },
+      });
+      return { id: 'automatic-gate' };
+    } },
+  };
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  assert.equal(await (service as any).hasRevisionRequiredDecision(tx, 'video-1'), true);
+});
+
+test('legacy SupervisorReview revision decision remains accepted', async () => {
+  const tx = {
+    supervisorReview: { findUnique: async () => ({ decision: VideoStatus.revision_required }) },
+    v11WorkflowGateDecision: { findFirst: async () => { throw new Error('legacy review should short-circuit'); } },
+  };
+  const service = new VideosService({} as PrismaService, {} as never, {} as never);
+  assert.equal(await (service as any).hasRevisionRequiredDecision(tx, 'video-1'), true);
+});
+
 test('video list search preserves supervisor team visibility scope', async () => {
   let findArgs: Record<string, any> | undefined;
   const prisma = {
@@ -80,6 +212,7 @@ test('video list search preserves supervisor team visibility scope', async () =>
       { creatorId: supervisor.id },
       { creator: { managerId: supervisor.id } },
     ],
+    recordState: 'active',
   };
   const permissions = { buildVideoVisibilityWhere: () => visibility };
   const service = new VideosService(prisma, permissions as never, {} as never);
@@ -97,6 +230,7 @@ test('video list search preserves supervisor team visibility scope', async () =>
         ],
       },
     ],
+    recordState: 'active',
   });
 });
 
@@ -167,6 +301,8 @@ function videoFile(filePath: string, size: number): Video {
     filePath,
     fileUrl: null,
     coverUrl: null,
+    coverPath: null,
+    coverSource: null,
     mimeType: 'video/mp4',
     fileSizeBytes: BigInt(size),
     duration: null,
@@ -181,6 +317,9 @@ function videoFile(filePath: string, size: number): Video {
     relatedRequirement: null,
     creatorId: testUser.id,
     status: VideoStatus.submitted,
+    recordState: 'active',
+    recordStateChangedAt: null,
+    recordStateChangedById: null,
     parentVideoId: null,
     version: 1,
     createdAt: new Date(),
@@ -274,6 +413,7 @@ function createRevisionHarness(options: {
         decision: VideoStatus.revision_required,
       },
     },
+    v11WorkflowGateDecision: { findFirst: async () => null },
   };
   const prisma = {
     video: { findUnique: async () => parent },
@@ -455,7 +595,7 @@ test('non-revision-required parent cannot accept revision', async () => {
   }
 });
 
-test('revision upload requires a matching supervisor review', async () => {
+test('revision upload requires a supervisor review or current automatic revision gate', async () => {
   const fixture = await createFixtureFile();
   const harness = createRevisionHarness({ hasReview: false });
   try {

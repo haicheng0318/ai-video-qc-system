@@ -6,7 +6,8 @@ import { test } from 'node:test';
 test('video list persists bounded filters and pagination in the URL', async () => {
   const page = await readFile(resolve(__dirname, '../../app/videos/page.tsx'), 'utf8');
   assert.match(page, /useSearchParams/);
-  for (const field of ['search', 'status', 'platform', 'videoType', 'page']) assert.match(page, new RegExp(field));
+  for (const field of ['search', 'businessStatus', 'videoType', 'month', 'page']) assert.match(page, new RegExp(field));
+  assert.doesNotMatch(page, /name="platform"|name="dataRating"|name="contentRating"|name="comprehensiveRating"/);
   assert.match(page, /pageSize/);
   assert.match(page, /Asia\/Shanghai/);
   assert.match(page, /isTrial/);

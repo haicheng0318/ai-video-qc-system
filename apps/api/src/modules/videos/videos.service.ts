@@ -1,7 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
-import { Prisma, UserRole, Video, VideoStatus } from '@prisma/client';
+import { Prisma, UserRole, Video, VideoRecordState, VideoStatus } from '@prisma/client';
 import { createReadStream, statSync } from 'node:fs';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { Request, Response } from 'express';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
@@ -22,6 +26,7 @@ import { allowedVideoActions } from './video-actions';
 import { rowsToCsv, videoReportRows } from './video-report';
 
 const adminListFilterRoles: UserRole[] = [UserRole.admin];
+const execFileAsync = promisify(execFile);
 const activeRevisionStatuses: VideoStatus[] = [
   VideoStatus.submitted,
   VideoStatus.ai_content_reviewing,
@@ -40,6 +45,13 @@ function storageDir() {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function sniffCover(buffer: Buffer): { extension: 'jpg' | 'png' | 'webp'; mimeType: string } | null {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return { extension: 'jpg', mimeType: 'image/jpeg' };
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { extension: 'png', mimeType: 'image/png' };
+  if (buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return { extension: 'webp', mimeType: 'image/webp' };
+  return null;
 }
 
 function shanghaiDate(value: string, nextDay = false) {
@@ -201,7 +213,7 @@ export class VideosService {
           ticketId = ticket.id;
         }
         if (parent) {
-          if (parent.status !== VideoStatus.revision_required || (await transaction.supervisorReview.findUnique({ where: { videoId: parent.id } }))?.decision !== VideoStatus.revision_required) throw new ConflictException('A revision-required supervisor review is required.');
+          if (parent.status !== VideoStatus.revision_required || !(await this.hasRevisionRequiredDecision(transaction, parent.id))) throw new ConflictException('A revision-required decision is required before uploading a revision.');
           if (await transaction.video.findFirst({ where: { parentVideoId: parent.id, status: { in: activeRevisionStatuses } } })) throw new ConflictException('An active revision already exists for this video.');
           isTrial = parent.isTrial;
         }
@@ -262,7 +274,9 @@ export class VideosService {
         return createdVideo;
       }, { timeout: 30000 });
 
-      return this.serializeVideo(video);
+      const coverGenerated = await this.generateDefaultCover(video);
+      const refreshed = await this.prisma.video.findUnique({ where: { id: video.id } });
+      return { ...this.serializeVideo(refreshed || video), coverGenerationFailed: !coverGenerated };
     } catch (error) {
       if (this.quotas && (localTicketId || ownsDirectClaim)) {
         // A failed/uncertain commit is not evidence that the final object is unreferenced.
@@ -325,7 +339,17 @@ export class VideosService {
         }
       : { ...visibilityWhere };
 
+    where.recordState = user.role === UserRole.admin && query.recordState ? query.recordState : VideoRecordState.active;
+
     if (query.status) where.status = query.status;
+    const businessStatuses: Record<NonNullable<VideoListQueryDto['businessStatus']>, VideoStatus[]> = {
+      pending: [VideoStatus.submitted, VideoStatus.pending_supervisor_review, VideoStatus.approved_for_publish],
+      processing: [VideoStatus.ai_content_reviewing, VideoStatus.ai_result_reviewing, VideoStatus.pending_rule_engine, VideoStatus.pending_final_evaluation],
+      waiting_data: [VideoStatus.pending_result_data, VideoStatus.pending_data],
+      completed: [VideoStatus.final_effective, VideoStatus.final_low_effective, VideoStatus.final_invalid],
+      exception: [VideoStatus.ai_content_failed, VideoStatus.ai_result_failed, VideoStatus.final_evaluation_failed, VideoStatus.revision_required, VideoStatus.invalid_content],
+    };
+    if (query.businessStatus) where.status = { in: businessStatuses[query.businessStatus] };
     if (query.videoType) where.videoType = query.videoType;
     if (query.brand) where.brand = { contains: query.brand, mode: 'insensitive' };
     if (query.product) where.product = { contains: query.product, mode: 'insensitive' };
@@ -415,6 +439,113 @@ export class VideosService {
     };
   }
 
+  async manageRecordState(
+    videoId: string,
+    nextState: VideoRecordState,
+    reason: string,
+    actor: AuthenticatedUser,
+    requestMeta: { ipAddress?: string; userAgent?: string },
+  ) {
+    const normalizedReason = reason.trim();
+    if (normalizedReason.length < 1 || normalizedReason.length > 500) throw new BadRequestException('Reason must be 1–500 characters.');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      const video = await tx.video.findUnique({ where: { id: videoId }, select: { id: true, recordState: true } });
+      if (!video) throw new NotFoundException('Video not found.');
+      if (video.recordState !== nextState && nextState !== VideoRecordState.active) {
+        const activeJob = await tx.evaluationJob.findFirst({
+          where: { videoId, status: { in: ['queued', 'running', 'retry_wait'] } },
+          select: { id: true },
+        });
+        if (activeJob) throw new ConflictException('该视频有正在处理的任务，暂时不能隐藏或移入回收站。');
+      }
+      if (video.recordState === nextState) return { id: video.id, recordState: video.recordState, unchanged: true };
+      const updated = await tx.video.update({
+        where: { id: videoId },
+        data: { recordState: nextState, recordStateChangedAt: new Date(), recordStateChangedById: actor.id },
+        select: { id: true, recordState: true, recordStateChangedAt: true },
+      });
+      const actionType = nextState === VideoRecordState.hidden ? OperationLogAction.VideoHidden
+        : nextState === VideoRecordState.trashed ? OperationLogAction.VideoTrashed : OperationLogAction.VideoRestored;
+      await this.operationLogsService.create({
+        userId: actor.id, videoId, targetType: 'video', targetId: videoId, actionType,
+        result: 'success', comment: normalizedReason,
+        beforeValue: { recordState: video.recordState },
+        afterValue: { recordState: nextState, reason: normalizedReason },
+        ipAddress: requestMeta.ipAddress, userAgent: requestMeta.userAgent,
+      }, tx);
+      return updated;
+    });
+  }
+
+  async uploadCover(videoId: string, file: Express.Multer.File | undefined, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
+    if (!file?.buffer || file.size > 5 * 1024 * 1024) throw new BadRequestException('封面文件不能超过 5MB。');
+    const detected = sniffCover(file.buffer);
+    if (!detected) throw new BadRequestException('仅支持真实 JPG、PNG 或 WEBP 图片。');
+    const video = await this.prisma.video.findUnique({ where: { id: videoId } });
+    if (!video) throw new NotFoundException('Video not found.');
+    await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video cover upload denied.' });
+    this.permissionsService.assertVideoActive(video);
+    const coverPath = await this.videoStorage.storeCover(videoId, file.buffer, detected.extension, detected.mimeType);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.video.update({ where: { id: videoId }, data: { coverPath, coverSource: 'custom' } });
+      await this.operationLogsService.create({ userId: user.id, videoId, targetType: 'video', targetId: videoId, actionType: OperationLogAction.VideoCoverUpdated, result: 'success', afterValue: { coverSource: 'custom' } }, tx);
+      return result;
+    });
+    return this.serializeVideo(updated);
+  }
+
+  async regenerateCover(videoId: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
+    const video = await this.prisma.video.findUnique({ where: { id: videoId } });
+    if (!video) throw new NotFoundException('Video not found.');
+    await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video cover regeneration denied.' });
+    this.permissionsService.assertVideoActive(video);
+    await this.generateDefaultCover(video, true);
+    const updated = await this.prisma.video.findUniqueOrThrow({ where: { id: videoId } });
+    return this.serializeVideo(updated);
+  }
+
+  async prepareCoverFile(videoId: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
+    const video = await this.prisma.video.findUnique({ where: { id: videoId } });
+    if (!video) throw new NotFoundException('Video not found.');
+    await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video cover access denied.' });
+    if (!video.coverPath) return null;
+    const materialized = await this.videoStorage.materialize(video.coverPath);
+    const extension = extname(video.coverPath).toLowerCase();
+    const contentType = extension === '.png' ? 'image/png' : extension === '.webp' ? 'image/webp' : 'image/jpeg';
+    return { ...materialized, contentType };
+  }
+
+  private async generateDefaultCover(video: Pick<Video, 'id' | 'filePath' | 'duration' | 'coverSource'>, force = false) {
+    if (!force && video.coverSource === 'custom') return true;
+    let materialized: Awaited<ReturnType<VideoStorageService['materialize']>> | undefined;
+    let tempDirectory: string | undefined;
+    try {
+      materialized = await this.videoStorage.materialize(video.filePath);
+      tempDirectory = await mkdtemp(join(tmpdir(), 'aiqc-cover-'));
+      const outputPath = join(tempDirectory, 'cover.jpg');
+      let duration = video.duration && video.duration > 0 ? video.duration : null;
+      if (duration === null) {
+        try {
+          const probe = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', materialized.path], { timeout: 15000, maxBuffer: 1024 * 1024 });
+          const parsed = Number(probe.stdout.trim());
+          if (Number.isFinite(parsed) && parsed > 0) duration = parsed;
+        } catch { duration = null; }
+      }
+      const timestamp = duration !== null && duration < 1 ? duration / 2 : duration === null ? 0 : 1;
+      await execFileAsync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(timestamp), '-i', materialized.path, '-frames:v', '1', '-vf', 'scale=min(720\\,iw):-2', '-q:v', '3', '-y', outputPath], { timeout: 30000, maxBuffer: 1024 * 1024 });
+      const path = await this.videoStorage.storeCover(video.id, await readFile(outputPath), 'jpg', 'image/jpeg');
+      await this.prisma.video.update({ where: { id: video.id }, data: { coverPath: path, coverSource: 'auto' } });
+      return true;
+    } catch {
+      this.logger.warn(`Cover generation failed for video ${video.id}; video registration remains successful.`);
+      return false;
+    } finally {
+      if (materialized) await materialized.cleanup().catch(() => undefined);
+      if (tempDirectory) await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
   async createRevision(
     parentVideoId: string,
     dto: CreateVideoRevisionDto,
@@ -482,9 +613,8 @@ export class VideosService {
           throw new ConflictException('Only videos requiring revision can accept a revision upload.');
         }
 
-        const review = await transaction.supervisorReview.findUnique({ where: { videoId: parentVideoId } });
-        if (!review || review.decision !== VideoStatus.revision_required) {
-          throw new ConflictException('A revision-required supervisor review is required.');
+        if (!(await this.hasRevisionRequiredDecision(transaction, parentVideoId))) {
+          throw new ConflictException('A revision-required decision is required before uploading a revision.');
         }
         const activeRevision = await transaction.video.findFirst({
           where: {
@@ -554,6 +684,22 @@ export class VideosService {
     }
   }
 
+  private async hasRevisionRequiredDecision(tx: Prisma.TransactionClient, videoId: string) {
+    const supervisorReview = await tx.supervisorReview.findUnique({ where: { videoId }, select: { decision: true } });
+    if (supervisorReview?.decision === VideoStatus.revision_required) return true;
+    const automaticGate = await tx.v11WorkflowGateDecision.findFirst({
+      where: {
+        videoId,
+        stage: 'content',
+        decision: 'revision_required',
+        decisionSource: 'system',
+        workflowRevision: { status: 'current' },
+      },
+      select: { id: true },
+    });
+    return Boolean(automaticGate);
+  }
+
   async detail(id: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
     const video = await this.prisma.video.findUnique({
       where: { id },
@@ -587,6 +733,12 @@ export class VideosService {
       include: {
         creator: {
           select: { id: true, name: true, account: true, role: true },
+        },
+        v11WorkflowRevisions: {
+          where: { status: 'current' },
+          orderBy: { revision: 'desc' },
+          take: 1,
+          select: { activeContentDecisionId: true, policySnapshot: true },
         },
         aiContentReviews: {
           include: { scores: true },
@@ -642,13 +794,23 @@ export class VideosService {
     const latestResult = detail.aiResultReviews[0];
     const latestRule = detail.ruleEngineResults[0];
     const latestFinal = detail.finalVideoEvaluations[0];
+    const currentWorkflow = detail.v11WorkflowRevisions[0];
+    const policySnapshot = currentWorkflow?.policySnapshot;
+    const currentFormalV11ContentDecision = Boolean(
+      currentWorkflow?.activeContentDecisionId
+      && policySnapshot && typeof policySnapshot === 'object' && !Array.isArray(policySnapshot)
+      && (policySnapshot as Prisma.JsonObject).shadowMode === false,
+    );
+    const legacyRuleEngineSourceAvailable = detail.supervisorReview?.decision === VideoStatus.approved_for_publish
+      && detail.aiContentReviews.some((review) => review.status === 'succeeded');
     const allowedActions = allowedVideoActions(user, {
       status: detail.status, creatorId: detail.creatorId, creatorManagerId: video.creator.managerId,
-      videoType: detail.videoType, isForAds: detail.isForAds,
+      videoType: detail.videoType, isForAds: detail.isForAds, recordState: detail.recordState,
     }, {
       hasMetric: Boolean(latestMetric), resultReviewRunning: latestResult?.status === 'running',
       resultReviewCurrentSucceeded: latestResult?.status === 'succeeded' && latestResult.resultMetricId === latestMetric?.id,
       resultReviewSucceeded: latestResult?.status === 'succeeded',
+      currentFormalV11ContentDecision, legacyRuleEngineSourceAvailable,
       ruleCurrent: latestRule?.ruleVersion === 'rule-engine-v1' && latestRule.resultReviewId === latestResult?.id,
       ruleSufficient: latestRule?.dataSufficiency === 'sufficient', finalRunning: latestFinal?.status === 'running',
       finalCurrentSucceeded: latestFinal?.status === 'succeeded' && latestFinal.ruleEngineResultId === latestRule?.id,
@@ -674,6 +836,7 @@ export class VideosService {
     });
     if (!video) throw new NotFoundException('Video not found.');
     await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video report export denied.' });
+    if (video.recordState !== VideoRecordState.active) throw new NotFoundException('Video not found.');
     await this.operationLogsService.create({
       userId: user.id, videoId: id, targetType: 'video_report', targetId: id,
       actionType: OperationLogAction.VideoReportExported, result: 'success',
@@ -875,13 +1038,15 @@ export class VideosService {
   }
 
   private serializeVideo<T extends Record<string, any>>(video: T) {
-    const internalFields = new Set(['rawResponse', 'successKey', 'filePath']);
+    const internalFields = new Set(['rawResponse', 'successKey', 'filePath', 'coverPath']);
+    const hasCover = Boolean(video.coverPath);
     const serialized = JSON.parse(
       JSON.stringify(video, (key, value) => {
         if (internalFields.has(key)) return undefined;
         return typeof value === 'bigint' ? value.toString() : value;
       }),
     );
+    if (hasCover) serialized.coverUrl = `/api/videos/${serialized.id}/cover`;
     if (
       serialized.supervisorReview
       && !Array.isArray(serialized.supervisorReview.revisionRequirements)

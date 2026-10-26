@@ -35,6 +35,7 @@ export type V11DimensionObservation = {
   factClaims?: Array<{ key: string; state: 'present' | 'absent' | 'uncertain'; evidenceReferences: string[] }>;
   evidence: Array<{ startSeconds: number | null; endSeconds: number | null; reference: string | null; description: string }>;
   observation: string;
+  improvementSuggestions?: string[];
 };
 
 export type V11ContentScoringInput = {

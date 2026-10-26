@@ -122,6 +122,8 @@ export class ResultReviewsService {
       await transaction.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const lockedVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!lockedVideo) throw new NotFoundException('Video not found.');
+      this.permissionsService.assertVideoActive(lockedVideo);
+      await this.permissionsService.assertDataStageOpen(videoId, transaction);
       await this.jobs?.assertNoActive(transaction, videoId, 'result');
 
       const running = await transaction.aiResultReview.findMany({

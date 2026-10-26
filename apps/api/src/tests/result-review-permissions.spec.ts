@@ -5,7 +5,7 @@ import { UserRole, VideoStatus, VideoType } from '@prisma/client';
 import { PermissionsService, canManageResultData } from '../modules/permissions/permissions.service';
 
 const actor = (role: UserRole) => ({ id: `${role}-id`, account: role, name: role, role, managerId: null });
-const video = (creatorId: string) => ({ id: '00000000-0000-4000-8000-000000000050', creatorId, videoType: VideoType.organic, isForAds: false, status: VideoStatus.pending_result_data }) as never;
+const video = (creatorId: string) => ({ id: '00000000-0000-4000-8000-000000000050', creatorId, videoType: VideoType.organic, isForAds: false, status: VideoStatus.pending_result_data, recordState: 'active' }) as never;
 
 test('admin can trigger result review globally', () => {
   assert.equal(canManageResultData(actor(UserRole.admin), video('another-user')), true);

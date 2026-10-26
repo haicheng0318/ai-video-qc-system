@@ -150,6 +150,8 @@ function createHarness(options: {
   const permissions = {
     assertCanSubmitResultMetrics: async () => undefined,
     assertCanAccessVideo: async () => undefined,
+    assertVideoActive: () => undefined,
+    assertDataStageOpen: async () => undefined,
   };
   const operationLogs = {
     create: async (input: Record<string, any>) => {
@@ -187,6 +189,7 @@ test('approved_for_publish first submission creates a snapshot and advances stat
 });
 
 for (const status of [
+  VideoStatus.pending_supervisor_review,
   VideoStatus.pending_result_data,
   VideoStatus.ai_result_failed,
   VideoStatus.pending_data,
@@ -201,7 +204,6 @@ for (const status of [
 for (const status of [
   VideoStatus.ai_content_reviewing,
   VideoStatus.ai_content_failed,
-  VideoStatus.pending_supervisor_review,
   VideoStatus.revision_required,
   VideoStatus.invalid_content,
   VideoStatus.submitted,

@@ -17,6 +17,7 @@ const observed = (anchor: number): V11DimensionObservation[] => V11_CONTENT_DIME
   factClaims: [{ key: V11_FACT_CLAIMS[code][0], state: 'present' as const, evidenceReferences: ['00:00-00:01'] }],
   evidence: [{ startSeconds: 1, endSeconds: 2, reference: `segment:${code}`, description: code }],
   observation: `${code} observed`,
+  improvementSuggestions: [],
 }));
 
 test('V1.1 content scoring has eight frozen dimensions totaling one hundred weight', () => {

@@ -33,6 +33,10 @@ export const OperationLogAction = {
   NegativeCaseMarked: 'negative_case_marked',
   CaseMarkRemoved: 'case_mark_removed',
   VideoReportExported: 'video_report_exported',
+  VideoHidden: 'video_hidden',
+  VideoTrashed: 'video_trashed',
+  VideoRestored: 'video_restored',
+  VideoCoverUpdated: 'video_cover_updated',
   CaseLibraryExported: 'case_library_exported',
 } as const;
 

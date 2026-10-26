@@ -9,6 +9,7 @@ test('appeal supersedes the prior workflow, group and active runs before queuing
   const group = { id: 'group-old', videoId: 'video-1', inputRevisionId: 'input-1', shadowMode: false };
   const tx: any = {
     $queryRaw: async () => [],
+    video: { findUnique: async () => ({ recordState: 'active' }) },
     v11EvaluationDecision: { findUnique: async () => ({ id: 'decision-1', groupId: group.id, workflowRevisionId: workflow.id, group, workflowRevision: workflow }) },
     v11Appeal: {
       findFirst: async () => null,
@@ -31,7 +32,10 @@ test('appeal supersedes the prior workflow, group and active runs before queuing
     operationLog: { create: async () => ({ id: 'log-1' }) },
   };
   const db: any = { $transaction: async (action: (client: any) => unknown) => action(tx) };
-  const permissions: any = { findVideoVisibleToUser: async () => ({ id: 'video-1', creatorId: 'owner-1' }) };
+  const permissions: any = {
+    findVideoVisibleToUser: async () => ({ id: 'video-1', creatorId: 'owner-1' }),
+    assertVideoActive: () => undefined,
+  };
   let queued: any;
   const jobs: any = { enqueue: async (_tx: any, input: any) => { queued = input; return { id: 'job-1' }; } };
   const service = new V11WorkflowService(db, permissions, jobs);

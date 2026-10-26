@@ -26,8 +26,9 @@ export function VideoRevisionPanel({
     setSubmitting(true);
     setError('');
     try {
-      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), (path) => {
+      await submitVideoRevision(apiFetch, parentVideoId, new FormData(event.currentTarget), async (path) => {
         setDirty(false);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         router.push(path);
       });
     } catch (err) {
@@ -39,7 +40,7 @@ export function VideoRevisionPanel({
   return (
     <section className="panel section-gap">
       <h2>上传返修版本</h2>
-      <p><strong>主管意见：</strong>{comment || '-'}</p>
+      <p><strong>返修依据：</strong>{comment || 'V1.2 内容评估自动关卡要求优化返修。'}</p>
       {requirements.length > 0 ? <ul>{requirements.map((item) => <li key={item}>{item}</li>)}</ul> : null}
       <form className="form-grid" onSubmit={onSubmit} onChange={() => setDirty(true)}>
         <div className="form-field full">

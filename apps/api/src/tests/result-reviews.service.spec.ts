@@ -200,6 +200,8 @@ function createHarness(options: HarnessOptions = {}) {
   const permissions = {
     assertCanTriggerResultReview: async () => undefined,
     assertCanAccessVideo: async () => undefined,
+    assertVideoActive: () => undefined,
+    assertDataStageOpen: async () => undefined,
   };
   const operationLogs = {
     create: async (entry: Record<string, any>) => {

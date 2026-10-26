@@ -62,7 +62,7 @@ function createHarness(overrides: {
   const tx: any = {
     $queryRaw: async () => [],
     video: {
-      findUnique: async () => ({ id: ids.video }),
+      findUnique: async () => ({ id: ids.video, recordState: 'active' }),
       update: async ({ data }: any) => { calls.push({ name: 'video.update', data }); return { id: ids.video, ...data }; },
     },
     v11ComprehensiveDecision: {
@@ -88,7 +88,7 @@ function createHarness(overrides: {
   const logs: any = {
     create: async (data: any) => { calls.push({ name: 'log.create', data }); return { id: 'log-1' }; },
   };
-  const service = new V11RatingsService(db, {} as any, logs);
+  const service = new V11RatingsService(db, { assertVideoActive: () => undefined } as any, logs);
   const user = { id: ids.user, role: UserRole.admin } as any;
   return { service, user, calls };
 }
@@ -177,7 +177,11 @@ function createShadowPipelineHarness(options: { shadowMode?: boolean; latestMetr
   const db: any = {
     $transaction: async (action: (client: any) => unknown) => action(tx),
   };
-  const permissions: any = { findVideoVisibleToUser: async () => video };
+  const permissions: any = {
+    findVideoVisibleToUser: async () => video,
+    assertVideoActive: () => undefined,
+    assertDataStageOpen: async () => undefined,
+  };
   const logs: any = { create: async (data: any) => { calls.push({ name: 'log.create', data }); return { id: 'log-1' }; } };
   return {
     service: new V11RatingsService(db, permissions, logs),
@@ -303,7 +307,7 @@ test('a newer immutable result metric blocks comprehensive rating based on a sta
 test('case library reads only current decisions without active holds or appeals', async () => {
   let where: any;
   const db: any = { v11ComprehensiveDecision: { findMany: async (args: any) => { where = args.where; return []; } } };
-  const permissions: any = { buildVideoVisibilityWhere: () => ({ creatorId: ids.user }) };
+  const permissions: any = { buildVideoVisibilityWhere: () => ({ creatorId: ids.user }), assertVideoActive: () => undefined };
   const service = new V11RatingsService(db, permissions, {} as any);
   const result = await service.listCases('excellent', { id: ids.user, role: UserRole.director } as any);
   assert.deepEqual(result.items, []);
@@ -316,6 +320,7 @@ test('case library reads only current decisions without active holds or appeals'
 test('a superseded decision cannot be newly marked as a case', async () => {
   const tx: any = {
     $queryRaw: async () => [],
+    video: { findUnique: async () => ({ recordState: 'active' }) },
     v11ComprehensiveDecision: {
       findUnique: async () => ({
         id: ids.decision,
@@ -329,7 +334,7 @@ test('a superseded decision cannot be newly marked as a case', async () => {
     v11WorkflowHold: { count: async () => 0 },
     v11Appeal: { count: async () => 0 },
   };
-  const service = new V11RatingsService({ $transaction: async (action: any) => action(tx) } as any, {} as any, {} as any);
+  const service = new V11RatingsService({ $transaction: async (action: any) => action(tx) } as any, { assertVideoActive: () => undefined } as any, {} as any);
   await assert.rejects(
     () => service.markCase(ids.decision, { type: 'excellent', note: '可复用的高质量样本' }, { id: ids.user, role: UserRole.admin } as any),
     (error: unknown) => error instanceof ConflictException,

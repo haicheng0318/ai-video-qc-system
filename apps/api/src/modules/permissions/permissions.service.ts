@@ -1,5 +1,5 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
-import { UserRole, Video } from '@prisma/client';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { Prisma, UserRole, Video, VideoRecordState } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
@@ -20,7 +20,7 @@ export class PermissionsService {
     if (user.role === UserRole.admin) {
       return {};
     }
-    return { creatorId: user.id };
+    return { creatorId: user.id, recordState: VideoRecordState.active };
   }
 
   async assertCanAccessVideo(
@@ -28,8 +28,9 @@ export class PermissionsService {
     video: Video & { creator?: { managerId: string | null } },
     requestMeta?: { ipAddress?: string; userAgent?: string; action?: string },
   ) {
-    const allowed =
-      user.role === UserRole.admin || video.creatorId === user.id;
+    const allowed = user.role === UserRole.admin
+      ? true
+      : video.creatorId === user.id && video.recordState === VideoRecordState.active;
 
     if (!allowed) {
       await this.operationLogsService.create({
@@ -52,6 +53,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       user.role === UserRole.admin || video.creatorId === user.id;
 
@@ -76,6 +78,7 @@ export class PermissionsService {
     video: Video & { creator?: { managerId: string | null } },
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       user.role === UserRole.admin ||
       (user.role === UserRole.supervisor &&
@@ -93,6 +96,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed =
       video.creatorId === user.id || user.role === UserRole.admin;
 
@@ -107,6 +111,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     if (!canManageResultData(user, video)) {
       await this.logVideoPermissionDenied(
         user,
@@ -118,11 +123,44 @@ export class PermissionsService {
     }
   }
 
+  assertVideoActive(video: Pick<Video, 'recordState'>) {
+    if (video.recordState !== VideoRecordState.active) {
+      throw new ForbiddenException('该视频已隐藏或移入回收站，不能执行此操作。');
+    }
+  }
+
+  async assertDataStageOpen(videoId: string, db: PrismaService | Prisma.TransactionClient = this.prisma) {
+    const workflow = await db.v11WorkflowRevision.findFirst({
+      where: { videoId, status: 'current' },
+      orderBy: { revision: 'desc' },
+      include: {
+        holds: { where: { status: 'active' }, select: { id: true } },
+        appeals: { where: { status: 'active' }, select: { id: true } },
+        gateDecisions: { where: { stage: 'content' }, select: { decision: true } },
+      },
+    });
+    if (!workflow) return;
+    if (workflow.holds.length || workflow.appeals.length || !workflow.activeContentDecisionId) {
+      throw new ConflictException('内容评估仍有待处理事项，暂不能进入数据阶段。');
+    }
+    if (workflow.gateDecisions[0]?.decision !== 'approved') {
+      throw new ConflictException('内容评估尚未通过正式关卡，暂不能进入数据阶段。');
+    }
+    const decision = await db.v11EvaluationDecision.findUnique({
+      where: { id: workflow.activeContentDecisionId },
+      select: { complianceStatus: true, inputComplete: true, stable: true },
+    });
+    if (!decision?.inputComplete || !decision.stable || decision.complianceStatus !== 'clear') {
+      throw new ConflictException('内容评估尚未通过安全与完整性关卡，暂不能进入数据阶段。');
+    }
+  }
+
   async assertCanTriggerResultReview(
     user: AuthenticatedUser,
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     if (!canManageResultData(user, video)) {
       await this.logVideoPermissionDenied(
         user,
@@ -139,6 +177,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Rule engine execution denied.', requestMeta);
@@ -151,6 +190,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || video.creatorId === user.id;
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'AI final evaluation trigger denied.', requestMeta);
@@ -163,6 +203,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Final confirmation denied.', requestMeta);
@@ -175,6 +216,7 @@ export class PermissionsService {
     video: Video,
     requestMeta?: { ipAddress?: string; userAgent?: string },
   ) {
+    this.assertVideoActive(video);
     const allowed = user.role === UserRole.admin || (user.role === UserRole.content_owner && video.creatorId === user.id);
     if (!allowed) {
       await this.logVideoPermissionDenied(user, video.id, 'Case marking denied.', requestMeta);
@@ -222,4 +264,5 @@ export class PermissionsService {
       userAgent: requestMeta?.userAgent,
     });
   }
+
 }

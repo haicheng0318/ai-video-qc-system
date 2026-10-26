@@ -25,6 +25,7 @@ function modelOutput(overrides: Partial<Record<(typeof V11_CONTENT_DIMENSIONS)[n
       }],
       evidence: [{ startSeconds: 0, endSeconds: 1, reference: '00:00-00:01', description: `${code} evidence` }],
       observation: `${code} observation`,
+      improvementSuggestions: [],
     })),
     compliance: { status: 'clear', facts: [] },
   };

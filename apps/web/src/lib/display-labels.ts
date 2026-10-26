@@ -171,6 +171,7 @@ export const operationLogActionLabels: Record<string, string> = {
   final_evaluation_failed: '千问最终建议生成失败', final_evaluation_confirmed: '负责人已确认最终结论',
   final_grade_adjusted: '负责人调整最终等级', excellent_case_marked: '标记为优秀案例',
   negative_case_marked: '标记为反面案例', case_mark_removed: '移除案例标记',
+  video_hidden: '隐藏视频', video_trashed: '移入回收站', video_restored: '恢复视频', video_cover_updated: '更新视频封面',
 };
 
 export function displayLabel(labels: Record<string, string>, value: string | null | undefined) {

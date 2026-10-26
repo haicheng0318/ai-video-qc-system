@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import COS = require('cos-nodejs-sdk-v5');
 import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs';
-import { mkdir, unlink } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -109,6 +109,21 @@ export class VideoStorageService {
       return;
     }
     await this.removeLocalFile(resolve(projectRoot(), filePath));
+  }
+
+  async storeCover(videoId: string, buffer: Buffer, extension: 'jpg' | 'png' | 'webp', mimeType: string) {
+    const fileName = `${videoId}-${randomUUID()}.${extension}`;
+    if (this.isCosEnabled()) {
+      const bucket = requireEnvironment('COS_BUCKET');
+      const key = `${normalizePrefix(process.env.COS_COVER_PREFIX || process.env.COS_VIDEO_PREFIX)}/covers/${fileName}`;
+      await this.cos().putObject({ Bucket: bucket, Region: requireEnvironment('COS_REGION'), Key: key, Body: buffer, ContentLength: buffer.length, ContentType: mimeType, ACL: 'private' });
+      return `${COS_SCHEME}${bucket}/${key}`;
+    }
+    const directory = resolve(localStorageDir(), 'covers');
+    await mkdir(directory, { recursive: true });
+    const absolute = resolve(directory, fileName);
+    await writeFile(absolute, buffer, { flag: 'wx', mode: 0o600 });
+    return relative(projectRoot(), absolute);
   }
 
   async createReadUrl(filePath: string) {

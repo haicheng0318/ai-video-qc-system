@@ -21,6 +21,7 @@
     "test": "npm run build:shared && npm run test:api && npm run test:web",
     "test:api": "npm --workspace @ai-video-qc/api run test",
     "test:web": "npm --workspace @ai-video-qc/web run test",
+    "test:release-acceptance": "npm --workspace @ai-video-qc/api run test:release-acceptance",
     "test:http:result-review": "npm --workspace @ai-video-qc/api run test:http:result-review",
     "test:http:rule-engine": "npm --workspace @ai-video-qc/api run test:http:rule-engine",
     "test:http:final-evaluation": "npm --workspace @ai-video-qc/api run test:http:final-evaluation",

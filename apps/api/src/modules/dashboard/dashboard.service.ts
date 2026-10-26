@@ -46,6 +46,7 @@ export class DashboardService {
 
   private filters(query: DashboardQueryDto, user: AuthenticatedUser) {
     return Prisma.sql`
+      AND v.record_state = 'active'::"VideoRecordState"
       ${this.visibility(user)}
       ${query.brand ? Prisma.sql`AND v.brand = ${query.brand.trim()}` : Prisma.empty}
       ${query.platform ? Prisma.sql`AND v.platform = ${query.platform.trim()}` : Prisma.empty}

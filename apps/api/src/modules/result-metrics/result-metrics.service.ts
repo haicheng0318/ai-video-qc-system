@@ -25,6 +25,7 @@ type MetricValues = Partial<Record<ResultMetricField, MetricValue>>;
 
 const allowedStatuses = new Set<VideoStatus>([
   VideoStatus.approved_for_publish,
+  VideoStatus.pending_supervisor_review,
   VideoStatus.pending_result_data,
   VideoStatus.ai_result_failed,
   VideoStatus.pending_data,
@@ -59,6 +60,8 @@ export class ResultMetricsService {
       );
       const lockedVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!lockedVideo) throw new NotFoundException('Video not found.');
+      this.permissionsService.assertVideoActive(lockedVideo);
+      await this.permissionsService.assertDataStageOpen(videoId, transaction);
       if (!allowedStatuses.has(lockedVideo.status)) {
         throw new ConflictException('Video status does not allow result metric submission.');
       }

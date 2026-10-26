@@ -8,7 +8,8 @@ const video = (status: VideoStatus, creatorId = 'creator') => ({ status, creator
 
 test('server action list is status, ownership and role aware', () => {
   assert.deepEqual(allowedVideoActions(actor(UserRole.director, 'creator'), video(VideoStatus.submitted)), ['trigger_content_review', 'export_report']);
-  assert.deepEqual(allowedVideoActions(actor(UserRole.supervisor, 'creator'), { ...video(VideoStatus.pending_supervisor_review), creatorManagerId: 'boss' }), ['submit_supervisor_review', 'export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.supervisor, 'creator'), { ...video(VideoStatus.pending_supervisor_review), creatorManagerId: 'boss' }), ['submit_result_metrics', 'export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.admin), video(VideoStatus.pending_supervisor_review)), ['submit_result_metrics', 'export_report']);
   assert.deepEqual(allowedVideoActions(actor(UserRole.operator, 'creator'), video(VideoStatus.pending_result_data), { hasMetric: true }), ['submit_result_metrics', 'trigger_result_review', 'export_report']);
   assert.deepEqual(allowedVideoActions(actor(UserRole.director), video(VideoStatus.pending_result_data)), ['export_report']);
 });
@@ -16,4 +17,16 @@ test('server action list is status, ownership and role aware', () => {
 test('server action list keeps final suggestion and confirmation separate', () => {
   assert.deepEqual(allowedVideoActions(actor(UserRole.content_owner, 'creator'), video(VideoStatus.pending_final_evaluation), { ruleSufficient: true }), ['trigger_final_evaluation', 'export_report']);
   assert.deepEqual(allowedVideoActions(actor(UserRole.content_owner, 'creator'), video(VideoStatus.pending_final_confirmation), { finalSucceeded: true }), ['confirm_final_evaluation', 'export_report']);
+});
+
+test('V1.2 formal content decisions do not expose the Legacy Rule Engine without Legacy source records', () => {
+  const pendingRule = video(VideoStatus.pending_rule_engine);
+  const reviewSucceeded = { resultReviewSucceeded: true };
+  assert.deepEqual(allowedVideoActions(actor(UserRole.admin), pendingRule, {
+    ...reviewSucceeded, currentFormalV11ContentDecision: true, legacyRuleEngineSourceAvailable: false,
+  }), ['export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.admin), pendingRule, {
+    ...reviewSucceeded, currentFormalV11ContentDecision: true, legacyRuleEngineSourceAvailable: true,
+  }), ['execute_rule_engine', 'export_report']);
+  assert.deepEqual(allowedVideoActions(actor(UserRole.admin), pendingRule, reviewSucceeded), ['execute_rule_engine', 'export_report']);
 });

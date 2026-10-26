@@ -1,227 +1,46 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { AiReviewStatus, UserRole, VideoStatus } from '@prisma/client';
-import {
-  SupervisorReviewDecision,
-} from '../modules/supervisor-reviews/dto/create-supervisor-review.dto';
+import { ConflictException } from '@nestjs/common';
+import { UserRole, VideoStatus } from '@prisma/client';
+import { SupervisorReviewDecision } from '../modules/supervisor-reviews/dto/create-supervisor-review.dto';
 import { SupervisorReviewsService } from '../modules/supervisor-reviews/supervisor-reviews.service';
 import { PrismaService } from '../modules/prisma/prisma.service';
 
 const videoId = '00000000-0000-4000-8000-000000000020';
-const reviewer = {
-  id: 'admin-id',
-  account: 'admin',
-  name: 'Admin',
-  role: UserRole.admin,
-  managerId: null,
+const actor = { id: 'admin-id', account: 'admin', name: 'Admin', role: UserRole.admin, managerId: null };
+const historicalReview = {
+  id: 'historical-review', videoId, v11ContentDecisionId: null,
+  decision: 'approved_for_publish', comment: '历史记录', revisionRequirements: null,
+  reviewedAt: new Date('2026-01-01T00:00:00Z'),
+  reviewer: { id: 'reviewer', name: '历史主管', account: 'reviewer', role: 'supervisor' },
 };
 
-function createHarness(options: {
-  missingVideo?: boolean;
-  status?: VideoStatus;
-  hasSucceededAi?: boolean;
-  hasActiveV11Decision?: boolean;
-  existingReview?: boolean;
-  serialTransactions?: boolean;
-} = {}) {
-  const video = {
-    id: videoId,
-    creatorId: 'director-id',
-    status: options.status || VideoStatus.pending_supervisor_review,
-    creator: { managerId: 'supervisor-id' },
-  };
-  let review: Record<string, any> | null = options.existingReview ? {
-    id: 'existing-review',
-    videoId,
-    reviewerId: reviewer.id,
-    decision: SupervisorReviewDecision.ApprovedForPublish,
-    comment: null,
-    revisionRequirements: null,
-    reviewedAt: new Date(),
-    reviewer,
-  } : null;
-  const logs: Array<Record<string, unknown>> = [];
-  const transaction = {
-    $queryRaw: async () => [],
-    video: {
-      findUnique: async () => options.missingVideo ? null : video,
-      update: async ({ data }: { data: { status: VideoStatus } }) => {
-        video.status = data.status;
-        return video;
-      },
-    },
-    supervisorReview: {
-      findUnique: async () => review,
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        review = {
-          id: 'new-review',
-          ...data,
-          reviewedAt: data.reviewedAt || new Date(),
-          reviewer,
-        };
-        return review;
-      },
-    },
-    aiContentReview: {
-      findFirst: async () => options.hasSucceededAi === false ? null : {
-        id: 'ai-review', status: AiReviewStatus.succeeded,
-      },
-    },
-    v11WorkflowRevision: {
-      findFirst: async () => options.hasActiveV11Decision === false ? null : {
-        id: 'workflow-v11', activeContentDecisionId: 'decision-v11',
-      },
-    },
-    v11EvaluationDecision: {
-      findFirst: async () => options.hasActiveV11Decision === false ? null : {
-        id: 'decision-v11', inputComplete: true, stable: true, complianceStatus: 'clear',
-        group: { videoId, shadowMode: false },
-      },
-    },
-  };
-  let queue = Promise.resolve();
-  const runTransaction = async (callback: (client: typeof transaction) => Promise<unknown>) => {
-    if (!options.serialTransactions) return callback(transaction);
-    const result = queue.then(() => callback(transaction));
-    queue = result.then(() => undefined, () => undefined);
-    return result;
-  };
+function createHarness() {
+  const events: string[] = [];
   const prisma = {
-    video: { findUnique: async () => options.missingVideo ? null : video },
-    supervisorReview: { findUnique: async () => review },
-    $transaction: runTransaction,
+    video: { findUnique: async () => { events.push('video-read'); return { id: videoId, creatorId: actor.id, status: VideoStatus.pending_supervisor_review }; } },
+    supervisorReview: { findUnique: async () => { events.push('review-read'); return historicalReview; } },
   } as unknown as PrismaService;
-  const permissions = {
-    assertCanSubmitSupervisorReview: async () => undefined,
-    assertCanAccessVideo: async () => undefined,
-  };
-  const operationLogs = { create: async (input: Record<string, unknown>) => logs.push(input) };
-  const service = new SupervisorReviewsService(prisma, permissions as never, operationLogs as never);
-  return { service, video, logs, getReview: () => review };
+  const permissions = { assertCanAccessVideo: async () => undefined };
+  const operationLogs = { create: async () => { events.push('audit'); } };
+  return { service: new SupervisorReviewsService(prisma, permissions as never, operationLogs as never), events };
 }
 
-test('missing video returns 404', async () => {
-  await assert.rejects(
-    createHarness({ missingVideo: true }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-    NotFoundException,
-  );
-});
-
-test('non-pending-supervisor-review video returns 409', async () => {
-  await assert.rejects(
-    createHarness({ status: VideoStatus.submitted }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-    ConflictException,
-  );
-});
-
-test('missing current formal V1.1 content decision returns 409', async () => {
-  await assert.rejects(
-    createHarness({ hasActiveV11Decision: false }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-    ConflictException,
-  );
-});
-
-test('current formal V1.1 content decision allows supervisor review without a legacy AI content review', async () => {
-  const harness = createHarness({ hasSucceededAi: false, hasActiveV11Decision: true });
-  const result = await harness.service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {});
-  assert.equal(result.decision, SupervisorReviewDecision.ApprovedForPublish);
-  assert.equal(harness.video.status, VideoStatus.approved_for_publish);
-});
-
-test('revision required without comment returns 400', async () => {
-  await assert.rejects(
-    createHarness().service.create(videoId, { decision: SupervisorReviewDecision.RevisionRequired }, reviewer, {}),
-    BadRequestException,
-  );
-});
-
-test('revision required rejects an empty requirements array', async () => {
-  await assert.rejects(
-    createHarness().service.create(videoId, {
-      decision: SupervisorReviewDecision.RevisionRequired,
-      comment: 'Please revise.',
-      revisionRequirements: [],
-    }, reviewer, {}),
-    /Revision comment and at least one requirement are required/,
-  );
-});
-
-test('revision required rejects requirements containing only whitespace', async () => {
-  await assert.rejects(
-    createHarness().service.create(videoId, {
-      decision: SupervisorReviewDecision.RevisionRequired,
-      comment: 'Please revise.',
-      revisionRequirements: ['   '],
-    }, reviewer, {}),
-    /Revision comment and at least one requirement are required/,
-  );
-});
-
-test('revision requirements are trimmed and empty items are not persisted', async () => {
+test('legacy supervisor POST returns the compatibility 409 without reading or mutating business state', async () => {
   const harness = createHarness();
-  const result = await harness.service.create(videoId, {
-    decision: SupervisorReviewDecision.RevisionRequired,
-    comment: ' Please revise. ',
-    revisionRequirements: ['  提前产品露出  ', '   '],
-  }, reviewer, {});
-  assert.equal(result.comment, 'Please revise.');
-  assert.deepEqual(result.revisionRequirements, ['提前产品露出']);
-});
-
-test('invalid content without reason returns 400', async () => {
   await assert.rejects(
-    createHarness().service.create(videoId, { decision: SupervisorReviewDecision.InvalidContent }, reviewer, {}),
-    BadRequestException,
+    harness.service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, actor, {}),
+    (error: unknown) => error instanceof ConflictException && error.message === '当前版本已取消日常人工内容审核。',
   );
+  assert.deepEqual(harness.events, []);
 });
 
-for (const [decision, status, action] of [
-  [SupervisorReviewDecision.ApprovedForPublish, VideoStatus.approved_for_publish, 'supervisor_review_approved'],
-  [SupervisorReviewDecision.RevisionRequired, VideoStatus.revision_required, 'supervisor_review_revision_required'],
-  [SupervisorReviewDecision.InvalidContent, VideoStatus.invalid_content, 'supervisor_review_invalid_content'],
-] as const) {
-  test(`${decision} persists review, status and audit in one transaction`, async () => {
-    const harness = createHarness();
-    const result = await harness.service.create(videoId, {
-      decision,
-      comment: decision === SupervisorReviewDecision.ApprovedForPublish ? undefined : 'Required reason',
-      revisionRequirements: decision === SupervisorReviewDecision.RevisionRequired ? ['前2秒展示产品'] : undefined,
-    }, reviewer, {});
-    assert.equal(result.decision, decision);
-    assert.equal(harness.video.status, status);
-    assert.equal(harness.logs[0].actionType, action);
-    assert.equal(harness.logs[0].targetType, 'supervisor_review');
-    assert.equal(harness.logs[0].result, 'success');
-  });
-}
-
-test('duplicate review returns 409', async () => {
-  await assert.rejects(
-    createHarness({ existingReview: true }).service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-    ConflictException,
-  );
-});
-
-test('two concurrent reviews allow only one successful submission', async () => {
-  const harness = createHarness({ serialTransactions: true });
-  const submissions = await Promise.allSettled([
-    harness.service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-    harness.service.create(videoId, { decision: SupervisorReviewDecision.ApprovedForPublish }, reviewer, {}),
-  ]);
-  assert.equal(submissions.filter((item) => item.status === 'fulfilled').length, 1);
-  assert.equal(submissions.filter((item) => item.status === 'rejected').length, 1);
-});
-
-test('latest returns filtered review and never exposes internal fields', async () => {
+test('historical supervisor review remains readable and auditable', async () => {
   const harness = createHarness();
-  await harness.service.create(videoId, {
-    decision: SupervisorReviewDecision.RevisionRequired,
-    comment: 'Revise',
-    revisionRequirements: ['Shorten intro'],
-  }, reviewer, {});
-  const latest = await harness.service.latest(videoId, reviewer, {});
-  assert.equal(latest?.decision, SupervisorReviewDecision.RevisionRequired);
-  assert.deepEqual(latest?.revisionRequirements, ['Shorten intro']);
-  assert.equal(Object.hasOwn(latest || {}, 'adjustedContentGrade'), false);
+  const result = await harness.service.latest(videoId, actor, {});
+  assert.equal(result?.id, historicalReview.id);
+  assert.equal(result?.decision, 'approved_for_publish');
+  assert.equal(result?.comment, '历史记录');
+  assert.equal(result?.reviewer.name, '历史主管');
+  assert.deepEqual(harness.events, ['video-read', 'review-read', 'audit']);
 });

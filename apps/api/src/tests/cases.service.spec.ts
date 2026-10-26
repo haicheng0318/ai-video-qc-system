@@ -91,6 +91,7 @@ test('creator filter cannot replace the current director visibility boundary', a
   await value.service.list({ type: 'excellent', limit: 20, creatorId: '33333333-3333-4333-8333-333333333333' }, user);
   assert.deepEqual(value.calls[0].where.video.AND, [
     { creatorId: 'visible' },
+    { recordState: 'active' },
     { creatorId: '33333333-3333-4333-8333-333333333333' },
   ]);
 });
