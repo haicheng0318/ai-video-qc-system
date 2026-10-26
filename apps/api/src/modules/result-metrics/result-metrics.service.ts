@@ -60,6 +60,8 @@ export class ResultMetricsService {
       );
       const lockedVideo = await transaction.video.findUnique({ where: { id: videoId } });
       if (!lockedVideo) throw new NotFoundException('Video not found.');
+      this.permissionsService.assertVideoActive(lockedVideo);
+      await this.permissionsService.assertDataStageOpen(videoId, transaction);
       if (!allowedStatuses.has(lockedVideo.status)) {
         throw new ConflictException('Video status does not allow result metric submission.');
       }

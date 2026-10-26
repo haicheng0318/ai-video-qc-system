@@ -1,5 +1,5 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
-import { UserRole, Video, VideoRecordState } from '@prisma/client';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { Prisma, UserRole, Video, VideoRecordState } from '@prisma/client';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { OperationLogAction } from '../operation-logs/operation-log-actions';
 import { OperationLogsService } from '../operation-logs/operation-logs.service';
@@ -123,6 +123,34 @@ export class PermissionsService {
     }
   }
 
+  assertVideoActive(video: Pick<Video, 'recordState'>) {
+    if (video.recordState !== VideoRecordState.active) {
+      throw new ForbiddenException('该视频已隐藏或移入回收站，不能执行此操作。');
+    }
+  }
+
+  async assertDataStageOpen(videoId: string, db: PrismaService | Prisma.TransactionClient = this.prisma) {
+    const workflow = await db.v11WorkflowRevision.findFirst({
+      where: { videoId, status: 'current' },
+      orderBy: { revision: 'desc' },
+      include: {
+        holds: { where: { status: 'active' }, select: { id: true } },
+        appeals: { where: { status: 'active' }, select: { id: true } },
+      },
+    });
+    if (!workflow) return;
+    if (workflow.holds.length || workflow.appeals.length || !workflow.activeContentDecisionId) {
+      throw new ConflictException('内容评估仍有待处理事项，暂不能进入数据阶段。');
+    }
+    const decision = await db.v11EvaluationDecision.findUnique({
+      where: { id: workflow.activeContentDecisionId },
+      select: { complianceStatus: true, inputComplete: true, stable: true },
+    });
+    if (!decision?.inputComplete || !decision.stable || decision.complianceStatus !== 'clear') {
+      throw new ConflictException('内容评估尚未通过安全与完整性关卡，暂不能进入数据阶段。');
+    }
+  }
+
   async assertCanTriggerResultReview(
     user: AuthenticatedUser,
     video: Video,
@@ -233,9 +261,4 @@ export class PermissionsService {
     });
   }
 
-  private assertVideoActive(video: Video) {
-    if (video.recordState !== VideoRecordState.active) {
-      throw new ForbiddenException('该视频已隐藏或移入回收站，不能执行此操作。');
-    }
-  }
 }

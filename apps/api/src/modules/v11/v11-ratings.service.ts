@@ -136,6 +136,8 @@ export class V11RatingsService {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const video = await tx.video.findUnique({ where: { id: videoId } });
       if (!video) throw new NotFoundException('Video not found.');
+      this.permissions.assertVideoActive(video);
+      await this.permissions.assertDataStageOpen(videoId, tx);
       const workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!workflow?.activeContentDecisionId) throw new ConflictException('A current V1.1 content decision is required.');
       const content = await tx.v11EvaluationDecision.findUnique({
@@ -187,6 +189,10 @@ export class V11RatingsService {
     if (!visible) throw new NotFoundException('Video not found.');
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      const video = await tx.video.findUnique({ where: { id: videoId } });
+      if (!video) throw new NotFoundException('Video not found.');
+      this.permissions.assertVideoActive(video);
+      await this.permissions.assertDataStageOpen(videoId, tx);
       const workflow = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!workflow?.activeContentDecisionId) throw new ConflictException('A current V1.1 content decision is required.');
       const content = await tx.v11EvaluationDecision.findUnique({
@@ -244,6 +250,9 @@ export class V11RatingsService {
     const rating = resolveManualR(input.rating) as V11ComprehensiveRating;
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      const video = await tx.video.findUnique({ where: { id: videoId } });
+      if (!video) throw new NotFoundException('Video not found.');
+      this.permissions.assertVideoActive(video);
       const previous = await tx.v11ComprehensiveDecision.findFirst({
         where: { videoId, workflowRevision: { status: 'current' } },
         orderBy: [{ decisionRevision: 'desc' }, { decidedAt: 'desc' }, { id: 'desc' }],
@@ -313,6 +322,7 @@ export class V11RatingsService {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
       const video = await tx.video.findUnique({ where: { id: videoId } });
       if (!video) throw new NotFoundException('Video not found.');
+      this.permissions.assertVideoActive(video);
       const previous = await tx.v11ComprehensiveDecision.findFirst({
         where: { videoId, workflowRevision: { status: 'current' } },
         orderBy: [{ decisionRevision: 'desc' }, { decidedAt: 'desc' }, { id: 'desc' }],
@@ -381,6 +391,9 @@ export class V11RatingsService {
         },
       });
       if (!decision?.finalStatus || !decision.comprehensiveRating) throw new ConflictException('Only a finalized V1.1 decision can be marked as a case.');
+      const video = await tx.video.findUnique({ where: { id: decision.videoId }, select: { recordState: true } });
+      if (!video) throw new NotFoundException('Video not found.');
+      this.permissions.assertVideoActive(video as any);
       if (decision.workflowRevision.status !== 'current') throw new ConflictException('Only the current workflow decision can be marked as a case.');
       if (decision.contentDecision.group.shadowMode) throw new ConflictException('Shadow decisions cannot be marked as cases.');
       const [holds, appeals] = await Promise.all([

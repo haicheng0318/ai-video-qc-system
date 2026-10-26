@@ -17,6 +17,7 @@ export class V11WorkflowService {
     if (!video) throw new NotFoundException('Video not found.');
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.assertActiveVideo(tx, videoId);
       const decision = await tx.v11EvaluationDecision.findUnique({ where: { id: dto.resultId }, include: { group: true, workflowRevision: true } });
       if (!decision || decision.group.videoId !== videoId || dto.stage !== 'content') throw new NotFoundException('Appealable result not found.');
       if (decision.workflowRevision.status !== 'current') throw new ConflictException('This result has already been superseded.');
@@ -57,6 +58,7 @@ export class V11WorkflowService {
     if (!video) throw new NotFoundException('Video not found.');
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.assertActiveVideo(tx, videoId);
       const revision = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!revision) throw new ConflictException('No current V1.1 workflow exists.');
       if (await tx.v11WorkflowHold.findFirst({ where: { workflowRevisionId: revision.id, holdType: 'manual', status: 'active' } })) throw new ConflictException('A manual hold is already active.');
@@ -72,6 +74,7 @@ export class V11WorkflowService {
     if (!video) throw new NotFoundException('Video not found.');
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.assertActiveVideo(tx, videoId);
       const revision = await tx.v11WorkflowRevision.findFirst({ where: { videoId, status: 'current' }, orderBy: { revision: 'desc' } });
       if (!revision) throw new ConflictException('No current V1.1 workflow exists.');
       const manual = await tx.v11WorkflowHold.findFirst({ where: { workflowRevisionId: revision.id, holdType: 'manual', status: 'active' }, orderBy: { createdAt: 'desc' } });
@@ -90,6 +93,7 @@ export class V11WorkflowService {
     if (!['resolved', 'rejected'].includes(String(action))) throw new BadRequestException('Action must be resolved or rejected.');
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM videos WHERE id = ${videoId}::uuid FOR UPDATE`);
+      await this.assertActiveVideo(tx, videoId);
       const appeal = await tx.v11Appeal.findFirst({ where: { id: appealId, videoId, status: 'active' } });
       if (!appeal) throw new NotFoundException('Active appeal not found.');
       const updated = await tx.v11Appeal.update({ where: { id: appeal.id }, data: { status: String(action), resolvedAt: new Date() } });
@@ -97,5 +101,11 @@ export class V11WorkflowService {
       await tx.operationLog.create({ data: { userId: user.id, videoId, targetType: 'v11_appeal', targetId: appeal.id, actionType: 'v11_appeal_resolved', result: 'success', comment: reason, afterValue: { action: String(action) } } });
       return updated;
     });
+  }
+
+  private async assertActiveVideo(tx: Prisma.TransactionClient, videoId: string) {
+    const video = await tx.video.findUnique({ where: { id: videoId }, select: { recordState: true } });
+    if (!video) throw new NotFoundException('Video not found.');
+    this.permissions.assertVideoActive(video as any);
   }
 }

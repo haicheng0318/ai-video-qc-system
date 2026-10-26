@@ -213,7 +213,7 @@ export class VideosService {
           ticketId = ticket.id;
         }
         if (parent) {
-          if (parent.status !== VideoStatus.revision_required || (await transaction.supervisorReview.findUnique({ where: { videoId: parent.id } }))?.decision !== VideoStatus.revision_required) throw new ConflictException('A revision-required supervisor review is required.');
+          if (parent.status !== VideoStatus.revision_required || !(await this.hasRevisionRequiredDecision(transaction, parent.id))) throw new ConflictException('A revision-required decision is required before uploading a revision.');
           if (await transaction.video.findFirst({ where: { parentVideoId: parent.id, status: { in: activeRevisionStatuses } } })) throw new ConflictException('An active revision already exists for this video.');
           isTrial = parent.isTrial;
         }
@@ -485,6 +485,7 @@ export class VideosService {
     const video = await this.prisma.video.findUnique({ where: { id: videoId } });
     if (!video) throw new NotFoundException('Video not found.');
     await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video cover upload denied.' });
+    this.permissionsService.assertVideoActive(video);
     const coverPath = await this.videoStorage.storeCover(videoId, file.buffer, detected.extension, detected.mimeType);
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.video.update({ where: { id: videoId }, data: { coverPath, coverSource: 'custom' } });
@@ -498,6 +499,7 @@ export class VideosService {
     const video = await this.prisma.video.findUnique({ where: { id: videoId } });
     if (!video) throw new NotFoundException('Video not found.');
     await this.permissionsService.assertCanAccessVideo(user, video, { ...requestMeta, action: 'Video cover regeneration denied.' });
+    this.permissionsService.assertVideoActive(video);
     await this.generateDefaultCover(video, true);
     const updated = await this.prisma.video.findUniqueOrThrow({ where: { id: videoId } });
     return this.serializeVideo(updated);
@@ -611,9 +613,8 @@ export class VideosService {
           throw new ConflictException('Only videos requiring revision can accept a revision upload.');
         }
 
-        const review = await transaction.supervisorReview.findUnique({ where: { videoId: parentVideoId } });
-        if (!review || review.decision !== VideoStatus.revision_required) {
-          throw new ConflictException('A revision-required supervisor review is required.');
+        if (!(await this.hasRevisionRequiredDecision(transaction, parentVideoId))) {
+          throw new ConflictException('A revision-required decision is required before uploading a revision.');
         }
         const activeRevision = await transaction.video.findFirst({
           where: {
@@ -681,6 +682,22 @@ export class VideosService {
       await this.cleanupFailedUpload(storedFilePath, file.path);
       throw error;
     }
+  }
+
+  private async hasRevisionRequiredDecision(tx: Prisma.TransactionClient, videoId: string) {
+    const supervisorReview = await tx.supervisorReview.findUnique({ where: { videoId }, select: { decision: true } });
+    if (supervisorReview?.decision === VideoStatus.revision_required) return true;
+    const automaticGate = await tx.v11WorkflowGateDecision.findFirst({
+      where: {
+        videoId,
+        stage: 'content',
+        decision: 'revision_required',
+        decisionSource: 'system',
+        workflowRevision: { status: 'current' },
+      },
+      select: { id: true },
+    });
+    return Boolean(automaticGate);
   }
 
   async detail(id: string, user: AuthenticatedUser, requestMeta: { ipAddress?: string; userAgent?: string }) {
@@ -826,8 +843,6 @@ export class VideosService {
     if (!video) {
       return null;
     }
-
-    if (video.recordState !== VideoRecordState.active) throw new NotFoundException('Video not found.');
 
     await this.permissionsService.assertCanAccessVideo(user, video, {
       ...requestMeta,
@@ -1008,13 +1023,14 @@ export class VideosService {
 
   private serializeVideo<T extends Record<string, any>>(video: T) {
     const internalFields = new Set(['rawResponse', 'successKey', 'filePath', 'coverPath']);
+    const hasCover = Boolean(video.coverPath);
     const serialized = JSON.parse(
       JSON.stringify(video, (key, value) => {
         if (internalFields.has(key)) return undefined;
         return typeof value === 'bigint' ? value.toString() : value;
       }),
     );
-    if (serialized.coverPath) serialized.coverUrl = `/api/videos/${serialized.id}/cover`;
+    if (hasCover) serialized.coverUrl = `/api/videos/${serialized.id}/cover`;
     if (
       serialized.supervisorReview
       && !Array.isArray(serialized.supervisorReview.revisionRequirements)
