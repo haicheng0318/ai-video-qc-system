@@ -73,11 +73,22 @@ test('isolated PostgreSQL and HTTP management: six-role denial, safe projections
     const exported = await req(`/admin/operations/usage/export?userId=${director.id}`, admin.cookie, 'POST', { reason: 'Local controlled export', confirmed: true }); assert.equal(exported.status, 201); const exportData = await exported.json() as any; assert.equal(exportData.count, 1); assert.equal(exportData.csv.includes('rateSnapshot'), false);
     assert.equal(await db.operationLog.count({ where: { userId: admin.id, actionType: 'admin_usage_export' } }), 1);
     assert.equal((await req(`/admin/operations/jobs/${job.id}/retry`, admin.cookie, 'POST', { reason: 'test', confirmed: false })).status, 400);
-    const retries = await Promise.all([1, 2].map(() => req(`/admin/operations/jobs/${job.id}/retry`, admin.cookie, 'POST', { reason: 'Reviewed uncertain local fixture', confirmed: true })));
-    assert.deepEqual(retries.map(r => r.status).sort(), [201, 409]);
-    const retried = await db.evaluationJob.findUnique({ where: { retriedFromId: job.id } }); assert.ok(retried); assert.equal(retried.actorId, director.id); assert.notEqual(retried.contentReviewId, review.id);
+    const originalJob = await db.evaluationJob.findUniqueOrThrow({ where: { id: job.id } });
+    const originalReviewCount = await db.aiContentReview.count({ where: { videoId: video.id } });
+    const originalJobCount = await db.evaluationJob.count({ where: { videoId: video.id } });
+    const retryLegacy = () => req(`/admin/operations/jobs/${job.id}/retry`, admin.cookie, 'POST', { reason: 'Reviewed uncertain local fixture', confirmed: true });
+    const retries = await Promise.all([retryLegacy(), retryLegacy()]);
+    retries.push(await retryLegacy());
+    for (const response of retries) {
+      assert.equal(response.status, 409);
+      assert.match((await response.json() as { message: string }).message, /Legacy content evaluation retries are disabled/);
+    }
+    assert.equal(await db.evaluationJob.count({ where: { retriedFromId: job.id } }), 0);
+    assert.equal(await db.evaluationJob.count({ where: { videoId: video.id } }), originalJobCount);
+    assert.equal(await db.aiContentReview.count({ where: { videoId: video.id } }), originalReviewCount);
+    assert.deepEqual(await db.evaluationJob.findUniqueOrThrow({ where: { id: job.id } }), originalJob);
     assert.deepEqual((await db.aiContentReview.findUnique({ where: { id: review.id } }))!.rawResponse, { secret: 'NEVER_EXPOSE_THIS' });
-    assert.equal(await db.operationLog.count({ where: { userId: admin.id, actionType: 'admin_evaluation_retry', targetId: retried.id } }), 1);
+    assert.equal(await db.operationLog.count({ where: { userId: admin.id, actionType: 'admin_evaluation_retry' } }), 0);
     const storage = await (await req('/admin/operations/storage', admin.cookie)).json() as any; assert.equal(storage.cos.configured, true); assert.equal(storage.cos.remoteInventory, 'not_connected'); assert.equal(storage.cloudBilling, 'not_connected');
     const deps = await (await req('/admin/operations/dependencies', admin.cookie)).json() as any; assert.equal(deps.resources, 'not_connected'); assert.equal(deps.paidDiagnostic, 'manual_only_not_executed');
     const logs = await (await req('/admin/operations/logs', admin.cookie)).json(); assert.equal(JSON.stringify(logs).includes('beforeValue'), false); assert.equal(JSON.stringify(logs).includes('userAgent'), false);

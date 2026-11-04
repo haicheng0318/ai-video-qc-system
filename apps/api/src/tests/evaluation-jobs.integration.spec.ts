@@ -33,7 +33,8 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
   const module = await import(path).catch(() => ({}));
   assert.equal(typeof module.EvaluationJobsService, 'function', 'durable queue must exist');
   const db = new PrismaClient({ datasourceUrl: url });
-  const jobs = new module.EvaluationJobsService(db, { assertCanAccessVideo: async () => undefined });
+  const permissions = new PermissionsService(db as any, new OperationLogsService(db as any));
+  const jobs = new module.EvaluationJobsService(db, permissions);
   const actor = await db.user.create({ data: { account: `queue-${randomUUID()}`, name: 'Queue test', passwordHash: 'unused', role: 'admin' } });
   const videos: string[] = [];
   const extraUsers: string[] = [];
@@ -104,7 +105,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     await db.video.update({ where: { id: third.videoId }, data: { status: 'submitted' } });
     let calls = 0;
     const service = new ContentReviewService(db as any,
-      { assertCanTriggerContentReview: async () => undefined } as any,
+      permissions,
       new OperationLogsService(db as any),
       { analyzeVideo: async () => { calls += 1; return { rawResponse: successfulContentResponse() }; } } as any,
       undefined, { isCosPath: () => true, materialize: async () => ({ path: '/test/video.mp4', cleanup: async () => undefined }) } as any,
@@ -124,15 +125,32 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     await db.video.update({ where: { id: third.videoId }, data: { platform: 'queue-test-platform' } });
     const benchmark = await db.platformBenchmark.create({ data: { platform: 'queue-test-platform', videoType: 'other', metricName: 'views', aThreshold: 100, direction: 'higher_is_better' } });
     let savedBenchmarks: any;
+    let resultCalls = 0;
     const resultService = new ResultReviewsService(db as any,
-      { assertCanTriggerResultReview: async () => undefined } as any, new OperationLogsService(db as any),
-      { reviewResultData: async (input: any) => { savedBenchmarks = input.inputContext.benchmarks; return { parsedOutput: { dataScore: 85, dataGrade: 'A', dataSufficiency: 'sufficient', isBusinessEffectiveRecommendation: true, resultSummary: '达标', performanceProblems: [], attributionAnalysis: [], optimizationSuggestions: [] } }; } } as any,
+      permissions, new OperationLogsService(db as any),
+      { reviewResultData: async (input: any) => { resultCalls += 1; savedBenchmarks = input.inputContext.benchmarks; return { parsedOutput: { dataScore: 85, dataGrade: 'A', dataSufficiency: 'sufficient', isBusinessEffectiveRecommendation: true, resultSummary: '达标', performanceProblems: [], attributionAnalysis: [], optimizationSuggestions: [] } }; } } as any,
       () => { throw new Error('API scheduled an in-memory result task'); }, jobs);
+    const outsider = await db.user.create({ data: { account: `outsider-${randomUUID()}`, name: 'Unrelated director', passwordHash: 'unused', role: 'director' } });
+    extraUsers.push(outsider.id);
+    const beforeDenied = await Promise.all([
+      db.evaluationJob.count(), db.aiResultReview.count(), db.evaluationInputSnapshot.count(),
+    ]);
+    for (const recordState of ['hidden', 'trashed'] as const) {
+      await db.video.update({ where: { id: third.videoId }, data: { recordState } });
+      await assert.rejects(resultService.trigger(third.videoId, { resultMetricId: metric.id }, actor, {}), ForbiddenException);
+    }
+    await db.video.update({ where: { id: third.videoId }, data: { recordState: 'active' } });
+    await assert.rejects(resultService.trigger(third.videoId, { resultMetricId: metric.id }, outsider, {}), ForbiddenException);
+    assert.deepEqual(await Promise.all([
+      db.evaluationJob.count(), db.aiResultReview.count(), db.evaluationInputSnapshot.count(),
+    ]), beforeDenied, 'denied or frozen videos never create reviews, snapshots or jobs');
+    assert.equal(resultCalls, 0, 'denied requests never reach the fake provider');
     const resultTriggered = await resultService.trigger(third.videoId, { resultMetricId: metric.id }, actor, {});
     assert.equal(typeof (resultTriggered as any).jobId, 'string');
     await db.platformBenchmark.update({ where: { id: benchmark.id }, data: { aThreshold: 9999 } });
     await db.platformBenchmark.delete({ where: { id: benchmark.id } });
     await new workerModule.EvaluationWorker(jobs, service, resultService, {}).runOnce();
+    assert.equal(resultCalls, 1);
     assert.equal(savedBenchmarks[0]?.aThreshold, '100', 'queued result review must use original threshold after source modification/deletion');
     const snapshot = await (db as any).evaluationInputSnapshot.findFirst({ where: { videoId: third.videoId } });
     assert.deepEqual(snapshot.benchmarkIds, [benchmark.id]);
@@ -145,7 +163,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     } });
     await db.video.update({ where: { id: third.videoId }, data: { status: 'pending_final_evaluation' } });
     const finalService = new FinalEvaluationsService(db as any,
-      { assertCanTriggerFinalEvaluation: async () => undefined } as any, new OperationLogsService(db as any),
+      permissions, new OperationLogsService(db as any),
       { generateFinalEvaluation: async () => ({ parsedOutput: { recommendedFinalGrade: 'effective', recommendedFinalStatus: 'final_effective', recommendedIsEffective: true, recommendationConfidence: 90, decisionSummary: '有效建议', evidenceAssessment: [], finalAttribution: [], finalSuggestion: '待确认', confirmationFocus: [], riskFlags: [] } }) } as any,
       () => { throw new Error('API scheduled an in-memory final task'); }, jobs);
     const finalTriggered = await finalService.trigger(third.videoId, { ruleEngineResultId: rule.id }, actor, {});
@@ -163,10 +181,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     const orphanJob = await (db as any).evaluationJob.findFirst({ where: { contentReviewId: orphan.contentReviewId } });
     assert.equal(orphanJob.status, 'needs_attention');
     assert.equal(orphanJob.failureCode, 'legacy_external_result_uncertain');
-    const secureJobs = new module.EvaluationJobsService(db, new PermissionsService(db as any, new OperationLogsService(db as any)));
-    const outsider = await db.user.create({ data: { account: `outsider-${randomUUID()}`, name: 'Unrelated director', passwordHash: 'unused', role: 'director' } });
-    extraUsers.push(outsider.id);
-    await assert.rejects(secureJobs.get(a.id, outsider, {}), ForbiddenException);
+    await assert.rejects(jobs.get(a.id, outsider, {}), ForbiddenException);
     const exhausted = await fixture();
     const exhaustedJob: any = await db.$transaction((tx) => jobs.enqueue(tx, exhausted));
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -198,7 +213,7 @@ test('PostgreSQL queue: atomic enqueue, global claim, lease fencing and uncertai
     let finishProvider!: (value: any) => void;
     const startedProvider = new Promise<void>((resolve) => { signalStarted = resolve; });
     const provider = new Promise<any>((resolve) => { finishProvider = resolve; });
-    const racing = new ContentReviewService(db as any, { assertCanTriggerContentReview: async () => undefined } as any,
+    const racing = new ContentReviewService(db as any, permissions,
       new OperationLogsService(db as any), { analyzeVideo: () => { signalStarted(); return provider; } } as any,
       undefined, { isCosPath: () => true, materialize: async () => ({ path: '/test/race.mp4', cleanup: async () => undefined }) } as any, jobs);
     const old = await racing.triggerContentReview(race.videoId, actor, {});

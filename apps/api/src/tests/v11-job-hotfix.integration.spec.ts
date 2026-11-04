@@ -1,8 +1,8 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { cp, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { cp, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -32,6 +32,21 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
   const db = new PrismaClient({ datasources: { db: { url } } });
   const temporary = await mkdtemp(join(tmpdir(), 'v11-job-hotfix-'));
   const schemaRoot = resolve(process.cwd(), '../../prisma');
+  const migrationRoot = join(schemaRoot, 'migrations');
+  const expectedMigrations = (await readdir(migrationRoot, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory() && /^\d/.test(entry.name)).map(entry => entry.name).sort();
+  assert.ok(expectedMigrations.includes(migrationName), 'target migration must exist in the official chain');
+  const assertAppliedMigrations = async (client: PrismaClient, expected: string[]) => {
+    const rows = await client.$queryRaw<Array<{ migration_name: string; checksum: string; finished_at: Date | null; rolled_back_at: Date | null }>>`
+      SELECT migration_name, checksum, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY migration_name`;
+    assert.deepEqual(rows.map(row => row.migration_name), expected, 'every expected migration, and no unexpected migration, must be recorded');
+    for (const row of rows) {
+      assert.ok(row.finished_at, `${row.migration_name} must finish successfully`);
+      assert.equal(row.rolled_back_at, null);
+      const sql = await readFile(join(migrationRoot, row.migration_name, 'migration.sql'));
+      assert.equal(row.checksum, createHash('sha256').update(sql).digest('hex'), `${row.migration_name} must match the checked-in SQL`);
+    }
+  };
   const prismaCli = require.resolve('prisma/build/index.js');
   const deploy = (schema: string, databaseUrl = url!) => execFileSync(process.execPath, [prismaCli, 'migrate', 'deploy', '--schema', schema], {
     env: { ...process.env, DATABASE_URL: databaseUrl, QC_SKIP_DOTENV: '1' }, encoding: 'utf8', timeout: 90_000,
@@ -45,8 +60,7 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
       recursive: true, filter: source => !source.includes(migrationName),
     });
     deploy(join(temporary, 'schema.prisma'));
-    const applied = () => db.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
-    assert.equal(Number((await applied())[0].count), 18);
+    await assertAppliedMigrations(db, expectedMigrations.filter(name => name !== migrationName));
     const actor = await db.user.create({ data: { account: `hotfix-${randomUUID()}`, name: 'Fixture only', passwordHash: 'not-a-login-hash', role: 'admin', mustChangePassword: false } });
     const mediaPath = process.env.V11_HOTFIX_MEDIA_PATH;
     assert.ok(mediaPath, 'explicit synthetic media fixture required');
@@ -83,8 +97,8 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
       assert.deepEqual(await counts(), [0, 0, 0, 0, 3]);
     });
     deploy(join(schemaRoot, 'schema.prisma'));
-    await t.test('19 migrations preserve every legacy job field and NOT NULL stage', async () => {
-      assert.equal(Number((await applied())[0].count), 19);
+    await t.test('complete migration chain preserves every legacy job field and NOT NULL stage', async () => {
+      await assertAppliedMigrations(db, expectedMigrations);
       assert.deepEqual(await db.evaluationJob.findMany({ orderBy: { id: 'asc' } }), before);
       const stage = await db.$queryRaw<Array<{ is_nullable: string }>>`SELECT is_nullable FROM information_schema.columns WHERE table_name='evaluation_jobs' AND column_name='stage'`;
       assert.equal(stage[0].is_nullable, 'NO');
@@ -180,7 +194,7 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
       assert.equal(await db.evaluationJobAttempt.count({ where: { jobId: job.id, status: 'succeeded' } }), 1);
       assert.equal((await db.video.findUniqueOrThrow({ where: { id: video.id } })).status, 'ai_content_reviewing', 'formal first run queues its required independent review');
     });
-    await t.test('fresh database deploys all 19 migrations', async () => {
+    await t.test('fresh database deploys every checked-in migration successfully', async () => {
       const freshUrl = process.env.V11_HOTFIX_FRESH_DATABASE_URL!;
       assert.ok(freshUrl, 'separate pre-created empty fixture database required');
       configureLocalAcceptance(freshUrl);
@@ -189,13 +203,13 @@ test('V11 hotfix: pre-target failure, nonempty upgrade, target matrix, rollback,
         const existing = await fresh.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM information_schema.tables WHERE table_schema='public'`;
         assert.equal(Number(existing[0].count), 0);
         deploy(join(schemaRoot, 'schema.prisma'), freshUrl);
-        const rows = await fresh.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
-        assert.equal(Number(rows[0].count), 19);
+        await assertAppliedMigrations(fresh, expectedMigrations);
         const failed = await fresh.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL`;
         assert.equal(Number(failed[0].count), 0);
       } finally { await fresh.$disconnect(); }
     });
-    assert.equal((await readdir(join(schemaRoot, 'migrations'))).filter(name => /^\d/.test(name)).length, 19);
+    assert.deepEqual((await readdir(migrationRoot, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory() && /^\d/.test(entry.name)).map(entry => entry.name).sort(), expectedMigrations);
   } finally {
     await app?.close();
     await db.$disconnect();
