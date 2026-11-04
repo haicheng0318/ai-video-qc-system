@@ -41,11 +41,56 @@ test('latest returns adopted diagnostics to owners but keeps full run structure 
     return service.latest('50000000-0000-4000-8000-000000000002', { id: 'actor', role } as any);
   }
   const owner = await load('director');
-  assert.equal((owner as any).dimensions.length, 8);
+  assert.equal((owner as any).diagnostics.dimensions.length, 8);
+  assert.equal((owner as any).dimensions, undefined);
   assert.equal((owner as any).group?.runs[0].structuredOutput, undefined);
   assert.equal((owner as any).group?.runs[0].promptVersion, undefined);
   const admin = await load('admin');
   assert.equal((admin.group?.runs[0] as any).structuredOutput, structuredOutput);
   assert.equal((admin.group?.runs[0] as any).promptVersion, 'prompt-v1');
   assert.equal((admin.group?.runs[0] as any).factClaimVersion, 'facts-v1');
+});
+
+test('current revision without an active decision cannot expose an older adopted decision', async () => {
+  let query: any;
+  const db = {
+    v11WorkflowRevision: { findFirst: async () => ({ id: 'current-workflow', activeContentDecisionId: null }) },
+    v11EvaluationGroup: { findFirst: async (input: any) => {
+      query = input;
+      return input.where.workflowRevisionId === 'current-workflow'
+        ? { status: 'hold', shadowMode: false, runs: [], decision: null }
+        : { status: 'adopted', shadowMode: false, runs: [], decision: { id: 'old-decision' } };
+    } },
+  };
+  const service = new V11ContentService(db as any, { findVideoVisibleToUser: async () => ({ id: 'video' }) } as any, {} as any, {} as any, {} as any, {} as any);
+  const result = await service.latest('50000000-0000-4000-8000-000000000002', { id: 'owner', role: 'director' } as any);
+  assert.equal(query.where.workflowRevisionId, 'current-workflow');
+  assert.equal(result.group?.decision, null);
+  assert.equal(result.diagnostics, null);
+});
+
+test('legacy video without a current workflow retains business-group fallback', async () => {
+  let where: any;
+  const service = new V11ContentService({
+    v11WorkflowRevision: { findFirst: async () => null },
+    v11EvaluationGroup: { findFirst: async (query: any) => { where = query.where; return null; } },
+  } as any, { findVideoVisibleToUser: async () => ({ id: 'video' }) } as any, {} as any, {} as any, {} as any, {} as any);
+  const result = await service.latest('50000000-0000-4000-8000-000000000002', { id: 'owner', role: 'director' } as any);
+  assert.deepEqual(where, { videoId: '50000000-0000-4000-8000-000000000002', pilotRun: false, independent: false });
+  assert.equal(result.diagnostics, null);
+});
+
+test('latest cannot read another owner video', async () => {
+  const service = new V11ContentService({} as any, { findVideoVisibleToUser: async () => null } as any, {} as any, {} as any, {} as any, {} as any);
+  await assert.rejects(service.latest('50000000-0000-4000-8000-000000000002', { id: 'other', role: 'director' } as any), /Video not found/);
+});
+
+test('a decision without the current active pointer is not presented as adopted', async () => {
+  const service = new V11ContentService({
+    v11WorkflowRevision: { findFirst: async () => ({ id: 'current', activeContentDecisionId: null }) },
+    v11EvaluationGroup: { findFirst: async () => ({ shadowMode: false, runs: [], decision: { id: 'unpointed' } }) },
+  } as any, { findVideoVisibleToUser: async () => ({ id: 'video' }) } as any, {} as any, {} as any, {} as any, {} as any);
+  const result = await service.latest('50000000-0000-4000-8000-000000000002', { id: 'owner', role: 'director' } as any);
+  assert.equal(result.group?.decision, null);
+  assert.equal(result.diagnostics, null);
 });

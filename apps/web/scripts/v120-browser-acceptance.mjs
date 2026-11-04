@@ -49,8 +49,8 @@ const dimensions = [
   ['subtitle_audio', 3, '字幕清楚，口播音量稳定。', []],
   ['platform_fit', 3.5, '画幅适配平台。', []],
   ['action_logic', 2, '结尾没有清晰的下一步行动提示。', ['结尾加入明确的点击或了解指引。']],
-].map(([dimension, anchor, observation, improvementSuggestions], index) => ({ dimension, weight: [15, 15, 12, 12, 10, 10, 13, 13][index], adoptedAnchor: anchor, score: Math.round(([15, 15, 12, 12, 10, 10, 13, 13][index] * anchor / 4) * 10) / 10, status: anchor >= 3.5 ? '优秀' : anchor >= 2.5 ? '良好' : anchor >= 1.5 ? '可优化' : '需重点优化', observation, facts: ['产品利益点在画面中可见'], factClaims: [], evidence: [{ startSeconds: index * 2, endSeconds: index * 2 + 3, description: '产品展示及字幕说明' }], improvementSuggestions }));
-const group = { status: 'adopted', shadowMode: false, runs: [{ id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: 76, contentRating: 'B', complianceStatus: 'clear', stale: false, completedAt: now }], decision: { id: 'decision-1', sourceRunIds: ['run-1'], adoptedDimensions: dimensions.map(d => ({ dimension: d.dimension, anchor: d.adoptedAnchor })), totalScore: 76, contentRating: 'B', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single', decidedAt: now }, workflowRevision: { revision: 1 } };
+].map(([dimension, anchor, observation, improvementSuggestions], index) => ({ dimension, representativeRunId: 'run-1', weight: [20, 20, 15, 15, 10, 10, 5, 5][index], adoptedAnchor: anchor, score: Math.round(([20, 20, 15, 15, 10, 10, 5, 5][index] * anchor / 4) * 10) / 10, status: anchor >= 3.5 ? '优秀' : anchor >= 2.5 ? '良好' : anchor >= 1.5 ? '可优化' : '需重点优化', observation, facts: ['产品利益点在画面中可见'], factClaims: [], evidence: [{ startSeconds: index * 2, endSeconds: index * 2 + 3, description: '产品展示及字幕说明' }], improvementSuggestions }));
+const group = { status: 'adopted', shadowMode: false, runs: [{ id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', stale: false, completedAt: now }], decision: { id: 'decision-1', sourceRunIds: ['run-1'], adoptedDimensions: dimensions.map(d => ({ dimension: d.dimension, anchor: d.adoptedAnchor })), totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single', decidedAt: now }, workflowRevision: { revision: 1 } };
 const videos = [
   { id, title: '秋日新品 · 日常清洁场景', brand: '清研', product: '洁净系列', platform: '抖音', videoType: 'product_card', status: 'pending_result_data', recordState: 'active', createdAt: now, updatedAt: now, coverUrl: '/api/mock-cover', creator, v11EvaluationGroups: [group], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
   { id: otherId, title: '夏日轻养主题', brand: '清研', product: '饮品系列', platform: '小红书', videoType: 'organic', status: 'final_effective', recordState: 'active', createdAt: '2026-08-15T04:00:00.000Z', updatedAt: now, coverUrl: null, creator, v11EvaluationGroups: [], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
@@ -58,6 +58,7 @@ const videos = [
 const calls = [];
 const requests = [];
 let selectedState = 'active';
+let diagnosticScenario = 'normal';
 async function waitForCall(name) {
   for (let attempt = 0; attempt < 40 && !calls.includes(name); attempt += 1) await new Promise(resolve => setTimeout(resolve, 50));
   assert(calls.includes(name), `expected mocked API call: ${name}`);
@@ -89,8 +90,8 @@ async function installApi(context, role = 'admin') {
     } else if (path === `/api/videos/${revisionId}/revisions` && method === 'POST') {
       calls.push('revision-upload');
       body = { id: '00000000-0000-4000-8000-000000000014' };
-    } else if (path === '/api/videos/00000000-0000-4000-8000-000000000014') body = {
-      ...videos[0], id: '00000000-0000-4000-8000-000000000014', status: 'submitted', coverUrl: null,
+    } else if (['/api/videos/00000000-0000-4000-8000-000000000014', '/api/videos/00000000-0000-4000-8000-000000000099'].includes(path)) body = {
+      ...videos[0], id: path.split('/').at(-1), status: 'submitted', coverUrl: null,
       allowedActions: [], aiContentReviews: [], supervisorReview: null, resultMetrics: [], aiResultReviews: [],
       ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null,
     };
@@ -104,11 +105,12 @@ async function installApi(context, role = 'admin') {
     else if (path.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/final-evaluation/latest')) body = { evaluation: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/v11-content-review/latest')) body = {
+      shadowMode: false,
       group,
       diagnostics: {
         dimensions,
         directorSummary: {
-          strengths: [{ dimension: 'selling_point', score: 13.1, observation: '卖点表达清晰。' }],
+          strengths: [{ dimension: 'selling_point', score: 17.5, observation: '卖点表达清晰。' }],
           priorities: [{ ...dimensions[7], priority: 'P1' }, { ...dimensions[0], priority: 'P2' }],
           stableMessage: null,
         },
@@ -126,6 +128,25 @@ async function installApi(context, role = 'admin') {
       body = { success: true };
     } else if (path.includes('/cover')) body = { success: true };
     else body = {};
+    if (path.endsWith('/v11-content-review/latest')) {
+      body = structuredClone(body);
+      if (diagnosticScenario === 'error') { status = 503; body = { message: 'Fixture content endpoint unavailable' }; }
+      else if (diagnosticScenario === 'missing') { body.group.decision = null; body.diagnostics = null; }
+      else if (diagnosticScenario === 'unknown') {
+        body.group.decision.totalScore = null; body.group.decision.contentRating = null; body.group.decision.inputComplete = false;
+        Object.assign(body.diagnostics.dimensions[0], { adoptedAnchor: null, score: null, status: '无法判断' });
+      }
+      else if (diagnosticScenario === 'shadow') body.group.shadowMode = body.shadowMode = true;
+      else if (diagnosticScenario === 'pilot') body.group.pilotRun = true;
+      else if (diagnosticScenario === 'compliance') body.group.decision.complianceStatus = 'suspected';
+      else if (diagnosticScenario === 'revision') body.group.decision.contentRating = 'C';
+      else if (diagnosticScenario === 'legacy') {
+        for (const dimension of body.diagnostics.dimensions) dimension.improvementSuggestions = null;
+      }
+    }
+    if (path.endsWith('/v11-workflow') && ['hold', 'appeal'].includes(diagnosticScenario)) {
+      body.revision[diagnosticScenario === 'hold' ? 'holds' : 'appeals'] = [{ id: 'blocking-fixture', reason: '当前结果需要处理', holdType: 'manual' }];
+    }
     return route.fulfill({ status, json: body });
   });
 }
@@ -188,6 +209,25 @@ try {
   assert((await page.locator('.diagnostic-grid').innerText()).includes('该历史评估版本未生成修改建议') === false, 'fixture represents new output with suggestions');
   assert((await page.locator('.diagnostic-grid').innerText()).includes('结尾加入明确的点击或了解指引。'));
   assert((await page.locator('.diagnostic-grid').innerText()).includes('2.0s–5.0s'));
+  assert((await page.getByTestId('v11-evaluation-panel').innerText()).includes('建议处理顺序'));
+  for (const [scenario, expected] of [
+    ['missing', '尚无有效正式内容决议'], ['unknown', '关键维度或输入无法判断'],
+    ['hold', '当前流程存在待处理事项'], ['appeal', '当前结果存在异议'],
+    ['shadow', 'Shadow 结果'], ['pilot', 'Pilot 独立测试结果'],
+    ['compliance', '合规风险待处理'], ['revision', '内容需要返修'],
+    ['legacy', '该历史评估版本未生成修改建议'], ['error', '内容诊断加载失败'],
+  ]) {
+    diagnosticScenario = scenario;
+    await goto(`/videos/${id}`);
+    await page.getByText(expected, { exact: false }).first().waitFor();
+    if (scenario === 'error' || scenario === 'missing') {
+      assert.equal(await page.locator('.diagnostic-card').count(), 0);
+      assert((await page.locator('.grade-summary article').first().innerText()).includes('待评估'));
+    }
+  }
+  diagnosticScenario = 'normal';
+  await goto(`/videos/${id}`);
+  await page.getByRole('heading', { name: '8 维诊断' }).waitFor();
   assert.equal(await page.getByRole('tab', { name: '内容评估' }).count(), 1);
   assert.equal(await page.getByRole('tab', { name: '数据表现' }).count(), 1);
   assert.equal(await page.getByRole('tab', { name: '综合结果' }).count(), 1);
@@ -271,7 +311,7 @@ try {
     }
   }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);

@@ -58,3 +58,18 @@ test('stable message is reserved for all-excellent adopted dimensions', () => {
   assert.equal(build(4).directorSummary.stableMessage, '当前内容整体稳定，优先保持高分结构，仅进行细节优化。');
   assert.equal(build(3).directorSummary.stableMessage, '当前结果暂无可展示的明确修改建议。');
 });
+
+test('unknown anchors remain nullable and all eight dimensions retain canonical order and weights', () => {
+  const result = buildAdoptedContentDiagnostics({
+    runs: [], sourceRunIds: [],
+    adoptedDimensions: V11_CONTENT_DIMENSIONS.map(({ code }) => ({ dimension: code, anchor: code === 'opening_hook' ? null : 2.5 })),
+    decisionTotalScore: null,
+  });
+  assert.deepEqual(result.dimensions.map(d => d.dimension), V11_CONTENT_DIMENSIONS.map(d => d.code));
+  assert.deepEqual(result.dimensions.map(d => d.weight), [20, 20, 15, 15, 10, 10, 5, 5]);
+  assert.equal(result.dimensions[0].score, null);
+  assert.equal(result.dimensions[0].status, '无法判断');
+  assert.equal(result.dimensions[1].score, 12.5);
+  assert.equal(result.dimensions[1].observation, null);
+  assert.equal(result.dimensions[1].improvementSuggestions, null);
+});

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { EvaluationJob, Prisma, UserRole, VideoStatus } from '@prisma/client';
+import type { V11ContentLatestResponse } from '@ai-video-qc/shared';
 import { AuthenticatedUser } from '../../types/authenticated-user';
 import { effectiveQwenModelConfig, QwenClient, QWEN_CLIENT, QwenEffectiveModelConfig } from '../ai/gemini/qwen.client';
 import { sanitizeContentReviewText } from '../ai/gemini/gemini.service';
@@ -555,9 +556,9 @@ export class V11ContentService {
     const workflow = await this.db.v11WorkflowRevision.findFirst({
       where: { videoId, status: 'current' },
       orderBy: { revision: 'desc' },
-      select: { activeContentDecisionId: true },
+      select: { id: true, activeContentDecisionId: true },
     });
-    const businessWhere = { videoId, pilotRun: false, independent: false } as const;
+    const businessWhere = { videoId, pilotRun: false, independent: false, ...(workflow ? { workflowRevisionId: workflow.id } : {}) } as const;
     const group = await this.db.v11EvaluationGroup.findFirst({
       where: workflow?.activeContentDecisionId
         ? { ...businessWhere, decision: { is: { id: workflow.activeContentDecisionId } } }
@@ -565,16 +566,18 @@ export class V11ContentService {
       ...(workflow?.activeContentDecisionId ? {} : { orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }] }),
       include: { inputRevision: { select: { factClaimVersion: true } }, runs: { orderBy: { runNumber: 'asc' }, select: { id: true, runNumber: true, runRole: true, status: true, totalScore: true, contentRating: true, complianceStatus: true, stale: true, completedAt: true, modelProvider: true, modelName: true, promptVersion: true, schemaVersion: true, rubricVersion: true, structuredOutput: true } }, decision: { select: { id: true, sourceRunIds: true, adoptedDimensions: true, totalScore: true, contentRating: true, complianceStatus: true, inputComplete: true, stable: true, decisionSource: true, adoptionMethod: true, decidedAt: true } }, workflowRevision: { select: { revision: true, status: true } } },
     });
-    const responseGroup = !group ? group : user.role === UserRole.admin
-      ? { ...group, runs: group.runs.map((run) => ({ ...run, factClaimVersion: group.inputRevision?.factClaimVersion ?? null })) }
-      : { ...group, inputRevision: undefined, runs: group.runs.map(({ structuredOutput: _structuredOutput, modelProvider: _modelProvider, modelName: _modelName, promptVersion: _promptVersion, schemaVersion: _schemaVersion, rubricVersion: _rubricVersion, ...run }) => run) };
-    if (!group?.decision) return { shadowMode: group?.shadowMode ?? false, group: responseGroup, diagnostics: null };
+    // A current revision without a pointer may expose progress, never an unadopted decision.
+    const visibleGroup = group && workflow && !workflow.activeContentDecisionId ? { ...group, decision: null } : group;
+    const responseGroup = !visibleGroup ? visibleGroup : user.role === UserRole.admin
+      ? { ...visibleGroup, runs: visibleGroup.runs.map((run) => ({ ...run, factClaimVersion: visibleGroup.inputRevision?.factClaimVersion ?? null })) }
+      : { ...visibleGroup, inputRevision: undefined, runs: visibleGroup.runs.map(({ structuredOutput: _structuredOutput, modelProvider: _modelProvider, modelName: _modelName, promptVersion: _promptVersion, schemaVersion: _schemaVersion, rubricVersion: _rubricVersion, ...run }) => run) };
+    if (!visibleGroup?.decision) return { shadowMode: group?.shadowMode ?? false, group: responseGroup, diagnostics: null } satisfies V11ContentLatestResponse<typeof responseGroup>;
     const diagnostics = buildAdoptedContentDiagnostics({
-      runs: group.runs ?? [],
-      sourceRunIds: group.decision.sourceRunIds,
-      adoptedDimensions: group.decision.adoptedDimensions,
-      decisionTotalScore: group.decision.totalScore,
+      runs: visibleGroup.runs ?? [],
+      sourceRunIds: visibleGroup.decision.sourceRunIds,
+      adoptedDimensions: visibleGroup.decision.adoptedDimensions,
+      decisionTotalScore: visibleGroup.decision.totalScore,
     });
-    return { shadowMode: group.shadowMode, group: responseGroup, ...diagnostics };
+    return { shadowMode: visibleGroup.shadowMode, group: responseGroup, diagnostics } satisfies V11ContentLatestResponse<typeof responseGroup>;
   }
 }
