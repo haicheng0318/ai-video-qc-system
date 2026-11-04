@@ -7,7 +7,7 @@
     "start": "node dist/main.js",
     "start:worker": "node dist/worker.js",
     "worker:dev": "tsx src/worker.ts",
-    "build": "nest build",
+    "build": "nest build --path tsconfig.build.json && node scripts/check-build-output.cjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/tests/*.spec.ts",
     "test:release-acceptance": "npm run build && RELEASE_ACCEPTANCE_REQUIRED=1 node --import tsx --test src/tests/release-acceptance.integration.spec.ts src/tests/v11-diagnostics-http.integration.spec.ts",
