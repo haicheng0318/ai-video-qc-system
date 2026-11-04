@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ApiUser, apiFetch } from '@/lib/api';
 import { DetailSummary } from '@/components/ui/detail-summary';
 import { startStatusPolling } from '@/lib/status-polling';
@@ -14,6 +14,10 @@ type WorkflowState = { revision: null | { revision: number; holds: Array<{ id: s
 type RatingsState = { data: null | { dataRating: string | null; dataSufficiency: string }; comprehensive: null | { id: string; comprehensiveRating: string | null; requiresAdminReview: boolean; decisionSource: string | null; finalStatus: string | null; performanceEligible: boolean } };
 
 export function V11EvaluationPanel({ videoId, canTrigger, onContentStateChange }: { videoId: string; canTrigger: boolean; onContentStateChange?: (state: { groupStatus: string | null; activeHoldCount: number }) => void }) {
+  return <V11EvaluationPanelForVideo key={videoId} videoId={videoId} canTrigger={canTrigger} onContentStateChange={onContentStateChange} />;
+}
+
+function V11EvaluationPanelForVideo({ videoId, canTrigger, onContentStateChange }: { videoId: string; canTrigger: boolean; onContentStateChange?: (state: { groupStatus: string | null; activeHoldCount: number }) => void }) {
   const [content, setContent] = useState<ContentState | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
   const [ratings, setRatings] = useState<RatingsState | null>(null);
@@ -26,13 +30,18 @@ export function V11EvaluationPanel({ videoId, canTrigger, onContentStateChange }
   const [error, setError] = useState('');
   const [contentError, setContentError] = useState('');
   const [trackedJobId, setTrackedJobId] = useState<string | null>(null);
+  const requestSequence = useRef(0);
+  const mounted = useRef(true);
   const load = useCallback(async () => {
+    if (!mounted.current) return;
+    const sequence = ++requestSequence.current;
     const results = await Promise.allSettled([
       apiFetch<ContentState>(`/api/videos/${videoId}/v11-content-review/latest`),
       apiFetch<WorkflowState>(`/api/videos/${videoId}/v11-workflow`),
       apiFetch<RatingsState>(`/api/v11/videos/${videoId}/ratings/latest`),
       apiFetch<{ user: ApiUser }>('/api/auth/me'),
     ]);
+    if (!mounted.current || sequence !== requestSequence.current) return;
     if (results[0].status === 'fulfilled') {
       setContent(results[0].value);
       setContentError('');
@@ -45,7 +54,11 @@ export function V11EvaluationPanel({ videoId, canTrigger, onContentStateChange }
     if (results[3].status === 'fulfilled') setUser(results[3].value.user);
     if (results.every((result) => result.status === 'rejected')) setError('V1.1 评估信息暂时不可用。');
   }, [videoId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    mounted.current = true;
+    void load();
+    return () => { mounted.current = false; requestSequence.current += 1; };
+  }, [load]);
   const groupStatus = content?.group?.status || null;
   const activeHoldCount = workflow?.revision?.holds?.length || 0;
   useEffect(() => { onContentStateChange?.({ groupStatus, activeHoldCount }); }, [activeHoldCount, groupStatus, onContentStateChange]);

@@ -10,7 +10,7 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { V11ContentLatestResponse } from '@ai-video-qc/shared';
 import { contentDecisionNotice } from '../../../web/src/lib/v11-content-display';
-import { configureLocalAcceptance } from '../test-support/local-acceptance';
+import { assertIsolatedDatabase, configureLocalAcceptance } from '../test-support/local-acceptance';
 import { JwtStrategy } from '../modules/auth/jwt.strategy';
 import { PrismaService } from '../modules/prisma/prisma.service';
 import { OperationLogsService } from '../modules/operation-logs/operation-logs.service';
@@ -21,11 +21,20 @@ import { V11_CONTENT_DIMENSIONS } from '../modules/v11/content-scoring';
 import { V11_FACT_CLAIMS } from '../modules/v11/fact-claims';
 
 const url = process.env.V11_DIAGNOSTICS_TEST_DATABASE_URL;
+const required = process.env.V11_DIAGNOSTICS_ACCEPTANCE_REQUIRED === '1' || process.env.RELEASE_ACCEPTANCE_REQUIRED === '1';
+if (required && !url) throw Error('V11_DIAGNOSTICS_TEST_DATABASE_URL is required for diagnostics acceptance.');
+if (url) assertIsolatedDatabase(url);
+if (process.env.RELEASE_ACCEPTANCE_REQUIRED === '1' && url && process.env.RELEASE_TEST_DATABASE_URL) {
+  const diagnosticsTarget = new URL(url), releaseTarget = new URL(process.env.RELEASE_TEST_DATABASE_URL);
+  if (diagnosticsTarget.host === releaseTarget.host && diagnosticsTarget.pathname === releaseTarget.pathname) {
+    throw Error('Diagnostics acceptance requires a separate disposable database from Release Acceptance.');
+  }
+}
 // Load the actual Web renderer at test runtime without enabling JSX in the API compiler.
 const { V11ContentDiagnostics } = require('../../../web/src/components/v11-content-diagnostics') as {
   V11ContentDiagnostics: ComponentType<{ diagnostics: NonNullable<V11ContentLatestResponse['diagnostics']> }>;
 };
-test('real PostgreSQL -> Nest latest HTTP -> actual Web diagnostic renderer', { skip: !url, timeout: 60_000 }, async t => {
+test('real PostgreSQL -> Nest latest HTTP -> actual Web diagnostic renderer', { skip: !url && !required, timeout: 60_000 }, async t => {
   configureLocalAcceptance(url);
   const db = new PrismaClient({ datasources: { db: { url } } });
   let app: Awaited<ReturnType<typeof NestFactory.create>> | undefined;
@@ -83,7 +92,16 @@ test('real PostgreSQL -> Nest latest HTTP -> actual Web diagnostic renderer', { 
     await t.test('owner boundary, authentication and admin-only technical output', async () => {
       assert.equal((await latest(otherToken)).status, 404);
       assert.equal((await latest('invalid')).status, 401);
-      assert.ok((await latest(adminToken)).body.group!.runs[0].structuredOutput);
+      const publicGroup = (await latest()).body.group!;
+      assert.equal(Object.hasOwn(publicGroup, 'inputRevision'), false);
+      for (const field of ['structuredOutput', 'modelProvider', 'modelName', 'promptVersion', 'schemaVersion', 'rubricVersion', 'factClaimVersion']) {
+        assert.equal(Object.hasOwn(publicGroup.runs[0], field), false, `public ${field} must be absent`);
+      }
+      const adminGroup = (await latest(adminToken)).body.group!;
+      assert.deepEqual(adminGroup.inputRevision, { factClaimVersion: input.factClaimVersion });
+      assert.equal(adminGroup.runs[0].factClaimVersion, input.factClaimVersion);
+      assert.ok(adminGroup.runs[0].structuredOutput);
+      for (const field of ['modelProvider', 'modelName', 'promptVersion', 'schemaVersion', 'rubricVersion']) assert.equal(typeof (adminGroup.runs[0] as any)[field], 'string');
     });
     await t.test('newer non-source and pilot groups cannot replace the active decision', async () => {
       const pilot = await db.v11EvaluationGroup.create({ data: { videoId: video.id, ownerId: owner.id, inputRevisionId: input.id, workflowRevisionId: workflow.id, triggerReason: 'pilot', pilotRun: true, independent: true, shadowMode: true } });
@@ -98,6 +116,27 @@ test('real PostgreSQL -> Nest latest HTTP -> actual Web diagnostic renderer', { 
       const body = (await latest()).body;
       assert.equal(body.diagnostics!.dimensions[0].observation, null);
       assert.equal(Number(body.group!.decision!.totalScore), 75);
+    });
+    await t.test('missing or failed source runs cannot borrow observations or alter adopted scores', async () => {
+      const checkEmpty = async () => {
+        const { body } = await latest();
+        assert.equal(Number(body.group!.decision!.totalScore), 75);
+        for (const dimension of body.diagnostics!.dimensions) {
+          assert.equal(dimension.representativeRunId, null); assert.equal(dimension.observation, null);
+          assert.deepEqual(dimension.facts, []); assert.deepEqual(dimension.evidence, []);
+          assert.equal(dimension.improvementSuggestions, null);
+        }
+      };
+      const oldWorkflow = await db.v11WorkflowRevision.create({ data: { videoId: video.id, ownerId: owner.id, revision: 99, status: 'superseded' } });
+      const oldGroup = await db.v11EvaluationGroup.create({ data: { videoId: video.id, ownerId: owner.id, inputRevisionId: input.id, workflowRevisionId: oldWorkflow.id, triggerReason: 'fixture', status: 'superseded', shadowMode: false } });
+      const oldRun = await db.v11EvaluationRun.create({ data: { groupId: oldGroup.id, runNumber: 1, runRole: 'primary', status: 'succeeded', blindContextHash: 'f'.repeat(64), modelProvider: 'fixture', modelName: 'never-called', modelConfigSnapshot: {}, structuredOutput: { dimensions }, totalScore: 100, contentRating: 'A+', ...versions } });
+      await db.v11EvaluationDecision.update({ where: { id: decision.id }, data: { sourceRunIds: [oldRun.id] } });
+      await checkEmpty();
+      await db.v11EvaluationDecision.update({ where: { id: decision.id }, data: { sourceRunIds: [randomUUID()] } });
+      await checkEmpty();
+      await db.v11EvaluationDecision.update({ where: { id: decision.id }, data: { sourceRunIds: [run.id] } });
+      await db.v11EvaluationRun.update({ where: { id: run.id }, data: { status: 'failed', structuredOutput: { dimensions } } });
+      await checkEmpty();
     });
     await t.test('current revision without pointer cannot expose prior revision score', async () => {
       await db.v11WorkflowRevision.update({ where: { id: workflow.id }, data: { status: 'superseded' } });

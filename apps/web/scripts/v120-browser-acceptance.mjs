@@ -49,8 +49,8 @@ const dimensions = [
   ['subtitle_audio', 3, '字幕清楚，口播音量稳定。', []],
   ['platform_fit', 3.5, '画幅适配平台。', []],
   ['action_logic', 2, '结尾没有清晰的下一步行动提示。', ['结尾加入明确的点击或了解指引。']],
-].map(([dimension, anchor, observation, improvementSuggestions], index) => ({ dimension, representativeRunId: 'run-1', weight: [20, 20, 15, 15, 10, 10, 5, 5][index], adoptedAnchor: anchor, score: Math.round(([20, 20, 15, 15, 10, 10, 5, 5][index] * anchor / 4) * 10) / 10, status: anchor >= 3.5 ? '优秀' : anchor >= 2.5 ? '良好' : anchor >= 1.5 ? '可优化' : '需重点优化', observation, facts: ['产品利益点在画面中可见'], factClaims: [], evidence: [{ startSeconds: index * 2, endSeconds: index * 2 + 3, description: '产品展示及字幕说明' }], improvementSuggestions }));
-const group = { status: 'adopted', shadowMode: false, runs: [{ id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', stale: false, completedAt: now }], decision: { id: 'decision-1', sourceRunIds: ['run-1'], adoptedDimensions: dimensions.map(d => ({ dimension: d.dimension, anchor: d.adoptedAnchor })), totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single', decidedAt: now }, workflowRevision: { revision: 1 } };
+].map(([dimension, anchor, observation, improvementSuggestions], index) => ({ dimension, representativeRunId: 'run-1', weight: [20, 20, 15, 15, 10, 10, 5, 5][index], adoptedAnchor: anchor, score: Math.round(([20, 20, 15, 15, 10, 10, 5, 5][index] * anchor / 4) * 10) / 10, status: anchor >= 3.5 ? '优秀' : anchor >= 2.5 ? '良好' : anchor >= 1.5 ? '可优化' : '需重点优化', observation, facts: ['产品利益点在画面中可见'], factClaims: [], evidence: [{ startSeconds: 0, endSeconds: 1, description: '产品展示及字幕说明' }], improvementSuggestions }));
+const group = { id: 'group-1', videoId: id, inputRevision: { factClaimVersion: null }, status: 'adopted', shadowMode: false, runs: [{ id: 'run-1', runNumber: 1, runRole: 'primary', status: 'succeeded', totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', stale: false, completedAt: now, modelProvider: 'fixture', modelName: 'never-called', promptVersion: 'fixture', schemaVersion: 'fixture', rubricVersion: 'fixture', factClaimVersion: null, structuredOutput: null }], decision: { id: 'decision-1', sourceRunIds: ['run-1'], adoptedDimensions: dimensions.map(d => ({ dimension: d.dimension, anchor: d.adoptedAnchor })), totalScore: 76.3, contentRating: 'B', complianceStatus: 'clear', inputComplete: true, stable: true, decisionSource: 'system', adoptionMethod: 'single', decidedAt: now }, workflowRevision: { revision: 1 } };
 const videos = [
   { id, title: '秋日新品 · 日常清洁场景', brand: '清研', product: '洁净系列', platform: '抖音', videoType: 'product_card', status: 'pending_result_data', recordState: 'active', createdAt: now, updatedAt: now, coverUrl: '/api/mock-cover', creator, v11EvaluationGroups: [group], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
   { id: otherId, title: '夏日轻养主题', brand: '清研', product: '饮品系列', platform: '小红书', videoType: 'organic', status: 'final_effective', recordState: 'active', createdAt: '2026-08-15T04:00:00.000Z', updatedAt: now, coverUrl: null, creator, v11EvaluationGroups: [], v11DataDecisions: [], v11ComprehensiveDecisions: [] },
@@ -71,6 +71,7 @@ async function installApi(context, role = 'admin') {
     if (url.origin !== target.origin) return route.abort();
     if (!url.pathname.startsWith('/api/')) return route.continue();
     const method = request.method(), path = url.pathname;
+    const scopedVideoId = path.match(/^\/api\/(?:v11\/)?videos\/([0-9a-f-]+)(?:\/|$)/)?.[1];
     requests.push({ method, path, search: url.search });
     if (/^\/api\/videos\/[0-9a-f-]+\/file$/.test(path)) return route.fulfill({ status: 200, contentType: 'video/webm', headers: { 'Accept-Ranges': 'bytes' }, body: syntheticVideo });
     if (path === '/api/mock-cover') return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#e8ecf2"/><rect x="48" y="48" width="864" height="444" rx="18" fill="#fff"/><circle cx="480" cy="205" r="76" fill="#6d28d9"/><path d="M458 160v90l76-45z" fill="#fff"/><text x="480" y="365" text-anchor="middle" font-size="40" font-family="sans-serif" fill="#263244">V1.2 合成视频封面</text></svg>' });
@@ -91,22 +92,23 @@ async function installApi(context, role = 'admin') {
       calls.push('revision-upload');
       body = { id: '00000000-0000-4000-8000-000000000014' };
     } else if (['/api/videos/00000000-0000-4000-8000-000000000014', '/api/videos/00000000-0000-4000-8000-000000000099'].includes(path)) body = {
-      ...videos[0], id: path.split('/').at(-1), status: 'submitted', coverUrl: null,
+      ...videos[0], id: path.split('/').at(-1), status: 'submitted', coverUrl: null, v11EvaluationGroups: [],
       allowedActions: [], aiContentReviews: [], supervisorReview: null, resultMetrics: [], aiResultReviews: [],
       ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null,
     };
-    else if (path === `/api/videos/${revisionId}`) body = { ...videos[0], id: revisionId, status: 'revision_required', coverUrl: null, allowedActions: ['upload_revision'], supervisorReview: null, isForAds: false, isEventVideo: false, eventName: '', version: 1, aiContentReviews: [], resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null };
-    else if (path === `/api/videos/${id}`) body = { ...videos[0], isForAds: false, isEventVideo: false, eventName: '', version: 1, allowedActions: ['submit_result_metrics'], aiContentReviews: [], supervisorReview: { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now }, resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], revisions: [], versionChain: [], latestResultMetricId: null };
+    else if (path === `/api/videos/${revisionId}`) body = { ...videos[0], id: revisionId, status: 'revision_required', v11EvaluationGroups: [], coverUrl: null, allowedActions: ['upload_revision'], supervisorReview: null, isForAds: false, isEventVideo: false, eventName: '', version: 1, aiContentReviews: [], resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [], latestResultMetricId: null };
+    else if (path === `/api/videos/${id}`) body = { ...videos[0], isForAds: false, isEventVideo: false, eventName: '', version: 1, allowedActions: ['submit_result_metrics'], aiContentReviews: [], supervisorReview: { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now }, resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [{ id: 'log-1', actionType: 'video_uploaded', createdAt: now }], revisions: [], versionChain: [{ id, title: videos[0].title, status: videos[0].status, version: 1 }, { id: otherId, title: videos[1].title, status: videos[1].status, version: 2 }], latestResultMetricId: null };
+    else if (path === `/api/videos/${otherId}`) body = { ...videos[1], version: 1, allowedActions: [], aiContentReviews: [], supervisorReview: null, resultMetrics: [], aiResultReviews: [], ruleEngineResults: [], finalVideoEvaluations: [], operationLogs: [], revisions: [], versionChain: [] };
     else if (path.endsWith('/file-url')) body = { url: null };
     else if (path.endsWith('/content-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
-    else if (path.endsWith('/supervisor-review/latest')) body = path.includes(revisionId) ? null : { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now };
+    else if (path.endsWith('/supervisor-review/latest')) body = scopedVideoId === id ? { decision: 'approved', comment: '历史记录只读展示', reviewedAt: now } : null;
     else if (path.endsWith('/result-metrics/latest')) body = null;
     else if (path.endsWith('/result-review/latest')) body = { review: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/rule-engine/latest')) body = { ruleEngineResult: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/final-evaluation/latest')) body = { evaluation: null, videoStatus: 'pending_result_data' };
     else if (path.endsWith('/v11-content-review/latest')) body = {
       shadowMode: false,
-      group,
+      group: scopedVideoId === id ? structuredClone(group) : null,
       diagnostics: {
         dimensions,
         directorSummary: {
@@ -116,7 +118,7 @@ async function installApi(context, role = 'admin') {
         },
       },
     };
-    else if (path.endsWith('/v11-workflow')) body = { revision: { revision: 1, holds: [], appeals: [] } };
+    else if (path.endsWith('/v11-workflow')) body = { revision: [id, revisionId].includes(scopedVideoId) ? { videoId: scopedVideoId, revision: 1, holds: [], appeals: [] } : null };
     else if (path.endsWith('/ratings/latest')) body = { data: null, comprehensive: null };
     else if (path.endsWith('/history')) body = { items: [], nextCursor: null };
     else if (path.endsWith('/cover/regenerate') && method === 'POST') { calls.push('cover-regenerate'); body = { success: true }; }
@@ -130,7 +132,13 @@ async function installApi(context, role = 'admin') {
     else body = {};
     if (path.endsWith('/v11-content-review/latest')) {
       body = structuredClone(body);
-      if (diagnosticScenario === 'error') { status = 503; body = { message: 'Fixture content endpoint unavailable' }; }
+      if (!body.group) body.diagnostics = null;
+      if (role !== 'admin' && body.group) {
+        delete body.group.inputRevision;
+        for (const run of body.group.runs) for (const field of ['modelProvider', 'modelName', 'promptVersion', 'schemaVersion', 'rubricVersion', 'factClaimVersion', 'structuredOutput']) delete run[field];
+      }
+      if (scopedVideoId === id && diagnosticScenario === 'error') { status = 503; body = { message: 'Fixture content endpoint unavailable' }; }
+      else if (scopedVideoId !== id) body.diagnostics = null;
       else if (diagnosticScenario === 'missing') { body.group.decision = null; body.diagnostics = null; }
       else if (diagnosticScenario === 'unknown') {
         body.group.decision.totalScore = null; body.group.decision.contentRating = null; body.group.decision.inputComplete = false;
@@ -144,7 +152,7 @@ async function installApi(context, role = 'admin') {
         for (const dimension of body.diagnostics.dimensions) dimension.improvementSuggestions = null;
       }
     }
-    if (path.endsWith('/v11-workflow') && ['hold', 'appeal'].includes(diagnosticScenario)) {
+    if (path.endsWith('/v11-workflow') && scopedVideoId === id && ['hold', 'appeal'].includes(diagnosticScenario)) {
       body.revision[diagnosticScenario === 'hold' ? 'holds' : 'appeals'] = [{ id: 'blocking-fixture', reason: '当前结果需要处理', holdType: 'manual' }];
     }
     return route.fulfill({ status, json: body });
@@ -208,7 +216,7 @@ try {
   assert.equal(await page.locator('.diagnostic-card').count(), 8);
   assert((await page.locator('.diagnostic-grid').innerText()).includes('该历史评估版本未生成修改建议') === false, 'fixture represents new output with suggestions');
   assert((await page.locator('.diagnostic-grid').innerText()).includes('结尾加入明确的点击或了解指引。'));
-  assert((await page.locator('.diagnostic-grid').innerText()).includes('2.0s–5.0s'));
+  assert((await page.locator('.diagnostic-grid').innerText()).includes('0.0s–1.0s'));
   assert((await page.getByTestId('v11-evaluation-panel').innerText()).includes('建议处理顺序'));
   for (const [scenario, expected] of [
     ['missing', '尚无有效正式内容决议'], ['unknown', '关键维度或输入无法判断'],
@@ -228,6 +236,58 @@ try {
   diagnosticScenario = 'normal';
   await goto(`/videos/${id}`);
   await page.getByRole('heading', { name: '8 维诊断' }).waitFor();
+  const otherVideoState = await page.evaluate(async other => ({
+    content: await (await fetch(`/api/videos/${other}/v11-content-review/latest`)).json(),
+    workflow: await (await fetch(`/api/videos/${other}/v11-workflow`)).json(),
+  }), otherId);
+  assert.equal(otherVideoState.content.group, null);
+  assert.equal(otherVideoState.content.diagnostics, null);
+  assert.equal(otherVideoState.workflow.revision, null);
+  for (const failOld of [false, true, 'switch-video']) {
+    const held = [];
+    let heldReady;
+    const ready = new Promise(resolve => { heldReady = resolve; });
+    const matches = path => path === `/api/videos/${id}/v11-content-review/latest` || path === `/api/videos/${id}/v11-workflow` || path === `/api/v11/videos/${id}/ratings/latest`;
+    const handler = async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (!matches(path) || held.length >= 3) return route.fallback();
+      held.push({ route, path });
+      if (held.length === 3) heldReady();
+    };
+    await page.route('**/api/**', handler);
+    await page.getByTestId('v11-evaluation-panel').getByRole('button', { name: '刷新', exact: true }).click();
+    await ready;
+    if (failOld === 'switch-video') {
+      await page.getByRole('tab', { name: '记录', exact: true }).click();
+      await page.locator(`.version-chain a[href="/videos/${otherId}"]`).click();
+      await page.waitForURL(`**/videos/${otherId}`);
+      await page.getByText('尚无有效正式内容决议', { exact: false }).waitFor();
+    } else {
+    const fresh = Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === `/api/videos/${id}/v11-content-review/latest`),
+      page.waitForResponse(response => new URL(response.url()).pathname === `/api/videos/${id}/v11-workflow`),
+      page.waitForResponse(response => new URL(response.url()).pathname === `/api/v11/videos/${id}/ratings/latest`),
+    ]);
+    await page.getByTestId('v11-evaluation-panel').getByRole('button', { name: '刷新', exact: true }).click();
+    await fresh;
+    }
+    for (const { route, path } of held) {
+      const staleGroup = structuredClone(group);
+      staleGroup.decision.totalScore = 22;
+      await route.fulfill({ status: failOld === true ? 503 : 200, json: failOld === true ? { message: 'stale failure' } : path.endsWith('/v11-workflow')
+        ? { revision: { revision: 99, holds: [{ id: 'old', reason: 'STALE_WORKFLOW' }], appeals: [] } }
+        : path.endsWith('/ratings/latest') ? { data: { dataRating: 'D' }, comprehensive: null }
+        : { shadowMode: false, group: staleGroup, diagnostics: null } });
+    }
+    await page.waitForLoadState('networkidle');
+    assert((await page.locator('.grade-summary article').first().innerText()).includes(failOld === 'switch-video' ? '待评估' : '76.3'));
+    assert.equal(await page.locator('.diagnostic-card').count(), failOld === 'switch-video' ? 0 : 8);
+    assert((await page.locator('.grade-summary article').nth(1).innerText()).includes('待评估'));
+    assert(!(await page.locator('main').innerText()).includes('STALE_WORKFLOW'));
+    assert.equal(await page.getByText('内容诊断加载失败', { exact: false }).count(), 0);
+    await page.unroute('**/api/**', handler);
+    if (failOld === 'switch-video') await goto(`/videos/${id}`);
+  }
   assert.equal(await page.getByRole('tab', { name: '内容评估' }).count(), 1);
   assert.equal(await page.getByRole('tab', { name: '数据表现' }).count(), 1);
   assert.equal(await page.getByRole('tab', { name: '综合结果' }).count(), 1);
@@ -311,7 +371,7 @@ try {
     }
   }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'per-video mock isolation', 'late success/failure cannot overwrite refreshed state', 'late response cannot overwrite a different video', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);

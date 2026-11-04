@@ -73,3 +73,19 @@ test('unknown anchors remain nullable and all eight dimensions retain canonical 
   assert.equal(result.dimensions[1].observation, null);
   assert.equal(result.dimensions[1].improvementSuggestions, null);
 });
+
+for (const status of ['missing', 'failed', 'pending', 'running', 'stale']) {
+  test(`empty representative set (${status}) preserves adopted scores without borrowing unrelated evidence`, () => {
+    const source = { ...run('source', 1, Array(8).fill(3), 75), status };
+    const result = buildAdoptedContentDiagnostics({
+      runs: [run('unrelated', 2, Array(8).fill(4), 100), ...(status === 'missing' ? [] : [source])],
+      sourceRunIds: ['source'], adoptedDimensions: V11_CONTENT_DIMENSIONS.map(({ code }) => ({ dimension: code, anchor: 3 })), decisionTotalScore: 75,
+    });
+    for (const item of result.dimensions) {
+      assert.equal(item.representativeRunId, null); assert.equal(item.observation, null);
+      assert.deepEqual(item.facts, []); assert.deepEqual(item.factClaims, []); assert.deepEqual(item.evidence, []);
+      assert.equal(item.improvementSuggestions, null); assert.equal(item.score, Math.round((item.weight * 3 / 4) * 10) / 10);
+    }
+    assert.deepEqual(result.directorSummary.priorities, []);
+  });
+}
