@@ -51,3 +51,4 @@ export * from './rule-engine';
 export * from './final-evaluation';
 export * from './final-confirmation';
 export * from './product-version';
+export * from './v11-content-diagnostics';

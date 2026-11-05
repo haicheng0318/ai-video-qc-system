@@ -1,4 +1,5 @@
 import { V11_CONTENT_DIMENSIONS } from './content-scoring';
+import type { V11ContentDiagnostics, V11ContentEvidence, V11FactClaim } from '@ai-video-qc/shared';
 
 type Run = { id: string; runNumber: number; status: string; totalScore: unknown; structuredOutput: unknown };
 type ModelDimension = {
@@ -7,8 +8,8 @@ type ModelDimension = {
   anchor: number | null;
   observation: string;
   facts: string[];
-  factClaims: unknown[];
-  evidence: unknown[];
+  factClaims: V11FactClaim[];
+  evidence: V11ContentEvidence[];
   improvementSuggestions?: string[];
 };
 
@@ -22,7 +23,7 @@ export function buildAdoptedContentDiagnostics(input: {
   sourceRunIds: string[];
   adoptedDimensions: unknown;
   decisionTotalScore: unknown;
-}) {
+}): V11ContentDiagnostics {
   const adopted = Array.isArray(input.adoptedDimensions)
     ? input.adoptedDimensions as Array<{ dimension?: string; anchor?: number | null }>
     : [];

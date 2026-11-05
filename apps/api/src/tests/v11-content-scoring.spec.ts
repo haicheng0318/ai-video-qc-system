@@ -80,3 +80,17 @@ test('evidence must be ordered and remain within the frozen media duration', () 
   const reversed = { ...output, dimensions: output.dimensions.map((item, index) => index ? item : { ...item, evidence: [{ ...item.evidence[0], startSeconds: 3, endSeconds: 2 }] }) };
   assert.throws(() => V11ContentModelOutputSchema.parse(reversed));
 });
+
+test('negative and nonfinite evidence timestamps are rejected without clamping', () => {
+  for (const value of [-0.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const dimensions = observed(3);
+    dimensions[0].evidence[0].startSeconds = value;
+    assert.throws(() => V11ContentModelOutputSchema.parse({ dimensions, compliance: { status: 'clear', facts: [] } }));
+  }
+});
+
+test('missing frozen duration preserves historical unknown-length behavior without inventing a bound', () => {
+  const parsed = V11ContentModelOutputSchema.parse({ dimensions: observed(3), compliance: { status: 'clear', facts: [] } });
+  assert.doesNotThrow(() => assertEvidenceWithinDuration(parsed, null));
+  assert.throws(() => assertEvidenceWithinDuration(parsed, 1), /duration/i);
+});
