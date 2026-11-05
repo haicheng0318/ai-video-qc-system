@@ -224,31 +224,18 @@ function VideoDetail({ params }: { params: { id: string } }) {
         </Link>
         {allowedActions.includes('export_report') ? <a className="button secondary" href={`/api/videos/${video.id}/report`} download>导出授权报告</a> : null}
       </div>
-      <div id="v11-detail-summary" />
       <div className="detail-grid">
         {coverNotice ? <p className="notice-banner" role="status">视频上传成功，封面生成失败，可稍后重新生成。</p> : null}
         <VideoPlayer videoId={params.id} />
         <aside className="panel">
-          <h2>基础信息</h2>
-          <p>状态：{contentDisplay.label}</p>
-          <p>视频类型：{displayLabel(videoTypeLabels, video.videoType)}</p>
-          <p>品牌：{video.brand || '-'}</p>
-          <p>产品：{video.product || '-'}</p>
-          <p>平台：{video.platform || '-'}</p>
-          <p>用于投放：{video.isForAds ? '是' : '否'}</p>
-          <p>节点视频：{video.isEventVideo ? '是' : '否'}</p>
-          <p>节点名称：{video.eventName || '-'}</p>
+          <h2>素材信息</h2>
+          <dl className="compact-metadata"><dt>平台</dt><dd>{video.platform || '-'}</dd><dt>视频类型</dt><dd>{displayLabel(videoTypeLabels, video.videoType)}</dd><dt>用于投放</dt><dd>{video.isForAds ? '是' : '否'}</dd></dl>
+          <details className="asset-details"><summary>更多素材信息</summary><dl className="compact-metadata"><dt>节点视频</dt><dd>{video.isEventVideo ? '是' : '否'}</dd><dt>节点名称</dt><dd>{video.eventName || '-'}</dd><dt>脚本说明</dt><dd>{video.scriptDescription || '未填写'}</dd></dl>
           {canManageCover ? <CoverManager videoId={video.id} coverUrl={video.coverUrl || null} onSaved={() => void loadVideo()} /> : null}
+          </details>
         </aside>
       </div>
-      <details className="legacy-summary section-gap">
-        <summary>历史评估摘要</summary>
-      <section className="grade-summary" aria-label="三级评估摘要">
-        <article><span>内容质量 · 历史评估</span><strong>{contentReview?.status === 'succeeded' ? contentReview.contentGrade || '待确认' : '待评估'}</strong><small>历史内容分：{contentReview?.totalScore ?? '-'} · V1.1 结论见下方独立面板</small></article>
-        <article><span>数据表现等级</span><strong>{latestDataReview?.status === 'succeeded' ? latestDataReview.dataGrade || '数据不足' : '待复盘'}</strong><small>GPT/千问运营投放数据复盘</small></article>
-        <article><span>最终有效等级</span><strong>{latestFinal?.finalGrade ? displayLabel(finalGradeLabels, latestFinal.finalGrade) : latestFinal?.recommendedFinalGrade ? `${displayLabel(finalGradeLabels, latestFinal.recommendedFinalGrade)}（建议）` : '待负责人确认'}</strong><small>规则引擎 + AI 建议 + 负责人确认</small></article>
-      </section>
-      </details>
+      <div id="v11-detail-summary" />
       <section className="detail-next-action" aria-label={availableActions.length > 1 ? '当前可执行操作' : availableActions.length === 1 ? '下一步' : '暂无可执行操作'}>
         <h2>{availableActions.length > 1 ? '当前可执行操作' : availableActions.length === 1 ? '下一步' : '暂无可执行操作'}</h2>
         {availableActions.length ? <ul>{availableActions.map((action, index) => <li key={`${action}-${index}`}>{actionLabels[action] || action}</li>)}</ul> : <p>{nextActionText([], video.status)}</p>}
@@ -275,61 +262,6 @@ function VideoDetail({ params }: { params: { id: string } }) {
       </nav>
       <div id="detail-panel-content" role="tabpanel" aria-labelledby="detail-tab-content" hidden={activeTab !== 'content'}>
           <V11EvaluationPanel videoId={video.id} canTrigger={canTriggerReview} onContentStateChange={setV11ContentState} />
-      <details className="panel section-gap">
-        <summary>历史评估</summary>
-        <p className="muted">旧版历史评分，不参与当前 V1.1 正式流程。</p>
-        <div className="page-title">
-          <div>
-            <h2>Qwen-Omni 内容评估</h2>
-            <p className="muted">
-              {contentReview ? displayLabel(reviewStatusLabels, contentReview.status) : '未评估'}
-            </p>
-          </div>
-        </div>
-        {latestError ? <button className="button secondary" type="button" onClick={() => void loadVideo().catch(() => setLatestError('查询失败，请稍后重试。'))}>重新查询历史记录</button> : null}
-        {latestError ? <p className="error">{latestError}</p> : null}
-        {contentReview?.status === 'failed' ? <p className="error">{userFacingErrorMessage(contentReview.errorMessage, '内容评估失败，请稍后重试。')}</p> : null}
-        {contentReview?.status === 'succeeded' ? (
-          <div>
-            <p>内容总分：{contentReview.totalScore ?? '-'}</p>
-            <p>内容等级：{contentReview.contentGrade || '-'}</p>
-            {contentReview.scoreCalculation === 'backend_deterministic' ? (
-              <p className="muted">评分规则：{contentReview.scoringVersion || 'content-score-v2'} · 总分由后端规则计算</p>
-            ) : (
-              <p className="muted">历史模型评分（{contentReview.scoringVersion || 'legacy-model-score-v1'}）</p>
-            )}
-            <p>建议发布：{contentReview.isPublishableRecommendation ? '是' : '否'}</p>
-            <p>内容摘要：{contentReview.contentSummary || '-'}</p>
-            <h3>维度评分</h3>
-            <ul>
-              {contentReview.scores.map((score) => (
-                <li key={score.id}>{displayLabel(contentDimensionLabels, score.dimension)}：{score.score}/{score.maxScore}，{score.comment || '-'}</li>
-              ))}
-            </ul>
-            <h3>主要问题</h3>
-            <ul>
-              {(contentReview.mainProblems || []).map((problem, index) => (
-                <li key={`${problem.dimension}-${index}`}>{problem.dimension}：{problem.description}（严重程度：{displayLabel(severityLabels, problem.severity)}）</li>
-              ))}
-            </ul>
-            <h3>修改建议</h3>
-            <ul>
-              {(contentReview.revisionSuggestions || []).map((suggestion, index) => (
-                <li key={`${suggestion.problem}-${index}`}>{suggestion.problem}：{suggestion.suggestion}（{displayLabel(priorityLabels, suggestion.priority)}）</li>
-              ))}
-            </ul>
-            <h3>合规风险</h3>
-            <ul>
-              {(contentReview.complianceRisks || []).map((risk, index) => (
-                <li key={`${risk.riskType}-${index}`}>{risk.riskType}：{risk.description}{risk.severity ? `（严重程度：${displayLabel(severityLabels, risk.severity)}）` : ''}</li>
-              ))}
-            </ul>
-            <h3>可使用场景</h3>
-            <p>{(contentReview.usableScenarios || []).join('、') || '-'}</p>
-          </div>
-        ) : null}
-        {currentUser?.role === 'admin' ? <details className="section-gap"><summary>技术详情</summary><dl><dt>Review ID</dt><dd>{contentReview?.id || '-'}</dd><dt>Model Provider</dt><dd>{contentReview?.modelProvider || '-'}</dd><dt>Model Name</dt><dd>{contentReview?.modelName || '-'}</dd><dt>Prompt Version</dt><dd>{contentReview?.promptVersion || '-'}</dd><dt>Scoring Version</dt><dd>{contentReview?.scoringVersion || '-'}</dd></dl></details> : null}
-      </details>
       {canUploadRevision ? (
         <VideoRevisionPanel
           parentVideoId={video.id}
@@ -391,6 +323,70 @@ function VideoDetail({ params }: { params: { id: string } }) {
       />
       </div>
       <div id="detail-panel-records" role="tabpanel" aria-labelledby="detail-tab-records" hidden={activeTab !== 'records'}>
+      <details className="legacy-summary section-gap">
+        <summary>历史评估摘要</summary>
+      <section className="grade-summary" aria-label="三级评估摘要">
+        <article><span>内容质量 · 历史评估</span><strong>{contentReview?.status === 'succeeded' ? contentReview.contentGrade || '待确认' : '待评估'}</strong><small>历史内容分：{contentReview?.totalScore ?? '-'} · V1.1 结论见下方独立面板</small></article>
+        <article><span>数据表现等级</span><strong>{latestDataReview?.status === 'succeeded' ? latestDataReview.dataGrade || '数据不足' : '待复盘'}</strong><small>GPT/千问运营投放数据复盘</small></article>
+        <article><span>最终有效等级</span><strong>{latestFinal?.finalGrade ? displayLabel(finalGradeLabels, latestFinal.finalGrade) : latestFinal?.recommendedFinalGrade ? `${displayLabel(finalGradeLabels, latestFinal.recommendedFinalGrade)}（建议）` : '待负责人确认'}</strong><small>规则引擎 + AI 建议 + 负责人确认</small></article>
+      </section>
+      </details>
+      <details className="panel section-gap">
+        <summary>历史评估</summary>
+        <p className="muted">旧版历史评分，不参与当前 V1.1 正式流程。</p>
+        <div className="page-title">
+          <div>
+            <h2>Qwen-Omni 内容评估</h2>
+            <p className="muted">
+              {contentReview ? displayLabel(reviewStatusLabels, contentReview.status) : '未评估'}
+            </p>
+          </div>
+        </div>
+        {latestError ? <button className="button secondary" type="button" onClick={() => void loadVideo().catch(() => setLatestError('查询失败，请稍后重试。'))}>重新查询历史记录</button> : null}
+        {latestError ? <p className="error">{latestError}</p> : null}
+        {contentReview?.status === 'failed' ? <p className="error">{userFacingErrorMessage(contentReview.errorMessage, '内容评估失败，请稍后重试。')}</p> : null}
+        {contentReview?.status === 'succeeded' ? (
+          <div>
+            <p>内容总分：{contentReview.totalScore ?? '-'}</p>
+            <p>内容等级：{contentReview.contentGrade || '-'}</p>
+            {contentReview.scoreCalculation === 'backend_deterministic' ? (
+              <p className="muted">评分规则：{contentReview.scoringVersion || 'content-score-v2'} · 总分由后端规则计算</p>
+            ) : (
+              <p className="muted">历史模型评分（{contentReview.scoringVersion || 'legacy-model-score-v1'}）</p>
+            )}
+            <p>建议发布：{contentReview.isPublishableRecommendation ? '是' : '否'}</p>
+            <p>内容摘要：{contentReview.contentSummary || '-'}</p>
+            <h3>维度评分</h3>
+            <ul>
+              {contentReview.scores.map((score) => (
+                <li key={score.id}>{displayLabel(contentDimensionLabels, score.dimension)}：{score.score}/{score.maxScore}，{score.comment || '-'}</li>
+              ))}
+            </ul>
+            <h3>主要问题</h3>
+            <ul>
+              {(contentReview.mainProblems || []).map((problem, index) => (
+                <li key={`${problem.dimension}-${index}`}>{problem.dimension}：{problem.description}（严重程度：{displayLabel(severityLabels, problem.severity)}）</li>
+              ))}
+            </ul>
+            <h3>修改建议</h3>
+            <ul>
+              {(contentReview.revisionSuggestions || []).map((suggestion, index) => (
+                <li key={`${suggestion.problem}-${index}`}>{suggestion.problem}：{suggestion.suggestion}（{displayLabel(priorityLabels, suggestion.priority)}）</li>
+              ))}
+            </ul>
+            <h3>合规风险</h3>
+            <ul>
+              {(contentReview.complianceRisks || []).map((risk, index) => (
+                <li key={`${risk.riskType}-${index}`}>{risk.riskType}：{risk.description}{risk.severity ? `（严重程度：${displayLabel(severityLabels, risk.severity)}）` : ''}</li>
+              ))}
+            </ul>
+            <h3>可使用场景</h3>
+            <p>{(contentReview.usableScenarios || []).join('、') || '-'}</p>
+          </div>
+        ) : null}
+        {currentUser?.role === 'admin' ? <details className="section-gap"><summary>技术详情</summary><dl><dt>Review ID</dt><dd>{contentReview?.id || '-'}</dd><dt>Model Provider</dt><dd>{contentReview?.modelProvider || '-'}</dd><dt>Model Name</dt><dd>{contentReview?.modelName || '-'}</dd><dt>Prompt Version</dt><dd>{contentReview?.promptVersion || '-'}</dd><dt>Scoring Version</dt><dd>{contentReview?.scoringVersion || '-'}</dd></dl></details> : null}
+      </details>
+
       <section className="panel section-gap">
         <h2>版本记录</h2>
         <VideoVersionChain currentId={video.id} chain={video.versionChain || []} parent={video.parentVideo || null} revisions={video.revisions || []} />

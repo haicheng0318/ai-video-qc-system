@@ -75,7 +75,7 @@ export function contentEvaluationDisplay(input: {
     };
   }
   return {
-    label: displayLabel(videoStatusLabels, input.videoStatus),
+    label: videoStatusLabels[input.videoStatus] || '状态待确认',
     state: input.videoStatus.endsWith('_failed') ? 'failed' as const : 'current' as const,
     description: '',
   };

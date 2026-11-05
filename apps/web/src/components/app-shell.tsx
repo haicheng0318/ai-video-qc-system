@@ -5,6 +5,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { apiFetch, ApiUser } from '@/lib/api';
 import { PRODUCT_VERSION } from '@ai-video-qc/shared';
+import { ThemeSwitcher } from '@/components/ui/theme-switcher';
 
 const authPaths = new Set(['/login', '/admin/login']);
 const businessLinks = [
@@ -48,13 +49,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className={`app-shell${admin ? ' admin-shell' : ''}${pathname.startsWith('/settings/') ? ' content-shell' : ''}`} onKeyDown={(event) => { if (event.key === 'Escape') { setMenuOpen(false); document.getElementById('navigation-toggle')?.focus(); } }}>
       <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="mobile-header">
-        <Link className="brand" href={admin ? '/admin' : '/videos'}>AI QC <small>V{PRODUCT_VERSION}</small></Link>
+        <Link className="brand" href={admin ? '/admin' : '/videos'}>AI-VideoQC <small>V{PRODUCT_VERSION}</small></Link>
         <button id="navigation-toggle" type="button" className="menu-button" aria-label={menuOpen ? '关闭导航' : '打开导航'} aria-controls="workspace-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
       </header>
       {menuOpen ? <button type="button" tabIndex={-1} className="navigation-overlay" aria-label="关闭导航" onClick={() => setMenuOpen(false)} /> : null}
       <aside id="workspace-navigation" className={`sidebar${menuOpen ? ' open' : ''}`} aria-label={admin ? '管理端导航' : '工作台导航'}>
         <Link className="sidebar-brand" href={admin ? '/admin' : '/videos'}>
-          <span>AI QC</span><strong>短视频质检评估</strong><small>V{PRODUCT_VERSION}</small>
+          <span>AI-VideoQC</span><strong>Creative Intelligence</strong><small>内容质量工作台 · V{PRODUCT_VERSION}</small>
         </Link>
         <nav>
           {links.map(([href, label]) => {
@@ -64,6 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         <div className="sidebar-footer">
+          <ThemeSwitcher />
           {admin ? <Link href="/videos" onClick={() => setMenuOpen(false)}>返回业务工作台</Link> : user?.role === 'admin' ? <Link href="/admin" onClick={() => setMenuOpen(false)}>系统管理</Link> : null}
           <button type="button" onClick={() => void logout()}>退出登录</button>
         </div>

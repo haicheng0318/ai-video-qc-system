@@ -7,6 +7,8 @@ const sharedSourceEntry = fileURLToPath(
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // The development indicator is tooling, not an application account control.
+  devIndicators: false,
   output: 'standalone',
   outputFileTracingRoot: fileURLToPath(new URL('../../', import.meta.url)),
   // No application feature uses next/image. Keep its public decoder endpoint

@@ -14,7 +14,7 @@ const playwrightRequire = process.env.PLAYWRIGHT_MODULE_DIR
 const { chromium } = playwrightRequire('playwright');
 const output = resolve(process.env.V120_ACCEPTANCE_DIR || '/Volumes/拓展盘/数据迁移/AIQC-V1.2.0-review');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, env: childEnv });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_EXECUTABLE, env: childEnv });
 const mediaPage = await browser.newPage();
 const syntheticVideo = Buffer.from(await mediaPage.evaluate(async () => {
   const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
@@ -169,7 +169,7 @@ try {
   async function screenshot(name) { await page.screenshot({ path: resolve(output, name), fullPage: false }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name} overflow`); }
 
   await goto('/login');
-  assert.match(await page.locator('main').innerText(), /V1\.2\.0/);
+  assert.match(await page.locator('main').innerText(), /V1\.2\.1/);
   await screenshot('01-login-v120.png');
 
   await goto('/videos');
@@ -206,6 +206,7 @@ try {
   await page.getByRole('heading', { name: 'AI评估进度' }).waitFor();
   assert((await page.getByRole('listitem').allInnerTexts()).some(text => text.includes('完成')));
   const fakePng = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  await page.getByText('更多素材信息', { exact: true }).click();
   await page.locator('.cover-manager input[type=file]').setInputFiles({ name: 'synthetic-cover.png', mimeType: 'image/png', buffer: fakePng });
   await page.getByRole('button', { name: '上传封面', exact: true }).click();
   await waitForCall('custom-cover');
@@ -227,6 +228,7 @@ try {
   ]) {
     diagnosticScenario = scenario;
     await goto(`/videos/${id}`);
+    if (scenario === 'legacy') await page.locator('.diagnostic-card > summary').first().click();
     await page.getByText(expected, { exact: false }).first().waitFor();
     if (scenario === 'error' || scenario === 'missing') {
       assert.equal(await page.locator('.diagnostic-card').count(), 0);
@@ -371,7 +373,7 @@ try {
     }
   }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'per-video mock isolation', 'late success/failure cannot overwrite refreshed state', 'late response cannot overwrite a different video', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.1', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'per-video mock isolation', 'late success/failure cannot overwrite refreshed state', 'late response cannot overwrite a different video', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);

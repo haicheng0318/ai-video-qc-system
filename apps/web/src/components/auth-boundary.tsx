@@ -37,7 +37,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   if (!authorized) {
     return (
       <main className="page">
-        <div className="panel">正在验证登录状态……</div>
+        <div className="panel" role="status" aria-busy="true"><p>正在验证登录状态……</p><div className="loading-skeleton" aria-hidden="true" /><div className="loading-skeleton" aria-hidden="true" /></div>
       </main>
     );
   }
