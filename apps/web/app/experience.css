@@ -85,6 +85,9 @@ input, select, textarea { background-color: var(--surface); }
 button, a, input, select, textarea, summary { transition: background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast); }
 .app-shell { grid-template-columns: 232px minmax(0, 1fr); }
 .sidebar { background: var(--surface); padding: 24px 16px; }
+.sidebar { overflow-y: auto; overscroll-behavior: contain; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+.sidebar-brand, .sidebar nav, .sidebar-footer { flex-shrink: 0; }
+.sidebar-footer { position: static; padding-bottom: env(safe-area-inset-bottom); }
 .sidebar-brand span { font-size: 22px; font-weight: 750; }
 .sidebar-brand strong { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
 .sidebar-brand small { margin-top: 4px; }

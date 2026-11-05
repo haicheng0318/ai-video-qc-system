@@ -137,7 +137,7 @@ async function installApi(context, role = 'admin') {
     else if (path === '/api/dashboard/trend') body = { items: [{ bucket: '2026-10-12', finalizedCount: 8 }] };
     else if (path === '/api/dashboard/breakdown') body = { items: [{ groupKey: 'brand', groupLabel: '清研', finalizedCount: 24, effectiveCount: 15, lowEffectiveCount: 6, invalidCount: 3, effectiveOutputRate: 87.5 }] };
     else if (path === '/api/v11/benchmark-profiles') body = [{ id: 'benchmark-1', name: '商品卡 · 日常观察基准', version: 2, platform: '抖音', brand: '清研', videoType: 'product_card', primaryMetric: 'views', requiredMetrics: ['views'], minimumSampleValue: '1000', observationWindowDays: 7, status: 'approved', enabled: true, thresholds: [{ rating: 'A', value: '5000' }], guardRules: [] }];
-    else if (path === '/api/v11/cases') body = { items: [{ evaluationId: 'case-1', videoId: id, title: videos[0].title, brand: '清研', platform: '抖音', videoType: 'product_card', creator, comprehensiveRating: 'A', businessConclusion: 'effective', decisionSource: 'human', caseNote: '场景表达清晰，适合复用的内容组织方式。', caseMarkedAt: now, caseMarkedBy: { name: '内容负责人' } }] };
+    else if (path === '/api/v11/cases') { const negative = url.searchParams.get('type') === 'negative'; body = { items: [{ evaluationId: 'case-1', videoId: id, title: videos[0].title, brand: '清研', platform: '抖音', videoType: 'product_card', creator, comprehensiveRating: negative ? 'D' : 'A', businessConclusion: negative ? 'invalid' : 'effective', decisionSource: 'human', caseNote: negative ? '内容与数据均未达标，经确认作为反面案例复盘。' : '场景表达清晰，适合复用的内容组织方式。', caseMarkedAt: now, caseMarkedBy: { name: '内容负责人' } }] }; }
     else if (path === '/api/platform-benchmarks' || path.includes('/cases')) body = { items: [], nextCursor: null };
     else if (path === '/api/admin/roles') body = { items: [{ role: 'admin', capabilities: { ownVideo: true, allVideos: true, admin: true } }, { role: 'director', capabilities: { ownVideo: true, allVideos: false, admin: false } }] };
     else if (path === '/api/admin/operations/overview') body = { activeUsers: 12, formalVideos: 36, trialVideos: 4, jobs: [], observedAt: now };
@@ -187,6 +187,8 @@ try {
     await page.screenshot({ path: resolve(output, name), fullPage: false, animations: 'disabled' }); screenshots.push(name);
   }
   await goto('/login');
+  assert.match(await page.title(), /1\.2\.1/);
+  assert.equal(await page.locator('nextjs-portal button').evaluateAll(es => es.filter(e => e.getClientRects().length > 0).length), 0, 'development tooling must not cover application controls');
   await page.getByLabel('界面主题', { exact: true }).selectOption('dark');
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   await shot('01-login-dark.png');
@@ -233,22 +235,41 @@ try {
   for (const theme of ['light', 'dark']) {
     await page.getByLabel('界面主题', { exact: true }).selectOption(theme);
     for (const [route, name] of [['/dashboard', 'dashboard'], ['/videos/new', 'upload'], ['/cases/excellent', 'cases'], ['/cases/negative', 'negative-cases'], ['/settings/benchmarks', 'benchmarks'], ['/admin', 'operations'], ['/admin/operations', 'runtime'], ['/admin/users', 'users'], [`/admin/users/${creator.id}`, 'user-detail'], ['/admin/roles', 'roles']]) {
-      await goto(route); await shot(`${name}-${theme}.png`);
+      await goto(route);
+      if (route === '/cases/negative') {
+        assert.match(await page.locator('.case-card').innerText(), /反面/);
+        assert.match(await page.locator('.case-grades').innerText(), /D[\s\S]*无效/);
+        assert.doesNotMatch(await page.locator('.case-grades').innerText(), /effective/);
+      }
+      if (route === '/admin') assert.match(await page.locator('main').innerText(), /Product Version：V1\.2\.1/);
+      await shot(`${name}-${theme}.png`);
     }
   }
-  for (const width of [1440, 1024, 768, 390]) {
-    await page.setViewportSize({ width, height: 960 });
-    for (const [route, name] of [['/videos', 'videos'], [`/videos/${id}`, 'detail'], ['/videos/new', 'upload'], ['/admin/users', 'users']]) {
+  for (const width of [1440, 1024, 768, 390, 375]) {
+    await page.setViewportSize({ width, height: width < 400 ? 812 : 960 });
+    for (const [route, name] of [['/videos', 'videos'], [`/videos/${id}`, 'detail'], ['/videos/new', 'upload'], ['/admin/users', 'users'], [`/admin/users/${creator.id}`, 'user-detail']]) {
       await goto(route);
       if (width === 390 && await page.locator('.page-title > div').count()) assert.equal(await page.locator('.page-title > div').first().evaluate(e => getComputedStyle(e).flexBasis), 'auto', 'mobile heading must not reserve a desktop-height flex basis');
       await shot(`${name}-${width}.png`);
+      if (width < 400 && route === '/admin/users') {
+        const input = page.locator('#new-name');
+        await input.scrollIntoViewIfNeeded();
+        assert(await input.evaluate(e => { const r = e.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e; }), 'name input is not covered');
+        await page.locator('button[type=submit]').last().scrollIntoViewIfNeeded();
+        await shot(`users-bottom-${width}.png`);
+      }
     }
   }
   await goto('/videos');
   await page.getByRole('button', { name: /打开导航|展开导航|菜单/ }).first().click();
+  await page.locator('.sidebar-footer').scrollIntoViewIfNeeded();
+  assert(await page.locator('.sidebar-footer button').evaluate(e => { const r = e.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e; }), 'account action remains reachable within scrolling drawer');
   await shot('mobile-menu.png');
   await page.keyboard.press('Escape');
-  checks.push('1440/1024/768/390 responsive and Escape navigation');
+  checks.push('1440/1024/768/390/375 responsive, unobscured name input and account actions, Escape navigation');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.video-card').count() ? await page.locator('.video-card').first().evaluate(e => getComputedStyle(e).animationName) : await page.locator('.app-shell').evaluate(e => getComputedStyle(e).animationName), 'none');
+  checks.push('reduced motion disables animation; product version 1.2.1; negative cases D/invalid');
   const publicContext = await browser.newContext({ viewport: { width: 1440, height: 960 }, serviceWorkers: 'block' });
   await installApi(publicContext, 'director');
   const publicPage = await publicContext.newPage();

@@ -169,7 +169,7 @@ try {
   async function screenshot(name) { await page.screenshot({ path: resolve(output, name), fullPage: false }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name} overflow`); }
 
   await goto('/login');
-  assert.match(await page.locator('main').innerText(), /V1\.2\.0/);
+  assert.match(await page.locator('main').innerText(), /V1\.2\.1/);
   await screenshot('01-login-v120.png');
 
   await goto('/videos');
@@ -373,7 +373,7 @@ try {
     }
   }
   assert.deepEqual(pageErrors, []);
-  const report = { ok: true, checks: ['login product version 1.2.0', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'per-video mock isolation', 'late success/failure cannot overwrite refreshed state', 'late response cannot overwrite a different video', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
+  const report = { ok: true, checks: ['login product version 1.2.1', 'empty month/default historical list', 'month selection and clear', 'simplified filters and admin creator scope', 'synthetic no-cover video metadata seeks card preview to second 1', 'optional upload cover posts to authenticated cover endpoint', 'C/D system decision without SupervisorReview exposes and submits revision upload', 'custom cover upload and default cover regeneration UI', 'admin hide/trash/restore', 'real multipart XHR byte progress with mocked API', 'AI evaluation progress state', '4 detail tabs', '8 dimension diagnostics/evidence/suggestions', 'director summary', 'per-video mock isolation', 'late success/failure cannot overwrite refreshed state', 'late response cannot overwrite a different video', 'diagnostics: missing/unknown/hold/appeal/shadow/pilot/compliance/revision/legacy/endpoint failure', 'no daily supervisor UI; history read-only', 'video list/detail responsive width checks at 1440/1024/768/390 with no horizontal overflow'], paidModelCalls: 0, productionTouched: false, screenshots: ['01-login-v120.png', '02-video-workspace.png', '03-video-card.png', '04-content-report.png', '05-dimension-diagnostics.png', '06-upload-progress.png', '07-hidden-trash.png', '08-mobile.png'] };
   const tileWidth = 640, imageHeight = 360, captionHeight = 38;
   const images = await Promise.all(report.screenshots.map(async (name) => {
     const path = resolve(output, name);
