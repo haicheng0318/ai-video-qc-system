@@ -89,11 +89,14 @@ export default function NewVideoPage() {
           <input id="file" name="file" type="file" accept="video/mp4,video/quicktime,video/webm" required />
           <small className="muted">支持 MP4、MOV、WEBM，最大 500 MB；提交后服务端会再次核验文件类型、大小和内容。</small>
         </div>
+        <details className="asset-details">
+          <summary>封面（可选）</summary>
         <div className="form-field full">
-          <label htmlFor="cover">封面（可选）</label>
+          <label htmlFor="cover">选择封面</label>
           <input id="cover" name="cover" type="file" accept="image/jpeg,image/png,image/webp" />
           <small className="muted">可上传 JPG、PNG 或 WEBP，最大 5 MB；不上传时系统尝试生成视频第 1 秒封面。</small>
         </div>
+        </details>
         {phase ? <div className="upload-progress full" role="status"><span>{phase}</span>{progress !== null ? <><progress max="100" value={progress}>{progress}%</progress><strong>{progress}%</strong></> : null}</div> : null}
         </section>
         <section className="section-gap" aria-labelledby="upload-base-heading">
@@ -127,8 +130,8 @@ export default function NewVideoPage() {
         </div>
         </div>
         </section>
-        <section className="section-gap" aria-labelledby="upload-business-heading">
-        <h2 id="upload-business-heading">业务属性</h2>
+        <details className="section-gap asset-details">
+        <summary id="upload-business-heading">业务属性（可选）</summary>
         <div className="form-grid">
         <div className="form-field">
           <label>
@@ -155,7 +158,7 @@ export default function NewVideoPage() {
           <textarea id="relatedRequirement" name="relatedRequirement" />
         </div>
         </div>
-        </section>
+        </details>
         {error && <p className="error full" role="alert">{error}</p>}
         <div className="button-row section-gap">
           <button className="button" disabled={submitting} type="submit">

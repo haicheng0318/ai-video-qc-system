@@ -14,7 +14,7 @@ const playwrightRequire = process.env.PLAYWRIGHT_MODULE_DIR
 const { chromium } = playwrightRequire('playwright');
 const output = resolve(process.env.V120_ACCEPTANCE_DIR || '/Volumes/拓展盘/数据迁移/AIQC-V1.2.0-review');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, env: childEnv });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_EXECUTABLE, env: childEnv });
 const mediaPage = await browser.newPage();
 const syntheticVideo = Buffer.from(await mediaPage.evaluate(async () => {
   const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
@@ -206,6 +206,7 @@ try {
   await page.getByRole('heading', { name: 'AI评估进度' }).waitFor();
   assert((await page.getByRole('listitem').allInnerTexts()).some(text => text.includes('完成')));
   const fakePng = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  await page.getByText('更多素材信息', { exact: true }).click();
   await page.locator('.cover-manager input[type=file]').setInputFiles({ name: 'synthetic-cover.png', mimeType: 'image/png', buffer: fakePng });
   await page.getByRole('button', { name: '上传封面', exact: true }).click();
   await waitForCall('custom-cover');
@@ -227,6 +228,7 @@ try {
   ]) {
     diagnosticScenario = scenario;
     await goto(`/videos/${id}`);
+    if (scenario === 'legacy') await page.locator('.diagnostic-card > summary').first().click();
     await page.getByText(expected, { exact: false }).first().waitFor();
     if (scenario === 'error' || scenario === 'missing') {
       assert.equal(await page.locator('.diagnostic-card').count(), 0);
